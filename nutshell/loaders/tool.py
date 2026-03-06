@@ -3,8 +3,8 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from nutshell.base.loader import BaseLoader
-from nutshell.tool import Tool
+from nutshell.abstract.loader import BaseLoader
+from nutshell.core.tool import Tool
 
 
 def _make_stub(name: str) -> Callable:

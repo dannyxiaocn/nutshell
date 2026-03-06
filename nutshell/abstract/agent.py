@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nutshell.types import AgentResult
+    from nutshell.core.types import AgentResult
 
 
 class BaseAgent(ABC):

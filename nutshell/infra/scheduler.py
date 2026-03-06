@@ -11,8 +11,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nutshell.base.agent import BaseAgent
-    from nutshell.types import AgentResult
+    from nutshell.abstract.agent import BaseAgent
+    from nutshell.core.types import AgentResult
 
 
 class Scheduler:

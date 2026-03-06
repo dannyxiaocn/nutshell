@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 
-from nutshell.base.loader import BaseLoader
+from nutshell.abstract.loader import BaseLoader
 
 
 class PromptLoader(BaseLoader[str]):

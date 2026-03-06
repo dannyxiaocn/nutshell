@@ -1,11 +1,11 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
-from nutshell.provider import Provider
-from nutshell.types import Message, ToolCall
+from nutshell.abstract.provider import Provider
+from nutshell.core.types import Message, ToolCall
 
 if TYPE_CHECKING:
-    from nutshell.tool import Tool
+    from nutshell.core.tool import Tool
 
 
 class AnthropicProvider(Provider):
@@ -22,7 +22,7 @@ class AnthropicProvider(Provider):
     async def complete(
         self,
         messages: list[Message],
-        tools: list[Tool],
+        tools: list["Tool"],
         system_prompt: str,
         model: str,
     ) -> tuple[str, list[ToolCall]]:

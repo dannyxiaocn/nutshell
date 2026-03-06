@@ -1,8 +1,8 @@
 from __future__ import annotations
 from pathlib import Path
 
-from nutshell.base.loader import BaseLoader
-from nutshell.skill import Skill
+from nutshell.abstract.loader import BaseLoader
+from nutshell.core.skill import Skill
 
 
 def _parse_frontmatter(text: str) -> tuple[dict, str]:

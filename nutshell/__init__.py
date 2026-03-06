@@ -1,17 +1,23 @@
 """Nutshell — a minimal Python Agent library."""
 
-from nutshell.agent import Agent
-from nutshell.provider import Provider
+from nutshell.core.agent import Agent
+from nutshell.abstract.provider import Provider
 from nutshell.providers.anthropic import AnthropicProvider
-from nutshell.skill import Skill
-from nutshell.tool import Tool, tool
-from nutshell.types import AgentResult, Message, ToolCall
+from nutshell.core.skill import Skill
+from nutshell.core.tool import Tool, tool
+from nutshell.core.types import AgentResult, Message, ToolCall
 
-# Abstract base classes (Layer 1)
-from nutshell.base import BaseAgent, BaseTool, BaseSkill, BaseLoader
+# Abstract base classes
+from nutshell.abstract.agent import BaseAgent
+from nutshell.abstract.tool import BaseTool
+from nutshell.abstract.skill import BaseSkill
+from nutshell.abstract.loader import BaseLoader
 
-# External file loaders (Layer 1)
-from nutshell.loaders import PromptLoader, ToolLoader, SkillLoader
+# External file loaders
+from nutshell.loaders.prompt import PromptLoader
+from nutshell.loaders.tool import ToolLoader
+from nutshell.loaders.skill import SkillLoader
+from nutshell.loaders.agent import AgentLoader
 
 __all__ = [
     # Core
@@ -33,4 +39,5 @@ __all__ = [
     "PromptLoader",
     "ToolLoader",
     "SkillLoader",
+    "AgentLoader",
 ]

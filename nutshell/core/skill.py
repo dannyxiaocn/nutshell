@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from nutshell.base.skill import BaseSkill
+from nutshell.abstract.skill import BaseSkill
 
 
 @dataclass

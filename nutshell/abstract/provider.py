@@ -3,8 +3,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nutshell.types import Message, ToolCall, AgentResult
-    from nutshell.tool import Tool
+    from nutshell.core.types import Message, ToolCall, AgentResult
+    from nutshell.core.tool import Tool
 
 
 class Provider(ABC):
@@ -13,11 +13,11 @@ class Provider(ABC):
     @abstractmethod
     async def complete(
         self,
-        messages: list[Message],
-        tools: list[Tool],
+        messages: list["Message"],
+        tools: list["Tool"],
         system_prompt: str,
         model: str,
-    ) -> tuple[str, list[ToolCall]]:
+    ) -> tuple[str, list["ToolCall"]]:
         """Send messages to the LLM and return (content, tool_calls).
 
         Returns a tuple of:

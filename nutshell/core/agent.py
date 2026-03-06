@@ -2,11 +2,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Literal
 
-from nutshell.base.agent import BaseAgent
-from nutshell.provider import Provider
-from nutshell.skill import Skill
-from nutshell.tool import Tool
-from nutshell.types import AgentResult, Message, ToolCall
+from nutshell.abstract.agent import BaseAgent
+from nutshell.abstract.provider import Provider
+from nutshell.core.skill import Skill
+from nutshell.core.tool import Tool
+from nutshell.core.types import AgentResult, Message, ToolCall
 
 ReleasePolicy = Literal["auto", "manual", "persistent"]
 

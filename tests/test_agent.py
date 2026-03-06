@@ -1,10 +1,10 @@
 import pytest
 from unittest.mock import AsyncMock
-from nutshell.agent import Agent
-from nutshell.provider import Provider
-from nutshell.skill import Skill
-from nutshell.tool import tool
-from nutshell.types import ToolCall
+from nutshell.core.agent import Agent
+from nutshell.abstract.provider import Provider
+from nutshell.core.skill import Skill
+from nutshell.core.tool import tool
+from nutshell.core.types import ToolCall
 
 
 class MockProvider(Provider):

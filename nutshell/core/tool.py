@@ -3,7 +3,7 @@ import inspect
 import functools
 from typing import Any, Callable, get_type_hints
 
-from nutshell.base.tool import BaseTool
+from nutshell.abstract.tool import BaseTool
 
 
 def _python_type_to_json_schema(annotation: Any) -> dict:

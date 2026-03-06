@@ -1,5 +1,5 @@
 import pytest
-from nutshell.tool import Tool, tool
+from nutshell.core.tool import Tool, tool
 
 
 def test_tool_decorator_basic():
