@@ -2,7 +2,7 @@
 # Paths are relative to this file's directory.
 # This manifest is consumed by the infra layer (future AgentLoader).
 
-name: core_agent
+name: agent_core
 description: A general-purpose assistant with basic capabilities.
 model: claude-haiku-4-5-20251001
 release_policy: persistent

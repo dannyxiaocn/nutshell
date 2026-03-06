@@ -3,7 +3,7 @@
 A minimal Python Agent library. Simple by design.
 
 ```python
-from nutshell import Agent, AnthropicProvider, tool
+from nutshell import Agent, Instance, AnthropicProvider, tool
 
 @tool(description="Add two integers")
 def add(a: int, b: int) -> int:
@@ -12,12 +12,14 @@ def add(a: int, b: int) -> int:
 agent = Agent(
     system_prompt="You are a helpful assistant.",
     tools=[add],
-    model="claude-opus-4-6",
+    model="claude-haiku-4-5-20251001",
     provider=AnthropicProvider(),
 )
 
-result = await agent.run("What is 17 + 25?")
-print(result.content)
+# Every agent runs inside an Instance — persistent context with built-in heartbeat
+async with Instance(agent=agent) as instance:
+    result = await instance.chat("What is 17 + 25?")
+    print(result.content)
 ```
 
 ---
@@ -32,42 +34,15 @@ pip install pytest pytest-asyncio  # for tests
 
 ---
 
-## Three-Layer Architecture
+## Architecture
 
-Nutshell is organized into three distinct layers:
+Nutshell is organized into three layers:
 
 ```
-Layer 1 — nutshell/          Core framework: abstract base classes, concrete implementations, file loaders
-Layer 2 — nutshell/infra/    Agent scheduling infrastructure (placeholder, not yet implemented)
+Layer 1 — nutshell/          Core framework: Agent, Instance, Tool, Skill, providers, loaders
+Layer 2 — nutshell/infra/    Agent scheduling infrastructure (placeholder)
 Layer 3 — entity/            Agent content: prompt files, tool schemas, skill definitions
 ```
-
-### Layer 1: Core Framework (`nutshell/`)
-
-The library itself. Contains:
-- **`base/`** — Pure abstract base classes (ABCs) defining the interfaces for all agent system components
-- **`loaders/`** — File loaders that read external configuration into Python objects
-- **`agent.py`, `tool.py`, `skill.py`** — Concrete implementations that extend the ABCs
-- **`providers/`** — Pluggable LLM backends (Anthropic, OpenAI)
-
-### Layer 2: Infrastructure (`nutshell/infra/`)
-
-Placeholder for future agent scheduling capabilities:
-- Task queue management
-- Concurrency limits across agent pool
-- Retry and timeout policies
-- Priority-based dispatch
-
-### Layer 3: Entity (`entity/`)
-
-Agent content stored as plain files — no Python required:
-
-| Configuration | Format | Extension |
-|---|---|---|
-| System prompt | Plain Markdown | `.md` |
-| Tool schema | JSON Schema (Anthropic/OpenAI format) | `.json` |
-| Skill | YAML frontmatter + Markdown body | `.md` |
-| Agent manifest | YAML | `.yaml` |
 
 ---
 
@@ -75,49 +50,113 @@ Agent content stored as plain files — no Python required:
 
 ### Agent
 
-The central class. Configured with a system prompt, tools, skills, and a provider.
+The LLM reasoning unit. Configured with a system prompt, tools, skills, and a provider.
 
 ```python
 agent = Agent(
     system_prompt="You are a concise assistant.",
     tools=[...],
     skills=[...],
-    model="claude-opus-4-6",
+    model="claude-haiku-4-5-20251001",
     provider=AnthropicProvider(),
     release_policy="persistent",  # "auto" | "manual" | "persistent"
     max_iterations=20,
 )
-result = await agent.run("Hello")
 ```
 
-**Conversation history** is maintained across `.run()` calls by default (`release_policy="persistent"`). Use `clear_history=True` to reset mid-session:
+Conversation history is maintained across `.run()` calls by default (`release_policy="persistent"`).
+
+### Instance
+
+**The default runtime for every agent.** An Instance wraps an Agent with:
+
+- **Persistence** — disk-backed `context.json` (IO event log) and `files/` directory
+- **Kanban board** — `kanban.md` for tracking work across sessions
+- **Built-in heartbeat** — periodic autonomous activation when kanban is non-empty
+- **Concurrency safety** — `asyncio.Lock` ensures `chat()` and `tick()` never run concurrently
+
+```
+instances/
+└── 2026-03-07_14-30-00/
+    ├── kanban.md        ← free-form task tracking (read/write by agent)
+    ├── context.json     ← full IO event log
+    └── files/           ← associated files
+```
 
 ```python
-result = await agent.run("new topic", clear_history=True)
+from nutshell import Instance, Agent
+
+instance = Instance(
+    agent=agent,
+    heartbeat=10.0,          # seconds between autonomous ticks (default: 10)
+    on_tick=lambda r: print(r.content),
+    on_done=lambda: print("All done!"),
+)
+
+# Context manager: start() on enter, stop() on exit
+async with instance:
+    result = await instance.chat("Hello")
+
+# Or resume a previous session
+instance = Instance.resume("2026-03-07_14-30-00", agent=agent)
+```
+
+**Activation modes:**
+
+| Method | Description |
+|--------|-------------|
+| `chat(message)` | User-driven conversation, logs to context.json |
+| `tick()` | Single heartbeat: runs agent if kanban non-empty |
+| `start()` / `stop()` | Start/stop background heartbeat task |
+| `silence()` | Disable on_tick/on_done callbacks (for background-only mode) |
+
+**Heartbeat loop logic:**
+
+```
+wait interval seconds
+  → tick()
+    → kanban empty?  → on_done() → exit
+    → kanban non-empty? → agent.run() → on_tick(result) → wait again
+```
+
+### Kanban Board
+
+Every Instance injects two tools into its agent automatically:
+
+| Tool | Description |
+|------|-------------|
+| `read_kanban()` | Read current kanban content |
+| `write_kanban(content)` | Overwrite kanban. `write_kanban("")` signals all work done |
+
+The kanban is the **only** completion signal — an empty kanban stops the heartbeat.
+
+```markdown
+# kanban.md (example)
+- Summarize the report
+- Draft follow-up email
+- Update project timeline
 ```
 
 ### Tool
 
-External actions that execute outside the LLM loop (API calls, file I/O, calculations).
+External actions executed outside the LLM loop.
 
 ```python
-from nutshell import tool
+from nutshell import tool, Tool
 
-@tool(description="Search the web for a query")
+@tool(description="Search the web")
 async def search(query: str) -> str:
     ...
 
 # Or construct manually
-from nutshell import Tool
-
 my_tool = Tool(name="search", description="Search the web", func=search_func)
 ```
 
-The `@tool` decorator automatically generates a JSON Schema from the function's type annotations.
+The `@tool` decorator auto-generates JSON Schema from type annotations.
 
 ### Skill
 
-Injects knowledge or behavior into the agent's system prompt.
+Injects knowledge or behavior into the agent's system prompt at runtime.
 
 ```python
 from nutshell import Skill
@@ -125,135 +164,105 @@ from nutshell import Skill
 coding_skill = Skill(
     name="coding",
     description="Expert coding assistant",
-    prompt_injection="You are an expert programmer. Always write clean, idiomatic code.",
+    prompt_injection="Always write clean, idiomatic code.",
 )
 
 agent = Agent(skills=[coding_skill], ...)
 ```
 
-Each skill's `prompt_injection` is appended to `system_prompt` at runtime.
-
 ### Provider
 
-Pluggable LLM backend. Implement `Provider.complete()` to add any model.
+Pluggable LLM backend.
 
 ```python
 from nutshell import AnthropicProvider
 from nutshell.providers.openai import OpenAIProvider
 
-provider = AnthropicProvider(api_key="sk-...")   # or reads ANTHROPIC_API_KEY
-provider = OpenAIProvider(api_key="sk-...")       # or reads OPENAI_API_KEY
+provider = AnthropicProvider(api_key="sk-...")   # or ANTHROPIC_API_KEY env var
+provider = OpenAIProvider(api_key="sk-...")       # or OPENAI_API_KEY env var
 ```
+
+---
+
+## Interactive CLI
+
+`chat.py` is a full-featured terminal chat that demonstrates the Instance + heartbeat system:
+
+```bash
+python chat.py                              # uses entity/chat_core, heartbeat=10s
+python chat.py --entity entity/agent_core  # load a different entity
+python chat.py --heartbeat 20              # override heartbeat interval
+python chat.py --resume 2026-03-07_14-30-00  # resume a previous instance
+python chat.py --model claude-opus-4-6     # override model
+```
+
+**Commands during chat:**
+
+```
+/clear      Clear conversation history
+/system     Print current system prompt
+/system <p> Change system prompt
+/tools      List loaded tools
+/skills     List loaded skills
+/kanban     Show current kanban board
+/exit       Exit
+```
+
+**Heartbeat behavior in chat:**
+
+- During chat (user typing or agent responding): heartbeat is fully blocked
+- After user exits: heartbeat starts, continues running silently until kanban is cleared
+- Exit message: `Instance continues running: instances/<id>/`
 
 ---
 
 ## External File Loaders
 
-Load agent configuration from files instead of hardcoding in Python.
+Load agent configuration from files instead of Python.
 
-### PromptLoader — `.md` → `str`
-
-```python
-from nutshell.loaders import PromptLoader
-
-system_prompt = PromptLoader().load(Path("entity/core_agent/prompts/system.md"))
-```
-
-### SkillLoader — `.md` (YAML frontmatter) → `Skill`
-
-Skill files use YAML frontmatter for metadata and Markdown body for the prompt content:
-
-```markdown
----
-name: reasoning
-description: Encourages step-by-step reasoning.
----
-
-Before answering, work through your reasoning explicitly...
-```
+### AgentLoader — `entity/<name>/` → `Agent`
 
 ```python
-from nutshell.loaders import SkillLoader
-
-skills = SkillLoader().load_dir(Path("entity/core_agent/skills/"))
-```
-
-### ToolLoader — `.json` → `Tool`
-
-Tool files use Anthropic-compatible JSON Schema format:
-
-```json
-{
-  "name": "echo",
-  "description": "Return input text unchanged.",
-  "input_schema": {
-    "type": "object",
-    "properties": { "text": { "type": "string" } },
-    "required": ["text"]
-  }
-}
-```
-
-Python implementations are wired in separately:
-
-```python
-from nutshell.loaders import ToolLoader
-
-loader = ToolLoader(impl_registry={"echo": lambda text: text})
-tools = loader.load_dir(Path("entity/core_agent/tools/"))
-```
-
-### Full Example — Load Agent from `entity/`
-
-```python
+from nutshell import AgentLoader
 from pathlib import Path
-from nutshell import Agent, AnthropicProvider
+
+agent = AgentLoader().load(Path("entity/agent_core"))
+```
+
+### Agent manifest (`agent.yaml`)
+
+```yaml
+name: agent_core
+description: A general-purpose assistant.
+model: claude-haiku-4-5-20251001
+release_policy: persistent
+max_iterations: 20
+
+prompts:
+  system: prompts/system.md
+
+tools:
+  - tools/echo.json
+
+skills:
+  - skills/reasoning.md
+```
+
+### PromptLoader / SkillLoader / ToolLoader
+
+```python
 from nutshell.loaders import PromptLoader, SkillLoader, ToolLoader
 
-AGENT_DIR = Path("entity/core_agent")
-
-system_prompt = PromptLoader().load(AGENT_DIR / "prompts" / "system.md")
-skills = SkillLoader().load_dir(AGENT_DIR / "skills")
-tools = ToolLoader(impl_registry={"echo": lambda text: text}).load_dir(AGENT_DIR / "tools")
-
-agent = Agent(system_prompt=system_prompt, tools=tools, skills=skills,
-              model="claude-haiku-4-5-20251001", provider=AnthropicProvider())
-```
-
-See `examples/05_entity_agent.py` for the full runnable example.
-
----
-
-## Abstract Base Classes
-
-Extend these to build custom implementations:
-
-```python
-from nutshell import BaseAgent, BaseTool, BaseSkill, BaseLoader
-
-class MyAgent(BaseAgent):
-    async def run(self, input: str, *, clear_history: bool = False) -> AgentResult: ...
-    def close(self) -> None: ...
-
-class MyTool(BaseTool):
-    async def execute(self, **kwargs) -> str: ...
-    def to_api_dict(self) -> dict: ...
-
-class MySkill(BaseSkill):
-    def to_prompt_fragment(self) -> str: ...
-
-class MyLoader(BaseLoader[MyTool]):
-    def load(self, path: Path) -> MyTool: ...
-    def load_dir(self, directory: Path) -> list[MyTool]: ...
+system_prompt = PromptLoader().load(Path("entity/agent_core/prompts/system.md"))
+skills = SkillLoader().load_dir(Path("entity/agent_core/skills/"))
+tools = ToolLoader(impl_registry={"echo": lambda text: text}).load_dir(Path("entity/agent_core/tools/"))
 ```
 
 ---
 
 ## Multi-Agent Patterns
 
-### Pattern A: Agent-as-Tool
-
-Sub-agents registered as tools of a parent agent.
+### Agent-as-Tool
 
 ```python
 writer = Agent(system_prompt="You are a creative writer.", release_policy="auto")
@@ -266,28 +275,18 @@ orchestrator = Agent(
 result = await orchestrator.run("Write a paragraph about the ocean.")
 ```
 
-### Pattern B: Message Passing
-
-Manual pipeline — output of one agent feeds into another.
+### Message Passing
 
 ```python
 research = await researcher.run("Key facts about black holes")
 summary  = await summarizer.run(research.content)
 ```
 
-### Sub-agent Lifecycle
-
-| Policy | Behavior |
-|--------|----------|
-| `"persistent"` | History kept across all runs (default) |
-| `"auto"` | History cleared after each `run()` |
-| `"manual"` | History cleared only when `.close()` is called |
-
 ---
 
 ## AgentResult
 
-Every `.run()` returns an `AgentResult`:
+Every `.run()` and `.chat()` returns an `AgentResult`:
 
 ```python
 result.content      # str: final assistant response
@@ -297,51 +296,94 @@ result.messages     # list[Message]: full conversation history
 
 ---
 
-## Design
-
-### Architecture
+## Project Structure
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Layer 1: nutshell/ (Core Framework)                    │
-│                                                         │
-│  base/           loaders/        concrete impls         │
-│  ├── BaseAgent   ├── PromptLoader  ├── Agent            │
-│  ├── BaseTool    ├── ToolLoader    ├── Tool              │
-│  ├── BaseSkill   └── SkillLoader   ├── Skill            │
-│  └── BaseLoader                   └── providers/       │
-└─────────────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────────────┐
-│  Layer 2: nutshell/infra/ (Placeholder)                 │
-│  └── Scheduler (stub — not yet implemented)             │
-└─────────────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────────────┐
-│  Layer 3: entity/ (Agent Content)                       │
-│  └── core_agent/                                        │
-│      ├── agent.yaml          ← agent manifest           │
-│      ├── prompts/system.md   ← system prompt            │
-│      ├── tools/echo.json     ← tool schema              │
-│      └── skills/reasoning.md ← skill definition        │
-└─────────────────────────────────────────────────────────┘
+nutshell/
+├── nutshell/                  # Layer 1: Core framework
+│   ├── abstract/              # Pure abstract base classes
+│   │   ├── agent.py           # BaseAgent(ABC)
+│   │   ├── tool.py            # BaseTool(ABC)
+│   │   ├── skill.py           # BaseSkill(ABC)
+│   │   └── loader.py          # BaseLoader(ABC, Generic[T])
+│   ├── core/                  # Concrete implementations
+│   │   ├── agent.py           # Agent(BaseAgent)
+│   │   ├── instance.py        # Instance — persistent runtime + heartbeat
+│   │   ├── tool.py            # Tool(BaseTool) + @tool decorator
+│   │   ├── skill.py           # Skill(BaseSkill)
+│   │   └── types.py           # Message, ToolCall, AgentResult
+│   ├── loaders/               # External file loaders
+│   │   ├── agent.py           # AgentLoader: entity/ → Agent
+│   │   ├── prompt.py          # PromptLoader: .md → str
+│   │   ├── tool.py            # ToolLoader: .json → Tool
+│   │   └── skill.py          # SkillLoader: .md+frontmatter → Skill
+│   ├── infra/                 # Layer 2: Scheduling (placeholder)
+│   │   └── scheduler.py
+│   └── providers/
+│       ├── anthropic.py
+│       └── openai.py
+│
+├── entity/                    # Layer 3: Agent content (plain files)
+│   ├── agent_core/            # General-purpose base agent
+│   │   ├── agent.yaml
+│   │   ├── prompts/system.md  # Includes kanban board instructions
+│   │   ├── tools/echo.json
+│   │   └── skills/reasoning.md
+│   └── chat_core/             # Chat CLI agent
+│       ├── agent.yaml
+│       └── prompts/system.md
+│
+├── instances/                 # Runtime: created automatically
+│   └── <timestamp>/
+│       ├── kanban.md
+│       ├── context.json
+│       └── files/
+│
+├── examples/
+│   ├── 01_basic_agent.py
+│   ├── 02_custom_tools.py
+│   ├── 03_multi_agent.py
+│   ├── 04_tmp_subagent.py
+│   ├── 05_entity_agent.py
+│   └── 06_heartbeat_agent.py  # Instance + kanban + heartbeat
+│
+├── chat.py                    # Interactive CLI (Instance-backed)
+└── tests/
+    ├── test_agent.py
+    └── test_tools.py
 ```
+
+---
+
+## Design Principles
 
 ### Execution Loop
 
 ```
-run(input)
+Instance.chat(input) / Instance.tick()
   │
-  ├── 1. Build system_prompt
-  │       = agent.system_prompt
-  │       + skill.prompt_injection (for each skill)
+  ├── acquire agent_lock  (blocks concurrent chat/tick)
   │
-  ├── 2. provider.complete(messages, tools, system_prompt, model)
+  ├── agent.run(input)
+  │   ├── 1. build system_prompt (base + skills)
+  │   ├── 2. provider.complete(messages, tools, model)
+  │   ├── 3. tool_calls? → execute concurrently → append → goto 2
+  │   └── 4. return AgentResult
   │
-  ├── 3. Check response
-  │   ├── no tool_calls → return AgentResult
-  │   └── tool_calls   → execute tools concurrently
-  │                       → append results → go to step 2
-  │
-  └── 4. Return AgentResult (update history per release_policy)
+  ├── release agent_lock
+  └── append event to context.json
+```
+
+### Heartbeat Loop
+
+```
+start_heartbeat(interval)
+  └── loop:
+      ├── wait interval seconds
+      ├── tick()
+      │   ├── kanban empty? → return None (skip)
+      │   └── agent.run(kanban_prompt) → on_tick(result)
+      └── is_done()? → on_done() → exit
 ```
 
 ### Tool vs Skill
@@ -351,54 +393,7 @@ run(input)
 | **Runs** | Outside LLM loop | Inside LLM reasoning |
 | **Purpose** | Execute actions (API, I/O) | Inject domain expertise |
 | **Mechanism** | LLM calls it by name | Appended to system prompt |
-| **Config format** | `.json` (JSON Schema) | `.md` (YAML frontmatter + body) |
-| **Examples** | web search, calculator | coding expert, step-by-step reasoning |
-
----
-
-## Project Structure
-
-```
-nutshell/
-├── nutshell/                  # Layer 1: Core framework
-│   ├── base/                  # Pure abstract base classes
-│   │   ├── agent.py           # BaseAgent(ABC)
-│   │   ├── tool.py            # BaseTool(ABC)
-│   │   ├── skill.py           # BaseSkill(ABC)
-│   │   └── loader.py          # BaseLoader(ABC, Generic[T])
-│   ├── loaders/               # External file loaders
-│   │   ├── prompt.py          # PromptLoader: .md → str
-│   │   ├── tool.py            # ToolLoader: .json → Tool
-│   │   └── skill.py           # SkillLoader: .md+frontmatter → Skill
-│   ├── infra/                 # Layer 2: Scheduling (placeholder)
-│   │   └── scheduler.py       # Scheduler stub
-│   ├── agent.py               # Agent(BaseAgent)
-│   ├── tool.py                # Tool(BaseTool) + @tool decorator
-│   ├── skill.py               # Skill(BaseSkill)
-│   ├── provider.py            # Provider ABC
-│   ├── providers/
-│   │   ├── anthropic.py
-│   │   └── openai.py
-│   └── types.py               # Message, ToolCall, AgentResult
-│
-├── entity/                    # Layer 3: Agent content (plain files)
-│   └── core_agent/
-│       ├── agent.yaml         # Agent manifest
-│       ├── prompts/system.md  # System prompt
-│       ├── tools/echo.json    # Tool schema
-│       └── skills/reasoning.md # Skill definition
-│
-├── examples/
-│   ├── 01_basic_agent.py
-│   ├── 02_custom_tools.py
-│   ├── 03_multi_agent.py
-│   ├── 04_tmp_subagent.py
-│   └── 05_entity_agent.py     # Load agent from entity/ using loaders
-│
-└── tests/
-    ├── test_agent.py
-    └── test_tools.py
-```
+| **Config** | `.json` (JSON Schema) | `.md` (YAML frontmatter + body) |
 
 ---
 
