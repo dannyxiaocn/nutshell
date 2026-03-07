@@ -1,242 +1,369 @@
 # Nutshell
 
-A minimal Python Agent library. Simple by design.
-
-```python
-from nutshell import Agent, AnthropicProvider, tool
-
-@tool(description="Add two integers")
-def add(a: int, b: int) -> int:
-    return a + b
-
-agent = Agent(
-    system_prompt="You are a helpful assistant.",
-    tools=[add],
-    model="claude-haiku-4-5-20251001",
-    provider=AnthropicProvider(),
-)
-
-result = await agent.run("What is 17 + 25?")
-print(result.content)
-```
+A minimal Python agent runtime. Agents run as persistent server-managed instances, accessible via a terminal UI or web browser — no Python required to create or run an agent.
 
 ---
 
-## Install
+## How It Works
 
-```bash
-pip install -e .              # installs anthropic + pyyaml + prompt-toolkit
-pip install openai            # optional: OpenAI support
-pip install pytest pytest-asyncio  # for tests
-```
-
----
-
-## Architecture
-
-Nutshell runs as a **server + frontend** pair. The server manages agent instances; the chat UI is one of many possible frontends.
+Nutshell is built around a **server + frontend** model:
 
 ```
-nutshell/
-├── abstract/    ← ABC interfaces (lowest-level dependency)
-├── core/        ← Agent, Instance, IPC, Tool, Skill
-├── loaders/     ← File config loaders (YAML/JSON/Markdown → Python objects)
-├── llm/         ← LLM backends (Anthropic, OpenAI)
-└── infra/       ← Server infrastructure (InstanceWatcher + server entry point)
+nutshell-server          ← always-on backend (manages all instances)
+nutshell-tui             ← terminal UI frontend
+nutshell-web             ← web UI frontend (http://localhost:8080)
 ```
+
+The server and UIs communicate only through files on disk — no network sockets between them. This means you can open multiple UIs against the same server, attach and detach freely, and the server keeps running when you close a UI.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Terminal 1 — start the backend server
+# 1. Install
+pip install -e .
+
+# 2. Set your API key
+export ANTHROPIC_API_KEY=sk-...
+
+# 3. Start the server (keep this running)
 nutshell-server
-# or: python -m nutshell.infra.server
 
-# Terminal 2 — start the chat UI
-nutshell-chat                              # create new instance (random ID)
-nutshell-chat --create my-project          # create named instance
-nutshell-chat --attach my-project          # attach to existing instance
-nutshell-chat --list                       # list all instances
-```
-
-The server watches the `instances/` directory. The chat UI writes a `manifest.json` to create a new instance; the server picks it up within 1 second.
-
-**Commands during chat:**
-
-```
-/kanban       Show current kanban board
-/instances    List all instances
-/status       Show server status for this instance
-/exit         Exit chat (server + instance keep running)
+# 4. Open a UI (in another terminal, or browser)
+nutshell-tui --create my-agent   # terminal UI, creates new instance
+nutshell-web                      # web UI at http://localhost:8080
 ```
 
 ---
 
-## Core Concepts
+## Instance Lifecycle
 
-### Agent
-
-The LLM reasoning unit. Configured with a system prompt, tools, skills, and a provider.
-
-```python
-agent = Agent(
-    system_prompt="You are a concise assistant.",
-    tools=[...],
-    skills=[...],
-    model="claude-haiku-4-5-20251001",
-    provider=AnthropicProvider(),
-    release_policy="persistent",  # "auto" | "manual" | "persistent"
-    max_iterations=20,
-)
-```
-
-Conversation history is maintained across `.run()` calls by default (`release_policy="persistent"`).
-
-### Instance
-
-**The server-side runtime for every agent.** An Instance wraps an Agent with:
-
-- **Persistence** — disk-backed `context.json` (IO event log) and `files/` directory
-- **Kanban board** — `kanban.md` for tracking autonomous work across sessions
-- **Built-in heartbeat** — periodic activation when kanban is non-empty
-- **IPC** — `inbox.jsonl` / `outbox.jsonl` for frontend communication
-- **Concurrency safety** — `asyncio.Lock` ensures `chat()` and `tick()` never overlap
+An **instance** is a running agent session. Every instance has its own directory under `instances/`:
 
 ```
-instances/
-└── my-project/
-    ├── manifest.json    ← created by chat UI; triggers server to start instance
-    ├── kanban.md        ← free-form task tracking (read/write by agent)
-    ├── context.json     ← full IO event log
-    ├── inbox.jsonl      ← UI → server
-    ├── outbox.jsonl     ← server → UI
-    ├── daemon.pid       ← server PID (written while running)
-    └── files/           ← associated files
+instances/my-agent/
+├── manifest.json    ← created by UI; tells server which entity to load
+├── kanban.md        ← task board (read/written by the agent)
+├── context.json     ← full IO log (user messages, agent replies, tool calls)
+├── inbox.jsonl      ← UI → server (append-only)
+├── outbox.jsonl     ← server → UI (append-only, tailed by UI)
+├── daemon.pid       ← server PID while instance is running
+└── files/           ← attached files
 ```
 
-```python
-from nutshell import Instance, Agent
+### States
 
-# Create or resume — constructor is idempotent (existing files never overwritten)
-instance = Instance(agent=agent, instance_id="my-project")
-ipc = FileIPC(instance.instance_dir)
-await instance.run_daemon_loop(ipc)
+```
+[created]  →  [active]  ←→  [sleeping]
+                  ↑               ↓
+              user msg        agent done
+                  ↑               ↓
+              /start          /stop (heartbeat paused)
 ```
 
-**Methods:**
+| State | What's happening |
+|-------|-----------------|
+| **active** | Agent is currently running (`agent.run()` in progress) |
+| **sleeping** | Agent is idle, loop polls every 0.5s for inbox + heartbeat |
+| **stopped** | `status: stopped` in manifest; heartbeat paused; still accepts user messages |
 
-| Method | Description |
-|--------|-------------|
-| `chat(message)` | User-driven conversation, logs to context.json + outbox |
-| `tick()` | Single heartbeat: runs agent if kanban non-empty |
-| `run_daemon_loop(ipc)` | Full server loop: polls inbox, fires heartbeat, writes outbox |
-| `is_done()` | True when kanban is empty |
+### What wakes an instance
 
-### Kanban Board
+1. **User message** — UI writes to `inbox.jsonl`; instance picks it up within 0.5s. A stopped instance is automatically un-stopped when a user message arrives.
+2. **Heartbeat** — every `heartbeat_interval` seconds (default: 10s), the server checks if `kanban.md` is non-empty. If so, it invokes the agent to continue work.
 
-Every Instance injects two tools into its agent automatically:
+### Heartbeat timing
 
-| Tool | Description |
-|------|-------------|
-| `read_kanban()` | Read current kanban content |
-| `write_kanban(content)` | Overwrite kanban. `write_kanban("")` signals all work done |
+The heartbeat interval is counted **from when the previous tick completes**, not from when it starts. So if an agent takes 30s to process tasks and the interval is 10s, the next check happens 10s after it finishes — never back-to-back.
 
-```markdown
-# kanban.md (example)
-- Summarize the report
-- Draft follow-up email
-- Update project timeline
+### Stop / Start
+
+```
+/stop   → sets manifest status=stopped; heartbeat skips this instance
+/start  → sets manifest status=active; heartbeat resumes
 ```
 
-### Tool
+Available in both TUI (`/stop`, `/start` commands) and Web UI (⏸/▶ buttons).
+A user message always wakes a stopped instance regardless of status.
 
-External actions executed outside the LLM loop.
+### Server startup recovery
 
-```python
-from nutshell import tool, Tool
-
-@tool(description="Search the web")
-async def search(query: str) -> str:
-    ...
-
-# Or construct manually
-my_tool = Tool(name="search", description="Search the web", func=search_func)
-```
-
-The `@tool` decorator auto-generates JSON Schema from type annotations.
-
-### Skill
-
-Injects knowledge or behavior into the agent's system prompt at runtime.
-
-```python
-from nutshell import Skill
-
-coding_skill = Skill(
-    name="coding",
-    description="Expert coding assistant",
-    prompt_injection="Always write clean, idiomatic code.",
-)
-
-agent = Agent(skills=[coding_skill], ...)
-```
-
-### Provider
-
-Pluggable LLM backend.
-
-```python
-from nutshell import AnthropicProvider
-from nutshell.llm.openai import OpenAIProvider
-
-provider = AnthropicProvider(api_key="sk-...")   # or ANTHROPIC_API_KEY env var
-provider = OpenAIProvider(api_key="sk-...")       # or OPENAI_API_KEY env var
-```
+On startup, the server scans all `instances/` subdirectories. Any instance with a `manifest.json` (and `status != stopped`) is resumed — its loop restarts, and if `kanban.md` has tasks, the heartbeat will pick them up within the first interval.
 
 ---
 
-## External File Loaders
+## Creating an Agent
 
-Load agent configuration from files instead of Python.
+Agents are defined entirely in files — no Python needed. Each agent lives in an **entity directory**:
 
-### AgentLoader — `entity/<name>/` → `Agent`
-
-```python
-from nutshell import AgentLoader
-from pathlib import Path
-
-agent = AgentLoader().load(Path("entity/agent_core"))
+```
+entity/
+└── my-agent/
+    ├── agent.yaml          ← manifest: model, tools, skills, prompt
+    ├── prompts/
+    │   └── system.md       ← system prompt (plain markdown)
+    ├── skills/
+    │   └── coding.md       ← skill definitions (YAML frontmatter + body)
+    └── tools/
+        └── search.json     ← tool schema (JSON Schema)
 ```
 
-### Agent manifest (`agent.yaml`)
+### `agent.yaml`
 
 ```yaml
-name: agent_core
-description: A general-purpose assistant.
-model: claude-haiku-4-5-20251001
-release_policy: persistent
+name: my-agent
+description: A focused coding assistant.
+model: claude-sonnet-4-6          # or claude-haiku-4-5-20251001, etc.
+release_policy: persistent        # persistent | auto | manual
 max_iterations: 20
 
 prompts:
   system: prompts/system.md
 
-tools:
-  - tools/echo.json
-
 skills:
-  - skills/reasoning.md
+  - skills/coding.md
+
+tools:
+  - tools/search.json
 ```
 
-### PromptLoader / SkillLoader / ToolLoader
+**`release_policy`** controls conversation history:
+- `persistent` — history kept across all activations (default, recommended)
+- `auto` — history cleared after each `agent.run()` call
+- `manual` — cleared only when explicitly closed
+
+### `prompts/system.md`
+
+Plain markdown. This is the agent's identity and rules. Every agent that uses the kanban board should include kanban instructions:
+
+```markdown
+You are a focused coding assistant.
+
+## Kanban Board
+
+You have a persistent kanban board for tracking work across sessions.
+Use read_kanban to check outstanding tasks.
+Use write_kanban to update the board when you finish each activation:
+- Remove completed tasks.
+- Leave unfinished tasks with notes on next steps.
+- Call write_kanban("") when all work is done.
+An empty kanban means no outstanding work remains.
+```
+
+### `skills/*.md`
+
+Skills inject additional context into the system prompt. They use YAML frontmatter:
+
+```markdown
+---
+name: coding
+description: Expert coding practices
+---
+
+# Coding Standards
+
+Always write type-annotated Python.
+Prefer composition over inheritance.
+Write tests for non-trivial logic.
+```
+
+### `tools/*.json`
+
+Tool schemas follow JSON Schema format. The `name` must match a registered implementation (see [Extending with Python](#extending-with-python)):
+
+```json
+{
+  "name": "search_web",
+  "description": "Search the web and return top results.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "Search query" }
+    },
+    "required": ["query"]
+  }
+}
+```
+
+### Using your entity
+
+When creating an instance from the UI, specify your entity path:
+
+```bash
+# TUI
+nutshell-tui --create my-agent --entity entity/my-agent
+
+# Web UI
+# Click "+ New", enter the entity path in the dialog
+```
+
+The server reads `manifest.json` written by the UI, loads your entity, and starts the agent.
+
+---
+
+## Terminal UI (`nutshell-tui`)
+
+```bash
+nutshell-tui                          # create new instance (timestamp ID)
+nutshell-tui --create my-project      # create named instance
+nutshell-tui --attach my-project      # attach to existing instance
+nutshell-tui --entity entity/my-agent # use a specific entity
+nutshell-tui --instances-dir ~/work/instances
+```
+
+**Layout:**
+
+```
+┌──────────────────────────────────┬──────────────────────┐
+│  Chat History                    │  Kanban              │
+│                                  │  ─────────────────   │
+│  agent❯ I've started the tasks.  │  - Write report      │
+│  you  ❯ Add one more task.       │  - Review PR         │
+│  agent❯ Added to kanban.         │                      │
+│                                  │  Instances           │
+│                                  │  ─────────────────   │
+│                                  │  ● my-project  ◀    │
+│                                  │  ○ old-project       │
+├──────────────────────────────────┴──────────────────────┤
+│  > Type a message...                                     │
+├──────────────────────────────────────────────────────────┤
+│  server: running (pid 12345)  │  instance: my-project   │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Commands:**
+
+| Command | Action |
+|---------|--------|
+| `/kanban` | Show kanban content inline |
+| `/status` | Show server status and PID |
+| `/stop` | Pause heartbeat for this instance |
+| `/start` | Resume heartbeat |
+| `/exit` | Exit TUI (server keeps running) |
+| `Ctrl+N` | Create new instance |
+| `q` | Quit |
+
+---
+
+## Web UI (`nutshell-web`)
+
+```bash
+nutshell-web                          # http://localhost:8080
+nutshell-web --port 9000
+nutshell-web --instances-dir ~/work/instances
+```
+
+**Features:**
+- Left panel: instance list with live/stopped status indicators
+- Center: real-time chat via Server-Sent Events (SSE)
+- Right panel: kanban board with inline editor
+- ⏸ Stop / ▶ Start buttons per instance
+
+**API** (for custom integrations):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/instances` | List all instances |
+| `POST` | `/api/instances` | Create instance |
+| `GET` | `/api/instances/{id}/events` | SSE stream of outbox |
+| `POST` | `/api/instances/{id}/messages` | Send user message |
+| `GET` | `/api/instances/{id}/kanban` | Read kanban |
+| `PUT` | `/api/instances/{id}/kanban` | Write kanban |
+| `POST` | `/api/instances/{id}/stop` | Pause heartbeat |
+| `POST` | `/api/instances/{id}/start` | Resume heartbeat |
+
+---
+
+## Project Structure
+
+```
+nutshell/
+├── nutshell/
+│   ├── abstract/          # ABC interfaces
+│   │   ├── agent.py       # BaseAgent
+│   │   ├── tool.py        # BaseTool
+│   │   ├── skill.py       # BaseSkill
+│   │   └── loader.py      # BaseLoader
+│   ├── core/              # Runtime
+│   │   ├── agent.py       # Agent — LLM loop
+│   │   ├── instance.py    # Instance — persistent session + heartbeat
+│   │   ├── ipc.py         # FileIPC — inbox/outbox file communication
+│   │   ├── tool.py        # Tool + @tool decorator
+│   │   ├── skill.py       # Skill
+│   │   └── types.py       # Message, ToolCall, AgentResult
+│   ├── loaders/           # Entity file loaders
+│   │   ├── agent.py       # AgentLoader: entity/ → Agent
+│   │   ├── prompt.py      # PromptLoader: .md → str
+│   │   ├── tool.py        # ToolLoader: .json → Tool
+│   │   └── skill.py       # SkillLoader: .md → Skill
+│   ├── llm/               # LLM backends
+│   │   ├── anthropic.py   # AnthropicProvider (default)
+│   │   └── openai.py      # OpenAIProvider
+│   ├── infra/             # Server infrastructure
+│   │   ├── server.py      # nutshell-server entry point
+│   │   └── watcher.py     # InstanceWatcher — scans instances/ directory
+│   └── ui/                # Frontend UIs
+│       ├── tui.py         # nutshell-tui (Textual)
+│       └── web.py         # nutshell-web (FastAPI + SSE)
+│
+├── entity/                # Agent definitions (plain files, edit these)
+│   └── agent_core/        # Default general-purpose agent
+│       ├── agent.yaml
+│       ├── prompts/system.md
+│       ├── skills/reasoning.md
+│       └── tools/echo.json
+│
+├── instances/             # Runtime state (auto-created)
+│   └── <id>/
+│       ├── manifest.json
+│       ├── kanban.md
+│       ├── context.json
+│       ├── inbox.jsonl
+│       ├── outbox.jsonl
+│       └── files/
+│
+└── tests/
+    ├── test_agent.py
+    └── test_tools.py
+```
+
+---
+
+## Extending with Python
+
+If you want to implement tool logic in Python (vs. just defining the schema in JSON), register implementations with `ToolLoader`:
 
 ```python
-from nutshell.loaders import PromptLoader, SkillLoader, ToolLoader
+from nutshell import AgentLoader
+from nutshell.llm.anthropic import AnthropicProvider
+from pathlib import Path
 
-system_prompt = PromptLoader().load(Path("entity/agent_core/prompts/system.md"))
-skills = SkillLoader().load_dir(Path("entity/agent_core/skills/"))
-tools = ToolLoader(impl_registry={"echo": lambda text: text}).load_dir(Path("entity/agent_core/tools/"))
+def search_web(query: str) -> str:
+    # your implementation
+    return f"Results for: {query}"
+
+agent = AgentLoader(impl_registry={"search_web": search_web}).load(
+    Path("entity/my-agent")
+)
+agent._provider = AnthropicProvider()
+```
+
+Or use the `@tool` decorator directly:
+
+```python
+from nutshell import Agent, tool
+from nutshell.llm.anthropic import AnthropicProvider
+
+@tool(description="Search the web")
+async def search(query: str) -> str:
+    ...
+
+agent = Agent(
+    system_prompt="You are a research assistant.",
+    tools=[search],
+    provider=AnthropicProvider(),
+)
 ```
 
 ---
@@ -246,17 +373,17 @@ tools = ToolLoader(impl_registry={"echo": lambda text: text}).load_dir(Path("ent
 ### Agent-as-Tool
 
 ```python
-writer = Agent(system_prompt="You are a creative writer.", release_policy="auto")
+writer = Agent(system_prompt="You are a writer.", release_policy="auto")
 
 orchestrator = Agent(
-    system_prompt="You coordinate other agents.",
-    tools=[writer.as_tool("write_paragraph", "Write a short paragraph on a topic.")],
+    system_prompt="You coordinate agents.",
+    tools=[writer.as_tool("write", "Write a paragraph on a topic.")],
 )
 
-result = await orchestrator.run("Write a paragraph about the ocean.")
+result = await orchestrator.run("Write about black holes.")
 ```
 
-### Message Passing
+### Sequential pipeline
 
 ```python
 research = await researcher.run("Key facts about black holes")
@@ -265,127 +392,8 @@ summary  = await summarizer.run(research.content)
 
 ---
 
-## AgentResult
-
-Every `.run()` and `.chat()` returns an `AgentResult`:
-
-```python
-result.content      # str: final assistant response
-result.tool_calls   # list[ToolCall]: all tool calls made this run
-result.messages     # list[Message]: full conversation history
-```
-
----
-
-## Project Structure
-
-```
-nutshell/
-├── nutshell/
-│   ├── abstract/              # ABC interfaces
-│   │   ├── agent.py           # BaseAgent(ABC)
-│   │   ├── tool.py            # BaseTool(ABC)
-│   │   ├── skill.py           # BaseSkill(ABC)
-│   │   └── loader.py          # BaseLoader(ABC, Generic[T])
-│   ├── core/                  # Concrete implementations
-│   │   ├── agent.py           # Agent(BaseAgent)
-│   │   ├── instance.py        # Instance — server-mode persistent runtime
-│   │   ├── ipc.py             # FileIPC — inbox/outbox file communication
-│   │   ├── tool.py            # Tool(BaseTool) + @tool decorator
-│   │   ├── skill.py           # Skill(BaseSkill)
-│   │   └── types.py           # Message, ToolCall, AgentResult
-│   ├── loaders/               # External file loaders
-│   │   ├── agent.py           # AgentLoader: entity/ → Agent
-│   │   ├── prompt.py          # PromptLoader: .md → str
-│   │   ├── tool.py            # ToolLoader: .json → Tool
-│   │   └── skill.py           # SkillLoader: .md+frontmatter → Skill
-│   ├── llm/                   # LLM backends
-│   │   ├── anthropic.py       # AnthropicProvider
-│   │   └── openai.py          # OpenAIProvider
-│   └── infra/                 # Server infrastructure
-│       ├── server.py          # Entry point: nutshell-server
-│       └── watcher.py         # InstanceWatcher — polls instances/ directory
-│
-├── entity/                    # Agent content (plain files)
-│   └── agent_core/
-│       ├── agent.yaml
-│       ├── prompts/system.md
-│       ├── tools/echo.json
-│       └── skills/reasoning.md
-│
-├── instances/                 # Runtime state (created automatically)
-│   └── <id>/
-│       ├── manifest.json
-│       ├── kanban.md
-│       ├── context.json
-│       ├── inbox.jsonl
-│       ├── outbox.jsonl
-│       └── files/
-│
-├── examples/
-│   ├── 01_basic_agent.py
-│   ├── 02_custom_tools.py
-│   ├── 03_multi_agent.py
-│   ├── 04_tmp_subagent.py
-│   ├── 05_entity_agent.py
-│   ├── 06_heartbeat_agent.py  # server-mode instance + kanban
-│   └── 07_daemon_instance.py
-│
-├── chat.py                    # Chat UI frontend (nutshell-chat)
-└── tests/
-    ├── test_agent.py
-    └── test_tools.py
-```
-
----
-
-## Design Principles
-
-### Execution Loop
-
-```
-Instance.chat(input) / Instance.tick()
-  │
-  ├── acquire agent_lock  (blocks concurrent chat/tick)
-  │
-  ├── agent.run(input)
-  │   ├── 1. build system_prompt (base + skills)
-  │   ├── 2. provider.complete(messages, tools, model)
-  │   ├── 3. tool_calls? → execute concurrently → append → goto 2
-  │   └── 4. return AgentResult
-  │
-  ├── release agent_lock
-  └── append event to context.json + outbox.jsonl
-```
-
-### Heartbeat Loop (inside run_daemon_loop)
-
-```
-loop every 0.5s:
-  ├── poll inbox.jsonl → chat() for each user message
-  └── every heartbeat_interval seconds:
-      └── tick()
-          ├── kanban empty? → skip
-          └── agent.run(kanban_prompt)
-              ├── INSTANCE_FINISHED in response? → clear kanban, write outbox
-              └── otherwise → write heartbeat output to outbox
-```
-
-### Tool vs Skill
-
-| | Tool | Skill |
-|-|------|-------|
-| **Runs** | Outside LLM loop | Inside LLM reasoning |
-| **Purpose** | Execute actions (API, I/O) | Inject domain expertise |
-| **Mechanism** | LLM calls it by name | Appended to system prompt |
-| **Config** | `.json` (JSON Schema) | `.md` (YAML frontmatter + body) |
-
----
-
 ## Tests
 
 ```bash
-pytest tests/
+pytest tests/    # uses MockProvider, no API key needed
 ```
-
-Tests use a `MockProvider` — no API key required.

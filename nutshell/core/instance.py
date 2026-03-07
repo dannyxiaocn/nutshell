@@ -138,46 +138,91 @@ class Instance:
 
         return result
 
+    # ── Stop / Start ───────────────────────────────────────────────
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.instance_dir / "manifest.json"
+
+    def is_stopped(self) -> bool:
+        """True if manifest has status=stopped."""
+        if not self.manifest_path.exists():
+            return False
+        try:
+            manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+            return manifest.get("status") == "stopped"
+        except Exception:
+            return False
+
+    def set_status(self, status: str) -> None:
+        """Write status field to manifest.json."""
+        if not self.manifest_path.exists():
+            return
+        try:
+            manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+            manifest["status"] = status
+            self.manifest_path.write_text(
+                json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
     # ── Server loop ────────────────────────────────────────────────
 
     async def run_daemon_loop(self, ipc: "FileIPC") -> None:
         """Run as a server-managed instance.
 
-        Polls inbox.jsonl for user messages, fires heartbeat ticks,
-        and writes all output to outbox.jsonl. Blocks until done or cancelled.
+        Polls inbox.jsonl for user messages every 0.5s.
+        Fires heartbeat ticks every heartbeat_interval seconds.
+
+        Heartbeat is skipped when:
+          - instance status == "stopped" (user issued /stop)
+          - agent_lock is held (agent already running)
+
+        A user message always wakes a stopped instance (clears stopped status).
+        last_tick_time is updated AFTER the tick completes, so tick duration
+        never eats into the next interval.
         """
         self._ipc = ipc
         ipc.write_pid()
-        self._syslog({"event": "instance_created", "id": self._instance_id})
+        self._syslog({"event": "instance_started", "id": self._instance_id})
 
         inbox_offset = 0
         last_tick_time = asyncio.get_event_loop().time()
 
         try:
             while True:
-                # Poll inbox
+                # Poll inbox — user messages always processed, even when stopped
                 msgs, inbox_offset = ipc.poll_inbox(inbox_offset)
                 for msg in msgs:
                     if msg.get("type") == "user":
                         content = msg.get("content", "")
                         msg_id = msg.get("id")
                         self._syslog({"event": "user_message", "id": msg_id})
+                        # User message wakes a stopped instance
+                        if self.is_stopped():
+                            self.set_status("active")
+                            ipc.append_outbox({"type": "status", "value": "resumed"})
                         try:
                             await self.chat(content, reply_to=msg_id)
                         except Exception as exc:
                             ipc.append_outbox({"type": "error", "content": str(exc)})
 
-                # Heartbeat timer
+                # Heartbeat timer — check elapsed since last tick COMPLETED
                 now = asyncio.get_event_loop().time()
                 if now - last_tick_time >= self._heartbeat_interval:
-                    last_tick_time = now
-                    if self._agent_lock.locked():
+                    if self.is_stopped():
+                        self._syslog({"event": "heartbeat_skipped", "reason": "stopped"})
+                    elif self._agent_lock.locked():
                         self._syslog({"event": "heartbeat_skipped", "reason": "agent_busy"})
                     else:
                         try:
                             await self.tick()
                         except Exception as exc:
                             self._syslog({"event": "heartbeat_error", "error": str(exc)})
+                    # Reset timer AFTER tick completes (not before),
+                    # so tick duration never cuts into the next interval.
+                    last_tick_time = asyncio.get_event_loop().time()
 
                 await asyncio.sleep(0.5)
 
