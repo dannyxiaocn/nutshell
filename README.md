@@ -1,4 +1,4 @@
-# Nutshell
+# Nutshell `v0.1.1`
 
 A minimal Python agent runtime. Agents run as persistent server-managed instances, accessible via a terminal UI or web browser — no Python required to create or run an agent.
 
@@ -45,7 +45,7 @@ An **instance** is a running agent session. Every instance has its own directory
 instances/my-agent/
 ├── manifest.json    ← created by UI; tells server which entity to load
 ├── kanban.md        ← task board (read/written by the agent)
-├── context.json     ← full IO log (user messages, agent replies, tool calls)
+├── context.json     ← conversation log: "turn" events with full Anthropic-format messages
 ├── inbox.jsonl      ← UI → server (append-only)
 ├── outbox.jsonl     ← server → UI (append-only, tailed by UI)
 ├── daemon.pid       ← server PID while instance is running
@@ -80,16 +80,25 @@ The heartbeat interval is counted **from when the previous tick completes**, not
 ### Stop / Start
 
 ```
-/stop   → sets manifest status=stopped; heartbeat skips this instance
+/stop   → sets manifest status=stopped; heartbeat pauses; user messages still work
 /start  → sets manifest status=active; heartbeat resumes
 ```
 
 Available in both TUI (`/stop`, `/start` commands) and Web UI (⏸/▶ buttons).
 A user message always wakes a stopped instance regardless of status.
 
+**Instance indicator** (Web UI):
+- 🟢 Green — daemon running, not stopped, kanban has pending tasks
+- ⚫ Grey — stopped, kanban empty, or daemon not running
+
 ### Server startup recovery
 
-On startup, the server scans all `instances/` subdirectories. Any instance with a `manifest.json` (and `status != stopped`) is resumed — its loop restarts, and if `kanban.md` has tasks, the heartbeat will pick them up within the first interval.
+On startup, the server scans all `instances/` subdirectories. Any instance with a `manifest.json` (and `status != stopped`) is resumed automatically:
+
+- **Conversation history** is restored from `context.json` — the agent remembers the full prior conversation including tool calls.
+- **Heartbeat** resumes immediately if `kanban.md` has pending tasks.
+- Instances with an empty kanban start silently (no log noise); instances with pending work log `Resumed: <id> (N messages, kanban pending)`.
+- Stopped instances (`status: stopped`) are skipped until the user clicks ▶ Start.
 
 ---
 
@@ -264,9 +273,10 @@ nutshell-web --instances-dir ~/work/instances
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/instances` | List all instances |
+| `GET` | `/api/instances` | List all instances (with alive/stopped/kanban status) |
 | `POST` | `/api/instances` | Create instance |
-| `GET` | `/api/instances/{id}/events` | SSE stream of outbox |
+| `GET` | `/api/instances/{id}/history` | Full outbox dump + current byte offset (for attach) |
+| `GET` | `/api/instances/{id}/events?since=N` | SSE stream from byte offset (new events only) |
 | `POST` | `/api/instances/{id}/messages` | Send user message |
 | `GET` | `/api/instances/{id}/kanban` | Read kanban |
 | `PUT` | `/api/instances/{id}/kanban` | Write kanban |
@@ -397,3 +407,20 @@ summary  = await summarizer.run(research.content)
 ```bash
 pytest tests/    # uses MockProvider, no API key needed
 ```
+
+---
+
+## Changelog
+
+### v0.1.1
+- **History resume** — agent restores full conversation history (including tool calls) from `context.json` on server restart; no more "who are you?" on reconnect
+- **Lossless context storage** — `context.json` now stores `"turn"` events with complete Anthropic-format messages (tool_use IDs + tool_result content preserved)
+- **Inbox replay prevention** — `inbox_offset` initialized to current file size; old messages are not replayed when the server restarts
+- **Heartbeat ghost output fix** — if the user stops an instance while a heartbeat is in-flight, the heartbeat result is silently discarded from the UI
+- **Stop/Start indicator** — instance dot is green only when daemon is running, not stopped, and kanban has work; turns grey immediately on stop
+- **Crashed instance restart** — instances that crashed can be restarted via ▶ Start without restarting the server
+- **Server startup log** — discovered instances printed as one line: `Discovered: A, B, C [total N]`
+- **Heartbeat UI styling** — heartbeat-triggered agent responses show `⏱ agent` label with distinct color
+
+### v0.1.0
+- Initial release: server + TUI + web UI, persistent instances, heartbeat, kanban
