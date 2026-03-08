@@ -22,7 +22,7 @@ class Instance:
 
     Disk layout: instances/<id>/
         kanban.md        — free-form task notes (plain file read/write)
-        context.json     — pure IO log: user / agent / tool events
+        context.json     — conversation log: list of "turn" events (Anthropic-format messages)
         .nutshell_log    — system operations log (JSONL, append-only)
         inbox.jsonl      — UI → server
         outbox.jsonl     — server → UI
@@ -82,11 +82,9 @@ class Instance:
     def load_history(self) -> None:
         """Restore agent._history from context.json on resume.
 
-        Reconstructs user/assistant message pairs. Tool call entries are
-        skipped (IDs are not stored), but conversation flow is preserved.
-        Heartbeat-triggered agent events and any orphan assistant messages
-        (no preceding user) are filtered out to keep history valid for the
-        Anthropic API (must alternate user/assistant).
+        Reads "turn" events and flattens their messages directly into
+        agent._history, preserving full Anthropic-format content including
+        tool_use IDs and tool_result blocks.
         """
         if not self._context_path.exists():
             return
@@ -98,21 +96,9 @@ class Instance:
         from nutshell.core.types import Message
         history: list[Message] = []
         for event in events:
-            etype = event.get("type")
-            if etype == "turn":
-                # New format: full Anthropic-compatible messages stored per-turn.
-                # Includes user, tool_use/tool_result pairs (with IDs), final assistant.
+            if event.get("type") == "turn":
                 for m in event.get("messages", []):
                     history.append(Message(role=m["role"], content=m["content"]))
-            elif etype == "user" and event.get("content"):
-                # Backward compat: old flat-event format
-                history.append(Message(role="user", content=event["content"]))
-            elif etype == "agent" and event.get("content"):
-                # Backward compat: skip orphan assistant messages (heartbeat with no user)
-                if not history or history[-1].role != "user":
-                    continue
-                history.append(Message(role="assistant", content=event["content"]))
-            # tool / status events in old format — skip (no IDs to reconstruct)
 
         self._agent._history = history
 
@@ -334,7 +320,7 @@ class Instance:
     # ── Internal ───────────────────────────────────────────────────
 
     def _append_context(self, event: dict) -> None:
-        """Append to context.json (pure IO log: user/agent/tool/status)."""
+        """Append an event to context.json."""
         event.setdefault("ts", datetime.now().isoformat())
         events: list = json.loads(self._context_path.read_text(encoding="utf-8"))
         events.append(event)
