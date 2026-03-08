@@ -55,11 +55,15 @@ def create_app(instances_dir: Path) -> FastAPI:
             except Exception:
                 manifest = {}
             pid_path = d / "daemon.pid"
+            is_stopped = manifest.get("status") == "stopped"
+            kanban_path = d / "kanban.md"
+            has_kanban = kanban_path.exists() and bool(kanban_path.read_text(encoding="utf-8").strip())
             result.append({
                 "id": d.name,
                 "entity": manifest.get("entity", "?"),
                 "created_at": manifest.get("created_at", ""),
-                "alive": pid_path.exists(),
+                # Green only when daemon is running, not stopped, and has pending work
+                "alive": pid_path.exists() and not is_stopped and has_kanban,
             })
         return result
 
@@ -128,17 +132,53 @@ def create_app(instances_dir: Path) -> FastAPI:
             },
         )
 
+    # ── History ───────────────────────────────────────────────────────────
+
+    @app.get("/api/instances/{instance_id}/history")
+    async def get_history(instance_id: str):
+        """Return all outbox events as JSON array + current byte offset.
+
+        JS loads this once on attach to render full history instantly,
+        then starts SSE from the returned offset for new events only.
+        """
+        outbox_path = instances_dir / instance_id / "outbox.jsonl"
+        events: list[dict] = []
+        size = 0
+        if outbox_path.exists():
+            raw = outbox_path.read_bytes()
+            size = len(raw)
+            for line in raw.decode("utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        events.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        return {"events": events, "offset": size}
+
     # ── Stop / Start ──────────────────────────────────────────────────────
 
     @app.post("/api/instances/{instance_id}/stop")
     async def stop_instance(instance_id: str):
-        _set_manifest_status(instances_dir / instance_id / "manifest.json", "stopped")
-        return {"ok": True, "status": "stopped"}
+        from nutshell.core.ipc import FileIPC
+        instance_dir = instances_dir / instance_id
+        _set_manifest_status(instance_dir / "manifest.json", "stopped")
+        if instance_dir.exists():
+            FileIPC(instance_dir).append_outbox(
+                {"type": "status", "value": "heartbeat paused — use ▶ Start to resume"}
+            )
+        return {"ok": True}
 
     @app.post("/api/instances/{instance_id}/start")
     async def start_instance(instance_id: str):
-        _set_manifest_status(instances_dir / instance_id / "manifest.json", "active")
-        return {"ok": True, "status": "active"}
+        from nutshell.core.ipc import FileIPC
+        instance_dir = instances_dir / instance_id
+        _set_manifest_status(instance_dir / "manifest.json", "active")
+        if instance_dir.exists():
+            FileIPC(instance_dir).append_outbox(
+                {"type": "status", "value": "heartbeat resumed"}
+            )
+        return {"ok": True}
 
     # ── Kanban ────────────────────────────────────────────────────────────
 
@@ -232,13 +272,15 @@ _HTML = """<!DOCTYPE html>
   #messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
   .msg { padding: 6px 10px; border-radius: 6px; max-width: 90%; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
   .msg.agent { background: var(--bg3); border-left: 3px solid var(--accent); color: var(--text); }
+  .msg.agent.heartbeat-agent { border-left-color: #6b9fd4; opacity: 0.85; }
   .msg.user  { background: #1c2a3a; border-left: 3px solid var(--green); color: var(--text); align-self: flex-end; }
   .msg.tool  { background: var(--bg2); color: var(--yellow); font-size: 11px; border-left: 3px solid var(--yellow); }
-  .msg.heartbeat { color: var(--yellow); font-size: 11px; opacity: 0.8; }
+  .msg.heartbeat_trigger { background: #1a2535; border: 1px dashed #3a5a8a; color: #6b9fd4; font-size: 11px; align-self: flex-end; border-radius: 12px; padding: 3px 10px; }
   .msg.heartbeat_finished { color: var(--muted); font-size: 11px; }
   .msg.status { color: var(--muted); font-size: 11px; text-align: center; align-self: center; }
   .msg.error  { background: #2d1515; border-left: 3px solid var(--red); color: var(--red); }
   .msg-label  { font-size: 10px; color: var(--muted); margin-bottom: 2px; }
+  .msg-ts { font-size: 10px; color: var(--muted); opacity: 0.5; margin-top: 3px; }
 
   /* Input */
   #input-row { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; background: var(--bg2); }
@@ -328,7 +370,6 @@ _HTML = """<!DOCTYPE html>
     instances = await res.json();
     renderInstanceList();
 
-    // Update server status based on any alive instance
     const alive = instances.some(i => i.alive);
     const el = document.getElementById('server-status');
     el.textContent = alive ? '● server running' : '○ server stopped';
@@ -357,6 +398,9 @@ _HTML = """<!DOCTYPE html>
     currentInstance = id;
     renderInstanceList();
 
+    // Close old SSE
+    if (eventSource) { eventSource.close(); eventSource = null; }
+
     // Clear chat
     const msgs = document.getElementById('messages');
     msgs.innerHTML = '';
@@ -365,20 +409,18 @@ _HTML = """<!DOCTYPE html>
     document.getElementById('msg-input').disabled = false;
     document.getElementById('send-btn').disabled = false;
 
-    // Close old SSE
-    if (eventSource) { eventSource.close(); eventSource = null; }
+    // Load full history instantly from outbox, get current offset
+    const histRes = await fetch(`/api/instances/${id}/history`);
+    const { events, offset } = await histRes.json();
+    for (const event of events) appendEvent(event);
 
-    // Connect SSE
-    eventSource = new EventSource(`/api/instances/${id}/events`);
-    eventSource.onmessage = e => appendEvent(JSON.parse(e.data));
-
-    // Listen to each event type explicitly
-    const types = ['agent','user','tool','heartbeat','heartbeat_finished','status','error'];
+    // SSE from current offset — only new events from here on
+    eventSource = new EventSource(`/api/instances/${id}/events?since=${offset}`);
+    const types = ['agent','user','tool','heartbeat_trigger','heartbeat_finished','status','error'];
     for (const t of types) {
       eventSource.addEventListener(t, e => appendEvent(JSON.parse(e.data)));
     }
 
-    // Refresh kanban
     refreshKanban();
   }
 
@@ -399,6 +441,14 @@ _HTML = """<!DOCTYPE html>
 
   // ── Chat ──────────────────────────────────────────────────────────────
 
+  function fmtTime(ts) {
+    if (!ts) return '';
+    try {
+      const d = new Date(ts);
+      return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch { return ''; }
+  }
+
   function appendEvent(event) {
     const msgs = document.getElementById('messages');
     const etype = event.type || 'message';
@@ -409,15 +459,16 @@ _HTML = """<!DOCTYPE html>
     let text = '';
 
     if (etype === 'agent') {
-      label = 'agent';
+      label = event.triggered_by === 'heartbeat' ? '⏱ agent' : 'agent';
+      div.className += event.triggered_by === 'heartbeat' ? ' heartbeat-agent' : '';
       text = event.content || '';
     } else if (etype === 'user') {
       label = 'you';
       text = event.content || '';
     } else if (etype === 'tool') {
       text = `[tool] ${event.name}(${JSON.stringify(event.input || {})})`;
-    } else if (etype === 'heartbeat') {
-      text = `[heartbeat] ${event.content || ''}`;
+    } else if (etype === 'heartbeat_trigger') {
+      text = '⏱ Heartbeat';
     } else if (etype === 'heartbeat_finished') {
       text = '[instance finished — all tasks done]';
     } else if (etype === 'status') {
@@ -428,10 +479,15 @@ _HTML = """<!DOCTYPE html>
       text = JSON.stringify(event);
     }
 
+    const ts = fmtTime(event.ts);
+    const tsHtml = ts ? `<div class="msg-ts">${ts}</div>` : '';
+
     if (label) {
-      div.innerHTML = `<div class="msg-label">${label}</div>${escHtml(text)}`;
+      div.innerHTML = `<div class="msg-label">${label}</div>${escHtml(text)}${tsHtml}`;
+    } else if (etype === 'heartbeat_trigger') {
+      div.innerHTML = `${escHtml(text)}${tsHtml}`;
     } else {
-      div.textContent = text;
+      div.innerHTML = `${escHtml(text)}${tsHtml}`;
     }
 
     msgs.appendChild(div);
@@ -447,9 +503,6 @@ _HTML = """<!DOCTYPE html>
     const text = input.value.trim();
     if (!text || !currentInstance) return;
     input.value = '';
-
-    // Show in chat immediately
-    appendEvent({ type: 'user', content: text });
 
     await fetch(`/api/instances/${currentInstance}/messages`, {
       method: 'POST',
@@ -494,13 +547,13 @@ _HTML = """<!DOCTYPE html>
   async function stopInstance() {
     if (!currentInstance) return;
     await fetch(`/api/instances/${currentInstance}/stop`, { method: 'POST' });
-    appendEvent({ type: 'status', value: 'heartbeat paused (/start to resume)' });
+    await refreshInstances(); // immediately reflect stopped state in indicator
   }
 
   async function startInstance() {
     if (!currentInstance) return;
     await fetch(`/api/instances/${currentInstance}/start`, { method: 'POST' });
-    appendEvent({ type: 'status', value: 'heartbeat resumed' });
+    await refreshInstances(); // immediately reflect resumed state in indicator
   }
 
   // ── Utils ─────────────────────────────────────────────────────────────

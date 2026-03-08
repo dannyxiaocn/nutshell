@@ -77,18 +77,64 @@ class Instance:
 
         agent.tools.extend([read_kanban, write_kanban])
 
+    # ── History persistence ────────────────────────────────────────
+
+    def load_history(self) -> None:
+        """Restore agent._history from context.json on resume.
+
+        Reconstructs user/assistant message pairs. Tool call entries are
+        skipped (IDs are not stored), but conversation flow is preserved.
+        Heartbeat-triggered agent events and any orphan assistant messages
+        (no preceding user) are filtered out to keep history valid for the
+        Anthropic API (must alternate user/assistant).
+        """
+        if not self._context_path.exists():
+            return
+        try:
+            events: list = json.loads(self._context_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        from nutshell.core.types import Message
+        history: list[Message] = []
+        for event in events:
+            etype = event.get("type")
+            if etype == "turn":
+                # New format: full Anthropic-compatible messages stored per-turn.
+                # Includes user, tool_use/tool_result pairs (with IDs), final assistant.
+                for m in event.get("messages", []):
+                    history.append(Message(role=m["role"], content=m["content"]))
+            elif etype == "user" and event.get("content"):
+                # Backward compat: old flat-event format
+                history.append(Message(role="user", content=event["content"]))
+            elif etype == "agent" and event.get("content"):
+                # Backward compat: skip orphan assistant messages (heartbeat with no user)
+                if not history or history[-1].role != "user":
+                    continue
+                history.append(Message(role="assistant", content=event["content"]))
+            # tool / status events in old format — skip (no IDs to reconstruct)
+
+        self._agent._history = history
+
     # ── Activation ────────────────────────────────────────────────
 
     async def chat(self, message: str, reply_to: str | None = None) -> AgentResult:
         """Run agent with user message. Holds agent lock — blocks heartbeat tick."""
-        self._append_context({"type": "user", "content": message})
+        old_len = len(self._agent._history)
         async with self._agent_lock:
             result = await self._agent.run(message)
-        self._append_context({"type": "agent", "content": result.content})
-        for tc in result.tool_calls:
-            self._append_context({"type": "tool", "name": tc.name, "input": tc.input})
+
+        # Store the full turn as a single event: Anthropic-format messages
+        # (includes user, any tool_use/tool_result pairs with IDs, final assistant).
+        # result.messages[old_len:] is exactly the new messages added in this run.
+        self._append_context({
+            "type": "turn",
+            "triggered_by": "user",
+            "messages": [{"role": m.role, "content": m.content} for m in result.messages[old_len:]],
+        })
 
         if self._ipc is not None:
+            self._ipc.append_outbox({"type": "user", "content": message})
             for tc in result.tool_calls:
                 self._ipc.append_outbox({"type": "tool", "name": tc.name, "input": tc.input})
             agent_event: dict = {"type": "agent", "content": result.content}
@@ -110,6 +156,7 @@ class Instance:
 
         # Snapshot history so we can roll back if INSTANCE_FINISHED
         history_snapshot = list(self._agent._history)
+        old_len = len(self._agent._history)
 
         prompt = (
             f"Check your kanban and continue working.\n\n"
@@ -117,6 +164,8 @@ class Instance:
             f"When you finish ALL tasks, you MUST call write_kanban(\"\") to clear the board. "
             f"This is the only way to signal completion. Do not just say tasks are done — "
             f"you must actually call write_kanban(\"\").\n\n"
+            f"After completing your work, summarize what you did in your response — "
+            f"show your reasoning, results, and any notable steps so the user can follow along.\n\n"
             f"If all work is done and there is nothing remaining, respond with exactly: {INSTANCE_FINISHED}\n"
             f"This will clear the kanban and end this instance."
         )
@@ -133,8 +182,20 @@ class Instance:
             if self._ipc is not None:
                 self._ipc.append_outbox({"type": "heartbeat_finished"})
         else:
-            if self._ipc is not None and result.content:
-                self._ipc.append_outbox({"type": "heartbeat", "content": result.content})
+            # Store full turn to context.json (same format as chat turns)
+            self._append_context({
+                "type": "turn",
+                "triggered_by": "heartbeat",
+                "messages": [{"role": m.role, "content": m.content} for m in result.messages[old_len:]],
+            })
+            # Only push to outbox if instance is still active — skip if user stopped
+            # the instance while this heartbeat was in-flight (avoids ghost output in UI)
+            if self._ipc is not None and not self.is_stopped():
+                self._ipc.append_outbox({"type": "heartbeat_trigger"})
+                for tc in result.tool_calls:
+                    self._ipc.append_outbox({"type": "tool", "name": tc.name, "input": tc.input})
+                if result.content:
+                    self._ipc.append_outbox({"type": "agent", "content": result.content, "triggered_by": "heartbeat"})
 
         return result
 
@@ -187,7 +248,9 @@ class Instance:
         ipc.write_pid()
         self._syslog({"event": "instance_started", "id": self._instance_id})
 
-        inbox_offset = 0
+        # Skip existing inbox messages — they were already processed in a prior
+        # session. Starting at the current file size prevents replay on restart.
+        inbox_offset = ipc.inbox_path.stat().st_size if ipc.inbox_path.exists() else 0
         last_tick_time = asyncio.get_event_loop().time()
 
         try:
