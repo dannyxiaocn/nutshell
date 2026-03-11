@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+pytest-of-*/
 *.egg-info/
 dist/
 build/
@@ -9,4 +10,4 @@ build/
 .venv/
 venv/
 .claude/
-instances/
+sessions/

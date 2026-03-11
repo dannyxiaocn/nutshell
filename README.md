@@ -40,6 +40,7 @@ sessions/my-project/
 ├── manifest.json    ← config + runtime state (entity, heartbeat, status, pid)
 ├── tasks.md         ← task board (read/written by the agent)
 ├── context.jsonl    ← append-only event log: all conversation + IPC
+├── status.json      ← live model state (running/idle, source, updated_at)
 └── files/           ← attached files
 ```
 
@@ -49,11 +50,14 @@ sessions/my-project/
 |------|-----------|-------------|
 | `user_input` | UI | User message |
 | `turn` | Server | Completed agent turn (full Anthropic-format messages) |
-| `status` | Server | Status changes (resumed, cancelled, heartbeat paused) |
+| `model_status` | Server | Model state change: `{"state": "running\|idle", "source": "user\|heartbeat"}` |
+| `status` | Server | Session status changes (resumed, cancelled, heartbeat paused) |
 | `error` | Server | Runtime errors |
 | `heartbeat_finished` | Server | Agent signalled `SESSION_FINISHED` |
 
-The UI derives display events (`user`, `agent`, `tool`, `heartbeat_trigger`) by parsing `turn` events.
+The UI derives display events (`user`, `agent`, `tool`, `heartbeat_trigger`) by parsing `turn` events. `model_status` events drive live status indicators in both UIs — no polling required.
+
+`status.json` provides the same state as a plain file for UIs that poll rather than stream (e.g. the sidebar in the web UI).
 
 ### Entity
 
@@ -216,29 +220,40 @@ nutshell-tui --sessions-dir ~/my-sessions
 ```
 
 ```
-┌──────────────────────────────────┬──────────────────────┐
-│  agent❯ I've started the tasks.  │  Tasks               │
-│  you  ❯ Add one more task.       │  ─────────────────   │
-│  agent❯ Added to tasks.          │  - Write report      │
-│                                  │                      │
-│                                  │  Sessions            │
-│                                  │  ─────────────────   │
-│                                  │  ● my-project   ◀   │
-│                                  │  ○ old-project       │
-├──────────────────────────────────┴──────────────────────┤
-│  > Type a message...                                     │
-├──────────────────────────────────────────────────────────┤
-│  server: running (pid 12345)  │  session: my-project    │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────┬──────────────────────────────┐
+│  Sessions         │  my-project      │  agent (heartbeat)           │
+│  ─────────────────│  running         │  I've finished the report.   │
+│  ► my-project     │                  │                              │
+│    tasks queued   │  you             │  Tasks                       │
+│  ─ old-project    │  Add one more.   │  ─────────────────────────   │
+│    idle           │                  │  - Write summary             │
+│                   │  agent           │                              │
+│                   │  Added to tasks. │                              │
+├───────────────────┴──────────────────┴──────────────────────────────┤
+│  session: my-project  |  state: tasks queued  |  model: idle        │
+├─────────────────────────────────────────────────────────────────────┤
+│  > Type a message or /tasks /status /stop /start /quit              │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-| Command | Action |
+**Session states** (shown in sidebar and status bar):
+
+| State | Meaning |
+|-------|---------|
+| `running` | Agent actively generating (green) |
+| `tasks queued` | Tasks in `tasks.md`, heartbeat pending (yellow) |
+| `idle` | No pending tasks (dim) |
+| `stopped` | Heartbeat paused by user (red) |
+
+| Command / Binding | Action |
 |---------|--------|
 | `/tasks` | Show task board inline |
-| `/status` | Show server PID |
-| `/stop` | Pause heartbeat |
-| `/start` | Resume heartbeat |
+| `/status` | Show session state |
+| `/stop` or `Ctrl+S` | Pause heartbeat |
+| `/start` or `Ctrl+G` | Resume heartbeat |
 | `Ctrl+N` | New session |
+| `Ctrl+J` | Focus session list |
+| `Ctrl+L` | Focus input |
 | `/exit` or `q` | Quit (server keeps running) |
 
 ---
@@ -251,7 +266,7 @@ nutshell-web --port 9000
 nutshell-web --sessions-dir ~/my-sessions
 ```
 
-3-column layout: session list (left), chat with SSE streaming (center), task editor (right). Stop/Start buttons per session.
+3-column layout: session list (left, with live state dots), chat with SSE streaming (center), task editor (right). Stop/Start buttons per session. Header shows current session name and state indicator (running / tasks queued / idle / stopped).
 
 **API:**
 
@@ -283,6 +298,7 @@ nutshell/
 ├── runtime/
 │   ├── session.py     # Session — persistent context + heartbeat daemon loop
 │   ├── ipc.py         # FileIPC — context.jsonl append + display event derivation
+│   ├── status.py      # status.json read/write (live model state per session)
 │   ├── watcher.py     # SessionWatcher — polls sessions/ directory
 │   ├── server.py      # nutshell-server entry point
 │   ├── loaders/
@@ -313,6 +329,9 @@ pytest tests/    # uses MockProvider, no API key needed
 - **Restructured package layout** — `loaders/` and `tools/` moved into `runtime/` sub-packages; `infra/` renamed to `runtime/`. The package now has four clear layers: `abstract` (interfaces), `core` (pure agent logic), `llm` (providers), `runtime` (server + loaders + built-in tools), `ui` (interfaces).
 - **`Instance` → `Session`** — the persistent run context class is now `Session`; `INSTANCE_FINISHED` → `SESSION_FINISHED`; default storage directory `instances/` → `sessions/`.
 - **`kanban.md` → `tasks.md`** — the per-session task board file is renamed; injected agent tools renamed `read_tasks` / `write_tasks`; API routes `/kanban` → `/tasks`; TUI command `/kanban` → `/tasks`.
+- **Live model status** — `Session` emits `model_status` events (`running`/`idle`, source `user`/`heartbeat`) around every agent run; also writes `status.json` per session so UIs can poll the live state.
+- **Redesigned TUI** — ListView-based session sidebar with four-state indicators (running/tasks queued/idle/stopped); live `StatusBar`; keyboard shortcuts (`Ctrl+S` stop, `Ctrl+G` start, `Ctrl+J` sessions, `Ctrl+L` input); Markdown rendering for agent messages.
+- **Redesigned Web UI** — session state dots with colour coding; header shows current session name and live state indicator; `model_status` SSE events update the indicator in real time without polling.
 - **Removed `echo` built-in from `agent_core`** — was a test-only tool with no practical use in the default agent.
 - **Removed duplicate `providers/` package** — was an exact copy of `llm/`, dead code.
 
