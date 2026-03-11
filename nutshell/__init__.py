@@ -19,6 +19,9 @@ from nutshell.loaders.tool import ToolLoader
 from nutshell.loaders.skill import SkillLoader
 from nutshell.loaders.agent import AgentLoader
 
+# Built-in tools
+from nutshell.tools import create_bash_tool
+
 __all__ = [
     # Core
     "Agent",
@@ -41,4 +44,6 @@ __all__ = [
     "ToolLoader",
     "SkillLoader",
     "AgentLoader",
+    # Built-in tools
+    "create_bash_tool",
 ]

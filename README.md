@@ -1,4 +1,4 @@
-# Nutshell `v0.2.0`
+# Nutshell `v0.3.0`
 
 A minimal Python agent runtime. Agents run as persistent server-managed instances with autonomous heartbeat ticking, accessible via TUI or web browser.
 
@@ -149,7 +149,42 @@ Prefer composition over inheritance.
 
 ### `tools/*.json`
 
-Tool schemas in Anthropic JSON Schema format. Implement the tool logic in Python and register it via `AgentLoader(impl_registry={...})`:
+Tool schemas in Anthropic JSON Schema format. Built-in tools (`bash`) are auto-wired — just declare them in `agent.yaml` and add their JSON schema, no Python wiring needed. Custom tools register their implementation via `AgentLoader(impl_registry={...})`.
+
+**Built-in: `bash`**
+
+Add `tools/bash.json` to your entity and list it in `agent.yaml`. The agent can then run shell commands:
+
+```json
+{
+  "name": "bash",
+  "description": "Execute a shell command.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "command": { "type": "string" },
+      "timeout": { "type": "number" },
+      "workdir": { "type": "string" },
+      "pty":     { "type": "boolean", "description": "Run in a pseudo-terminal (preserves color, isatty). Unix only." }
+    },
+    "required": ["command"]
+  }
+}
+```
+
+Or use it directly in Python:
+
+```python
+from nutshell import Agent, create_bash_tool
+
+agent = Agent(
+    system_prompt="You are a coding assistant.",
+    tools=[create_bash_tool(timeout=60, workdir="/my/project")],
+)
+result = await agent.run("Run the tests and show me the output")
+```
+
+**Custom tools**
 
 ```json
 {
@@ -161,6 +196,12 @@ Tool schemas in Anthropic JSON Schema format. Implement the tool logic in Python
     "required": ["query"]
   }
 }
+```
+
+Wire the implementation:
+
+```python
+agent = AgentLoader(impl_registry={"search_web": my_search_fn}).load(Path("entity/my-agent"))
 ```
 
 ---
@@ -239,8 +280,11 @@ nutshell/
 │   └── types.py       # Message, ToolCall, AgentResult
 ├── loaders/
 │   ├── agent.py       # AgentLoader: entity/ dir → Agent
-│   ├── tool.py        # ToolLoader: .json → Tool
+│   ├── tool.py        # ToolLoader: .json → Tool (auto-wires built-ins)
 │   └── skill.py       # SkillLoader: .md → Skill
+├── tools/
+│   ├── bash.py        # create_bash_tool(): subprocess + PTY execution
+│   └── _registry.py   # Built-in tool registry (name → callable)
 ├── llm/
 │   ├── anthropic.py   # AnthropicProvider (default)
 │   └── openai.py      # OpenAIProvider
@@ -263,6 +307,12 @@ pytest tests/    # uses MockProvider, no API key needed
 ---
 
 ## Changelog
+
+### v0.3.0
+- **Built-in `bash` tool** — `create_bash_tool()` factory returns a Tool agents can use to run shell commands. Two execution modes: async subprocess (default) and PTY (`pty=True`, preserves `isatty()` / color output, Unix only via stdlib `pty` + reader thread pattern).
+- **Built-in tool registry** — `nutshell/tools/_registry.py` maps tool names to implementations. `ToolLoader` falls back to this registry automatically, so entities can declare `bash` (and future built-ins) in `agent.yaml` without any Python wiring.
+- **`entity/agent_core` gains `bash` tool** — `tools/bash.json` added and registered in `agent.yaml`.
+- **`create_bash_tool` exported** from `nutshell` top-level.
 
 ### v0.2.0
 - **Single-file IPC** — `context.jsonl` replaces `inbox.jsonl`, `outbox.jsonl`, and `daemon.pid`. Instance directory reduced from 6 files to 3.
