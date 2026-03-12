@@ -1,4 +1,4 @@
-# Nutshell `v0.5.5`
+# Nutshell `v0.5.6`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -287,6 +287,12 @@ pytest tests/    # uses MockProvider, no API key needed
 ---
 
 ## Changelog
+
+### v0.5.6
+- **Long-running task awareness in system prompt** — agent now understands the active → napping → active cycle. System prompt explains the heartbeat model, that users may say "next time you wake up", and that work can span multiple activations.
+- **Dynamic wakeup scheduling** — `write_tasks` gains an optional `next_interval_seconds` parameter; agent can set the next heartbeat interval at the end of each activation (e.g. 60s for urgent follow-up, 3600s when waiting on slow work).
+- **Interval visibility in `read_tasks`** — output now includes `Current wakeup interval: Xs (Ym)` so the agent always knows its own schedule.
+- **Heartbeat prompt updated** — reinforces interval-scheduling capability and emphasises writing enough context for future activations to resume cold.
 
 ### v0.5.5
 - **Critical bugfix: `400 Extra inputs are not permitted`** — `_serialize_message_content` was injecting a `ts` field into every Anthropic content block (text, tool_use, tool_result). These blocks were stored in `context.jsonl` and reloaded into `_history` on session resume, causing the API to reject them. Fix: content blocks are now stored as plain copies without extra fields. `load_history()` also runs a allow-list cleaner (`_clean_content_for_api`) to strip any non-API fields from existing sessions on disk.

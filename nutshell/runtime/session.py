@@ -71,17 +71,39 @@ class Session:
 
     def _inject_task_tools(self, agent: Agent) -> None:
         tasks_path = self.tasks_path
+        session_dir = self.session_dir
+        default_interval = self._heartbeat_interval
 
-        @tool(description="Read the current task list")
+        @tool(description="Read the current task list and current wakeup interval.")
         def read_tasks() -> str:
             content = tasks_path.read_text(encoding="utf-8").strip()
-            return content or "(empty)"
+            tasks_section = content or "(empty)"
+            interval = float(
+                read_session_status(session_dir).get("heartbeat_interval") or default_interval
+            )
+            interval_desc = f"{interval:.0f}s"
+            if interval >= 60:
+                interval_desc += f" ({interval / 60:.0f}m)"
+            return f"{tasks_section}\n\n---\nCurrent wakeup interval: {interval_desc}"
 
-        @tool(description="Overwrite the task list. Pass empty string to clear all tasks.")
-        def write_tasks(content: str) -> str:
+        @tool(
+            description=(
+                "Overwrite the task list. Pass empty string to clear all tasks. "
+                "Optionally set next_interval_seconds to change how long until the next wakeup."
+            )
+        )
+        def write_tasks(content: str, next_interval_seconds: float | None = None) -> str:
             tasks_path.write_text(content, encoding="utf-8")
-            write_session_status(self.session_dir, tasks_updated_at=datetime.now().isoformat())
-            return "Tasks updated."
+            updates: dict = {"tasks_updated_at": datetime.now().isoformat()}
+            msg = "Tasks updated."
+            if next_interval_seconds is not None and next_interval_seconds > 0:
+                updates["heartbeat_interval"] = float(next_interval_seconds)
+                desc = f"{next_interval_seconds:.0f}s"
+                if next_interval_seconds >= 60:
+                    desc += f" ({next_interval_seconds / 60:.0f}m)"
+                msg += f" Next wakeup interval set to {desc}."
+            write_session_status(session_dir, **updates)
+            return msg
 
         agent.tools.extend([read_tasks, write_tasks])
 

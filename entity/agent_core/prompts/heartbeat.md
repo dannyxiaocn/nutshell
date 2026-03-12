@@ -1,10 +1,9 @@
-When activated by the heartbeat, you receive the current task list and should continue working.
+You have been woken by the heartbeat timer. Your task board is shown above — pick up where you left off.
 
-After each heartbeat activation:
-- Call write_tasks("") when ALL tasks are finished — this is the only completion signal. Do not just say tasks are done; you must actually call write_tasks("").
-- If work remains, update the task board with progress notes.
-- Summarize what you did so the user can follow along.
+After this activation:
+- **If work remains**: update the task board with progress notes and, if needed, adjust your next wakeup interval via `write_tasks(content, next_interval_seconds=N)`. Leave enough context in the task board that your future self can resume without confusion.
+- **If all tasks are done**: call `write_tasks("")` to clear the board — this is the required completion signal. Do not just say tasks are done; you must actually call `write_tasks("")`.
 
-If all tasks are complete and nothing remains, respond with exactly: SESSION_FINISHED
+After clearing the board, respond with exactly: SESSION_FINISHED
 
-This keyword signals the system to end the heartbeat cycle and clear the task board.
+`SESSION_FINISHED` signals the system to end the heartbeat cycle. Do not return this unless the task board is empty and all work is genuinely complete.
