@@ -278,7 +278,26 @@ class Session:
         # Skip existing context events — only process new user_input events.
         # Starting at current file size prevents replay of prior session messages.
         input_offset = ipc.context_size()
-        last_tick_time = asyncio.get_event_loop().time()
+
+        # Initialise heartbeat timer.
+        # Use last_run_at from status.json so the interval is correctly preserved
+        # across server restarts: if the agent ran 3m ago and interval is 10m,
+        # the next heartbeat fires in 7m, not 10m from now.
+        # Cap elapsed time at current_interval so we never fire immediately on startup
+        # (this handles the case where the server was down longer than one interval).
+        _now_mono = asyncio.get_event_loop().time()
+        _st = read_session_status(self.session_dir)
+        _last_run_str = _st.get("last_run_at")
+        _init_interval = float(_st.get("heartbeat_interval") or self._heartbeat_interval)
+        if _last_run_str:
+            try:
+                _elapsed = (datetime.now() - datetime.fromisoformat(_last_run_str)).total_seconds()
+                # Clamp: don't go further back than one full interval
+                last_tick_time = _now_mono - min(_elapsed, _init_interval)
+            except Exception:
+                last_tick_time = _now_mono
+        else:
+            last_tick_time = _now_mono
 
         try:
             while True:
@@ -297,6 +316,12 @@ class Session:
                         await self.chat(content)
                     except Exception as exc:
                         self._append_event({"type": "error", "content": str(exc)})
+                    finally:
+                        # Reset heartbeat timer after every agent run (user-triggered).
+                        # The timer is inherently blocked during the await above (single
+                        # event loop), but resetting here ensures the full interval elapses
+                        # from the moment output completes, not from when the message arrived.
+                        last_tick_time = asyncio.get_event_loop().time()
 
                 # Auto-expire stopped sessions after 5 hours
                 if self.is_stopped():
