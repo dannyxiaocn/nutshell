@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from nutshell.core.tool import Tool
 
 _KIMI_BASE_URL = "https://api.kimi.com/coding/"
+_KIMI_DEFAULT_MODEL = "kimi-for-coding"
 
 
 class KimiProvider(Provider):
