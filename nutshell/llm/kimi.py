@@ -9,7 +9,7 @@ from nutshell.core.types import Message, ToolCall
 if TYPE_CHECKING:
     from nutshell.core.tool import Tool
 
-_KIMI_BASE_URL = "https://api.moonshot.ai/v1"
+_KIMI_BASE_URL = "https://api.kimi.com/coding/"
 
 
 class KimiProvider(Provider):
@@ -35,7 +35,7 @@ class KimiProvider(Provider):
         except ImportError:
             raise ImportError("Install openai: pip install openai") from None
         self._client = AsyncOpenAI(
-            api_key=api_key or os.environ.get("MOONSHOT_API_KEY"),
+            api_key=api_key or os.environ.get("KIMI_API_KEY"),
             base_url=base_url,
         )
         self.max_tokens = max_tokens
