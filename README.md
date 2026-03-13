@@ -1,4 +1,4 @@
-# Nutshell `v0.5.6`
+# Nutshell `v0.6.0`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -287,6 +287,26 @@ pytest tests/    # uses MockProvider, no API key needed
 ---
 
 ## Changelog
+
+### v0.6.0
+- **`provider` field in `agent.yaml`** — entity manifests now declare a `provider` (e.g. `anthropic`, `openai`, `kimi`). `AgentLoader` resolves and sets `agent._provider` on load. Both `agent_core` and `chat_core` default to `anthropic` / `claude-sonnet-4-6`.
+- **`nutshell-new-agent` CLI** — `nutshell-new-agent -n <name>` scaffolds a new entity directory with `agent.yaml`, `prompts/system.md`, `prompts/heartbeat.md`, `skills/`, and `tools/bash.json`.
+- **Clean startup init order** — `watcher.py` uses provider/model from `AgentLoader` (agent.yaml) as the baseline; `params.json` acts as override only when explicitly set. Actual values always written back so `params.json` reflects reality.
+
+### v0.5.9
+- **params.json is now the strict authority for model and provider** — at session startup, `watcher.py` applies `params.json` values to the agent (provider + model) before running. Actual resolved values are written back so `params.json` always shows what is actually running (e.g. `"provider": "anthropic"`, `"model": "claude-sonnet-4-6"`) rather than `null`. `_load_session_capabilities()` does the same write-back before every activation.
+
+### v0.5.8
+- **Session directory reorganization** — system internals (`manifest.json`, `status.json`, `context.jsonl`, `events.jsonl`) moved into `_system_log/` subdirectory. `params.json` promoted to session root (was `prompts/params.json`). Agent-facing files (`params.json`, `tasks.md`, `files/`, `prompts/memory.md`, `skills/`, `tools/`) now cleanly separated from system internals.
+
+### v0.5.7
+- **Layered file-system capability management** — session directory gains `prompts/memory.md`, `prompts/params.json`, `skills/`, and `tools/` (reserved). Agent can read/write its own memory, skills, model, provider, and heartbeat interval via bash.
+- **params.json as source of truth** — `heartbeat_interval`, `model`, and `provider` live in `sessions/<id>/prompts/params.json`. Edited at runtime via bash; `status.json` mirrors `heartbeat_interval` for UI. Old sessions auto-migrate heartbeat_interval from status.json on first start.
+- **Session memory injection** — contents of `prompts/memory.md` are automatically appended to the system prompt on every activation. Agent writes its own persistent memory via bash.
+- **Per-session skills** — `.md` files in `sessions/<id>/skills/` are loaded on every activation and merged with entity skills (session overrides by name). Agent creates/deletes skill files via bash.
+- **Runtime provider switching** — new `provider_factory.py` resolves provider by name (`anthropic`, `openai`, `kimi`). Setting `provider` in params.json switches provider on next activation without restart.
+- **`write_tasks` simplified** — `next_interval_seconds` parameter removed; use `prompts/params.json` to control heartbeat interval instead.
+- **`OpenAIProvider.complete()` fixed** — added missing `on_text_chunk` kwarg for interface compliance.
 
 ### v0.5.6
 - **Long-running task awareness in system prompt** — agent now understands the active → napping → active cycle. System prompt explains the heartbeat model, that users may say "next time you wake up", and that work can span multiple activations.

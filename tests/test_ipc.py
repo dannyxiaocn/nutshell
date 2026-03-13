@@ -19,7 +19,8 @@ class MockProvider(Provider):
 
 
 def _write_manifest(session_dir):
-    (session_dir / "manifest.json").write_text(
+    (session_dir / "_system_log").mkdir(exist_ok=True)
+    (session_dir / "_system_log" / "manifest.json").write_text(
         json.dumps({"session_id": session_dir.name}, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -92,14 +93,15 @@ async def test_session_chat_writes_turn_to_context_and_status_to_events(tmp_path
 
     await session.chat("hello")
 
+    syslog = session.session_dir / "_system_log"
     context_events = [
         json.loads(line)
-        for line in (session.session_dir / "context.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (syslog / "context.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     runtime_events = [
         json.loads(line)
-        for line in (session.session_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (syslog / "events.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
 
@@ -134,14 +136,15 @@ async def test_session_chat_writes_idle_on_cancellation(tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await session.chat("hello")
 
+    syslog = session.session_dir / "_system_log"
     context_events = [
         json.loads(line)
-        for line in (session.session_dir / "context.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (syslog / "context.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     runtime_events = [
         json.loads(line)
-        for line in (session.session_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (syslog / "events.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
 

@@ -62,7 +62,7 @@ class SessionWatcher:
                 continue
 
             session_id = session_dir.name
-            manifest_path = session_dir / "manifest.json"
+            manifest_path = session_dir / "_system_log" / "manifest.json"
 
             if not manifest_path.exists():
                 continue
@@ -134,11 +134,11 @@ class SessionWatcher:
         from nutshell.runtime.session import Session
         from nutshell.runtime.ipc import FileIPC
         from nutshell.runtime.status import read_session_status, write_session_status
+        from nutshell.runtime.params import read_session_params
 
-        # Read heartbeat_interval from status.json (user-editable at runtime).
-        # Fall back to 600s default for old sessions that predate this field.
-        status_data = read_session_status(session_dir)
-        heartbeat = float(status_data.get("heartbeat_interval") or 600.0)
+        # Read heartbeat_interval from params.json (source of truth).
+        # Falls back to 600s default for old sessions that predate params.json.
+        heartbeat = float(read_session_params(session_dir).get("heartbeat_interval") or 600.0)
         base_dir = session_dir.parent
 
         try:
@@ -146,12 +146,28 @@ class SessionWatcher:
                 agent = self._agent_factory(manifest)
             else:
                 from nutshell import AgentLoader
-                from nutshell.llm.anthropic import AnthropicProvider
+                from nutshell.runtime.provider_factory import resolve_provider, provider_name
+                from nutshell.runtime.params import write_session_params
 
                 entity = manifest.get("entity", "entity/agent_core")
                 entity_path = Path(entity)
+                # AgentLoader sets model + provider from agent.yaml
                 agent = AgentLoader().load(entity_path)
-                agent._provider = AnthropicProvider()
+
+                # params.json overrides agent.yaml only when explicitly set (non-null)
+                params = read_session_params(session_dir)
+                desired_provider = (params.get("provider") or "").lower()
+                if desired_provider and provider_name(agent._provider) != desired_provider:
+                    agent._provider = resolve_provider(desired_provider)
+                if params.get("model"):
+                    agent.model = params["model"]
+
+                # Write actual running values back so params.json always reflects reality
+                write_session_params(
+                    session_dir,
+                    provider=provider_name(agent._provider) or "anthropic",
+                    model=agent.model,
+                )
         except Exception as exc:
             print(f"[server] Failed to load agent for {session_id}: {exc}")
             return
@@ -160,7 +176,7 @@ class SessionWatcher:
         session = Session(agent, session_id=session_id, base_dir=base_dir, heartbeat=heartbeat)
 
         # Always load history (needed for user messages even when tasks are empty)
-        context_path = session_dir / "context.jsonl"
+        context_path = session_dir / "_system_log" / "context.jsonl"
         if context_path.exists() and context_path.stat().st_size > 0:
             session.load_history()
 

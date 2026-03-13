@@ -16,12 +16,12 @@ DEFAULT_SESSION_STATUS: dict[str, Any] = {
     "pid": None,                  # Daemon process PID (int | None)
     "status": "active",           # "active" | "stopped"
     "tasks_updated_at": None,     # ISO timestamp of last tasks.md write
-    "heartbeat_interval": 600.0,  # Seconds between heartbeat ticks — edit to change at runtime
+    "heartbeat_interval": None,   # Mirror of params.json heartbeat_interval (for UI/watcher)
 }
 
 
 def status_path(session_dir: Path) -> Path:
-    return session_dir / "status.json"
+    return session_dir / "_system_log" / "status.json"
 
 
 def read_session_status(session_dir: Path) -> dict:
@@ -45,6 +45,7 @@ def write_session_status(session_dir: Path, **updates: Any) -> None:
     """
     path = status_path(session_dir)
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
             current: dict = json.loads(path.read_text(encoding="utf-8"))
         else:

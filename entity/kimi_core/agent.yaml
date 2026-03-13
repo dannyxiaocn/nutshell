@@ -1,0 +1,16 @@
+name: kimi_core
+description: ""
+model: kimi-for-coding
+provider: kimi
+release_policy: persistent
+max_iterations: 20
+
+prompts:
+  system: prompts/system.md
+  heartbeat: prompts/heartbeat.md
+  session_context: prompts/session_context.md
+
+tools:
+  - tools/bash.json
+
+skills: []

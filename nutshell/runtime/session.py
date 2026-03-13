@@ -7,8 +7,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nutshell.core.agent import Agent
-from nutshell.core.tool import tool
+from nutshell.core.skill import Skill
+from nutshell.core.tool import Tool, tool
 from nutshell.core.types import AgentResult
+from nutshell.runtime.params import ensure_session_params, read_session_params, write_session_params
+from nutshell.runtime.provider_factory import provider_name, resolve_provider
 from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
 
 if TYPE_CHECKING:
@@ -23,10 +26,18 @@ class Session:
     """Agent persistent run context (server mode only).
 
     Disk layout: sessions/<id>/
-        manifest.json    — config + runtime state (entity, heartbeat, status, pid)
+        params.json      — model, provider, heartbeat_interval (source of truth; agent edits via bash)
         tasks.md         — free-form task notes (plain file read/write)
-        context.jsonl    — append-only log: user_input, turn, status, error, heartbeat_finished
         files/           — associated files directory
+        prompts/
+            memory.md    — persistent memory (auto-injected each activation)
+        skills/          — per-session skill .md files
+        tools/           — reserved (v2)
+        _system_log/
+            manifest.json  — static config (entity, created_at)
+            status.json    — all dynamic runtime state
+            context.jsonl  — append-only log: user_input, turn
+            events.jsonl   — runtime/UI events
 
     Usage:
         session = Session(agent, session_id="my-project")
@@ -54,58 +65,111 @@ class Session:
         # Idempotent directory creation — safe for both new and resumed sessions
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.files_dir.mkdir(exist_ok=True)
+        self.prompts_dir.mkdir(exist_ok=True)
+        self.skills_dir.mkdir(exist_ok=True)
+        self.tools_dir.mkdir(exist_ok=True)
+        self.system_log_dir.mkdir(exist_ok=True)
         if not self.tasks_path.exists():
             self.tasks_path.write_text("", encoding="utf-8")
         if not self._context_path.exists():
             self._context_path.touch()
         if not self._events_path.exists():
             self._events_path.touch()
+        if not self.memory_path.exists():
+            self.memory_path.write_text("", encoding="utf-8")
         ensure_session_status(self.session_dir)
-        # Write heartbeat_interval to status.json so it can be edited at runtime.
-        # Only sets it if not already present (allows user edits to persist across restarts).
-        current = read_session_status(self.session_dir)
-        if current.get("heartbeat_interval") is None:
-            write_session_status(self.session_dir, heartbeat_interval=heartbeat)
+        ensure_session_params(self.session_dir, heartbeat_interval=heartbeat)
 
         self._inject_task_tools(agent)
+
+        # Baseline snapshot — _load_session_capabilities restores to these each activation
+        self._entity_system_prompt: str = agent.system_prompt
+        self._entity_skills: list[Skill] = list(agent.skills)
+        self._entity_tools: list[Tool] = list(agent.tools)
+        self._entity_model: str = agent.model
 
     def _inject_task_tools(self, agent: Agent) -> None:
         tasks_path = self.tasks_path
         session_dir = self.session_dir
-        default_interval = self._heartbeat_interval
 
         @tool(description="Read the current task list and current wakeup interval.")
         def read_tasks() -> str:
             content = tasks_path.read_text(encoding="utf-8").strip()
             tasks_section = content or "(empty)"
             interval = float(
-                read_session_status(session_dir).get("heartbeat_interval") or default_interval
+                read_session_params(session_dir).get("heartbeat_interval")
+                or DEFAULT_HEARTBEAT_INTERVAL
             )
             interval_desc = f"{interval:.0f}s"
             if interval >= 60:
                 interval_desc += f" ({interval / 60:.0f}m)"
             return f"{tasks_section}\n\n---\nCurrent wakeup interval: {interval_desc}"
 
-        @tool(
-            description=(
-                "Overwrite the task list. Pass empty string to clear all tasks. "
-                "Optionally set next_interval_seconds to change how long until the next wakeup."
-            )
-        )
-        def write_tasks(content: str, next_interval_seconds: float | None = None) -> str:
+        @tool(description="Overwrite the task list. Pass empty string to clear all tasks.")
+        def write_tasks(content: str) -> str:
             tasks_path.write_text(content, encoding="utf-8")
-            updates: dict = {"tasks_updated_at": datetime.now().isoformat()}
-            msg = "Tasks updated."
-            if next_interval_seconds is not None and next_interval_seconds > 0:
-                updates["heartbeat_interval"] = float(next_interval_seconds)
-                desc = f"{next_interval_seconds:.0f}s"
-                if next_interval_seconds >= 60:
-                    desc += f" ({next_interval_seconds / 60:.0f}m)"
-                msg += f" Next wakeup interval set to {desc}."
-            write_session_status(session_dir, **updates)
-            return msg
+            write_session_status(session_dir, tasks_updated_at=datetime.now().isoformat())
+            return "Tasks updated."
 
         agent.tools.extend([read_tasks, write_tasks])
+
+    # ── Capability loading ─────────────────────────────────────────
+
+    def _load_session_capabilities(self) -> None:
+        """Reload params, memory, and session skills. Call inside agent lock before each run."""
+        from nutshell.runtime.loaders.skill import SkillLoader
+
+        # 1. params.json → provider + model, mirror heartbeat_interval to status.json for UI
+        params = read_session_params(self.session_dir)
+
+        # Switch provider if params explicitly specifies one different from current
+        desired_provider = (params.get("provider") or "").lower()
+        if desired_provider and provider_name(self._agent._provider) != desired_provider:
+            self._agent._provider = resolve_provider(desired_provider)
+
+        # Apply model (null → entity baseline)
+        self._agent.model = params.get("model") or self._entity_model
+
+        # Write actual running values back so params.json always reflects reality
+        actual_pname = provider_name(self._agent._provider)
+        if actual_pname:  # skip write for unknown/mock providers (test safety)
+            write_session_params(
+                self.session_dir,
+                provider=actual_pname,
+                model=self._agent.model,
+            )
+
+        write_session_status(self.session_dir, heartbeat_interval=params["heartbeat_interval"])
+
+        # 2. memory.md + session paths → rebuild system_prompt
+        memory_content = self.memory_path.read_text(encoding="utf-8").strip()
+        memory_block = f"\n\n---\n## Session Memory\n\n{memory_content}" if memory_content else ""
+        self._agent.system_prompt = (
+            self._entity_system_prompt
+            + self._build_session_paths_block()
+            + memory_block
+        )
+
+        # 3. session skills: merge (session overrides entity by name, new ones appended)
+        session_skills: list[Skill] = []
+        try:
+            session_skills = SkillLoader().load_dir(self.skills_dir)
+        except Exception:
+            pass
+        session_by_name = {s.name: s for s in session_skills}
+        entity_names = {s.name for s in self._entity_skills}
+        merged = [session_by_name.get(s.name, s) for s in self._entity_skills]
+        merged += [s for s in session_skills if s.name not in entity_names]
+        self._agent.skills = merged
+
+        # 4. reset tools to entity baseline (prevents duplication across activations)
+        self._agent.tools = list(self._entity_tools)
+
+    def _build_session_paths_block(self) -> str:
+        template = self._agent.session_context_template
+        if not template:
+            return ""
+        return "\n\n---\n" + template.format(session_id=self._session_id)
 
     # ── History persistence ────────────────────────────────────────
 
@@ -176,6 +240,7 @@ class Session:
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
         try:
             async with self._agent_lock:
+                self._load_session_capabilities()
                 result = await self._agent.run(
                     message,
                     on_text_chunk=self._make_text_chunk_callback(),
@@ -212,8 +277,13 @@ class Session:
         history_snapshot = list(self._agent._history)
         old_len = len(self._agent._history)
 
-        heartbeat_instructions = self._agent.heartbeat_prompt or "Continue working on your tasks."
-        prompt = f"Heartbeat activation.\n\nCurrent tasks:\n{tasks_content}\n\n{heartbeat_instructions}"
+        heartbeat_instructions = self._agent.heartbeat_prompt
+        if heartbeat_instructions and "{tasks}" in heartbeat_instructions:
+            prompt = heartbeat_instructions.format(tasks=tasks_content)
+        else:
+            prompt = f"Heartbeat activation.\n\nCurrent tasks:\n{tasks_content}"
+            if heartbeat_instructions:
+                prompt += f"\n\n{heartbeat_instructions}"
 
         # Write heartbeat_trigger event BEFORE starting so it appears in the UI
         # before the thinking bubble (not after the agent turn is complete)
@@ -223,6 +293,7 @@ class Session:
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
         try:
             async with self._agent_lock:
+                self._load_session_capabilities()
                 result = await self._agent.run(
                     prompt,
                     on_text_chunk=self._make_text_chunk_callback(),
@@ -310,7 +381,10 @@ class Session:
         _now_mono = asyncio.get_event_loop().time()
         _st = read_session_status(self.session_dir)
         _last_run_str = _st.get("last_run_at")
-        _init_interval = float(_st.get("heartbeat_interval") or self._heartbeat_interval)
+        _init_interval = float(
+            read_session_params(self.session_dir).get("heartbeat_interval")
+            or self._heartbeat_interval
+        )
         if _last_run_str:
             try:
                 _elapsed = (datetime.now() - datetime.fromisoformat(_last_run_str)).total_seconds()
@@ -359,11 +433,11 @@ class Session:
                         except Exception:
                             pass
 
-                # Heartbeat timer — read interval fresh from status.json each cycle
-                # so edits to status.json take effect without restarting the daemon.
+                # Heartbeat timer — read interval fresh from params.json each cycle
+                # so edits to params.json take effect without restarting the daemon.
                 now = asyncio.get_event_loop().time()
-                current_interval = (
-                    read_session_status(self.session_dir).get("heartbeat_interval")
+                current_interval = float(
+                    read_session_params(self.session_dir).get("heartbeat_interval")
                     or self._heartbeat_interval
                 )
                 if now - last_tick_time >= current_interval:
@@ -399,16 +473,36 @@ class Session:
         return self.session_dir / "files"
 
     @property
+    def prompts_dir(self) -> Path:
+        return self.session_dir / "prompts"
+
+    @property
+    def skills_dir(self) -> Path:
+        return self.session_dir / "skills"
+
+    @property
+    def tools_dir(self) -> Path:
+        return self.session_dir / "tools"
+
+    @property
+    def system_log_dir(self) -> Path:
+        return self.session_dir / "_system_log"
+
+    @property
+    def memory_path(self) -> Path:
+        return self.session_dir / "prompts" / "memory.md"
+
+    @property
     def tasks_path(self) -> Path:
         return self.session_dir / "tasks.md"
 
     @property
     def _context_path(self) -> Path:
-        return self.session_dir / "context.jsonl"
+        return self.session_dir / "_system_log" / "context.jsonl"
 
     @property
     def _events_path(self) -> Path:
-        return self.session_dir / "events.jsonl"
+        return self.session_dir / "_system_log" / "events.jsonl"
 
     # ── Internal ───────────────────────────────────────────────────
 

@@ -137,8 +137,8 @@ class FileIPC:
 
     def __init__(self, session_dir: Path) -> None:
         self.session_dir = session_dir
-        self.context_path = session_dir / "context.jsonl"
-        self.events_path = session_dir / "events.jsonl"
+        self.context_path = session_dir / "_system_log" / "context.jsonl"
+        self.events_path = session_dir / "_system_log" / "events.jsonl"
 
     # ── Write ────────────────────────────────────────────────────────────────
 

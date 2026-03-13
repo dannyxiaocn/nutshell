@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from nutshell.abstract.provider import Provider
 from nutshell.core.types import Message, ToolCall
@@ -25,6 +25,7 @@ class OpenAIProvider(Provider):
         tools: list["Tool"],
         system_prompt: str,
         model: str,
+        on_text_chunk: Callable[[str], None] | None = None,
     ) -> tuple[str, list[ToolCall]]:
         api_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},

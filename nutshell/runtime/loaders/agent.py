@@ -56,6 +56,10 @@ class AgentLoader(BaseLoader[Agent]):
         if "heartbeat" in prompts_cfg:
             heartbeat_prompt = _load_prompt(path / prompts_cfg["heartbeat"])
 
+        session_context_template = ""
+        if "session_context" in prompts_cfg:
+            session_context_template = _load_prompt(path / prompts_cfg["session_context"])
+
         # Load skills
         skills_cfg = manifest.get("skills", []) or []
         skills = [SkillLoader().load(path / s) for s in skills_cfg]
@@ -65,7 +69,7 @@ class AgentLoader(BaseLoader[Agent]):
         tool_loader = ToolLoader(impl_registry=self._impl_registry)
         tools = [tool_loader.load(path / t) for t in tools_cfg]
 
-        return Agent(
+        agent = Agent(
             system_prompt=system_prompt,
             tools=tools,
             skills=skills,
@@ -73,7 +77,18 @@ class AgentLoader(BaseLoader[Agent]):
             release_policy=manifest.get("release_policy", "persistent"),
             max_iterations=manifest.get("max_iterations", 20),
             heartbeat_prompt=heartbeat_prompt,
+            session_context_template=session_context_template,
         )
+
+        # Set provider from agent.yaml (lazy import to avoid circular deps)
+        provider_str = manifest.get("provider", "anthropic")
+        try:
+            from nutshell.runtime.provider_factory import resolve_provider
+            agent._provider = resolve_provider(provider_str)
+        except Exception:
+            pass  # fall back to lazy default (AnthropicProvider on first use)
+
+        return agent
 
     def load_dir(self, directory: Path) -> list[Agent]:
         """Load all agents from subdirectories that contain agent.yaml."""

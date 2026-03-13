@@ -3,13 +3,15 @@
 
 name: agent_core
 description: A general-purpose assistant with basic capabilities.
-model: claude-haiku-4-5-20251001
+model: claude-sonnet-4-6
+provider: anthropic
 release_policy: persistent
 max_iterations: 20
 
 prompts:
   system: prompts/system.md
   heartbeat: prompts/heartbeat.md
+  session_context: prompts/session_context.md
 
 tools:
   - tools/bash.json

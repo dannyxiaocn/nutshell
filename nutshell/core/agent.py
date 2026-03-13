@@ -41,6 +41,7 @@ class Agent(BaseAgent):
         release_policy: ReleasePolicy = "persistent",
         max_iterations: int = 20,
         heartbeat_prompt: str = "",
+        session_context_template: str = "",
     ) -> None:
         self.system_prompt = system_prompt
         self.tools: list[Tool] = tools or []
@@ -49,6 +50,7 @@ class Agent(BaseAgent):
         self.release_policy = release_policy
         self.max_iterations = max_iterations
         self.heartbeat_prompt = heartbeat_prompt
+        self.session_context_template = session_context_template
         self._provider = provider
         self._history: list[Message] = []
 

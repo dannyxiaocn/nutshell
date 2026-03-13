@@ -1,6 +1,7 @@
 name: chat_core
 description: Interactive CLI chat assistant.
-model: claude-haiku-4-5-20251001
+model: claude-sonnet-4-6
+provider: anthropic
 release_policy: persistent
 max_iterations: 20
 

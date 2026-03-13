@@ -22,6 +22,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
+from nutshell.runtime.params import ensure_session_params, write_session_params
 
 SESSIONS_DIR = Path("sessions")
 _DEFAULT_ENTITY = "entity/agent_core"
@@ -40,7 +41,7 @@ def _pid_alive(pid: int | None) -> bool:
 
 def _read_session_info(session_dir: Path) -> dict | None:
     """Read session metadata from manifest.json (static) and status.json (dynamic)."""
-    manifest_path = session_dir / "manifest.json"
+    manifest_path = session_dir / "_system_log" / "manifest.json"
     if not manifest_path.exists():
         return None
     try:
@@ -123,11 +124,19 @@ def create_app(sessions_dir: Path) -> FastAPI:
         heartbeat = float(body.get("heartbeat", 600.0))
 
         session_dir = sessions_dir / session_id
+        system_log = session_dir / "_system_log"
         session_dir.mkdir(parents=True, exist_ok=True)
+        system_log.mkdir(exist_ok=True)
         (session_dir / "files").mkdir(exist_ok=True)
-        (session_dir / "context.jsonl").touch(exist_ok=True)
-        (session_dir / "events.jsonl").touch(exist_ok=True)
+        (session_dir / "prompts").mkdir(exist_ok=True)
+        (session_dir / "skills").mkdir(exist_ok=True)
+        (session_dir / "tools").mkdir(exist_ok=True)
+        (system_log / "context.jsonl").touch(exist_ok=True)
+        (system_log / "events.jsonl").touch(exist_ok=True)
         (session_dir / "tasks.md").touch(exist_ok=True)
+        memory_path = session_dir / "prompts" / "memory.md"
+        if not memory_path.exists():
+            memory_path.write_text("", encoding="utf-8")
 
         # manifest.json is purely static config — written once, never mutated
         manifest = {
@@ -135,10 +144,13 @@ def create_app(sessions_dir: Path) -> FastAPI:
             "entity": entity,
             "created_at": datetime.now().isoformat(),
         }
-        (session_dir / "manifest.json").write_text(
+        (system_log / "manifest.json").write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        # status.json holds all runtime/dynamic state (including editable heartbeat_interval)
+        # params.json is the source of truth for heartbeat_interval, model, provider
+        ensure_session_params(session_dir, heartbeat_interval=heartbeat)
+        write_session_params(session_dir, heartbeat_interval=heartbeat)
+        # status.json mirrors heartbeat_interval for UI read access
         ensure_session_status(session_dir)
         write_session_status(session_dir, heartbeat_interval=heartbeat)
         return {"id": session_id, "entity": entity}
