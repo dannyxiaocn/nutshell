@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
 from nutshell.runtime.params import ensure_session_params, write_session_params
 
-SESSIONS_DIR = Path("sessions")
+SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _DEFAULT_ENTITY = "entity/agent_core"
 _DEFAULT_PORT = 8080
 

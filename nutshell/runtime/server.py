@@ -14,7 +14,7 @@ import asyncio
 import signal
 from pathlib import Path
 
-SESSIONS_DIR = Path("sessions")
+SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 
 
 async def _run(sessions_dir: Path) -> None:

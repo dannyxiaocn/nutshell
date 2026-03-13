@@ -17,7 +17,7 @@ from nutshell.runtime.status import ensure_session_status, read_session_status, 
 if TYPE_CHECKING:
     from nutshell.runtime.ipc import FileIPC
 
-SESSIONS_DIR = Path("sessions")
+SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 DEFAULT_HEARTBEAT_INTERVAL = 600.0  # 10 minutes
 SESSION_FINISHED = "SESSION_FINISHED"
 
