@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -16,6 +17,40 @@ def _make_stub(name: str) -> Callable:
         )
     _stub.__name__ = name
     return _stub
+
+
+def _make_shell_impl(sh_path: Path) -> Callable:
+    """Return an async impl that runs a shell script, passing kwargs as JSON on stdin.
+
+    The script receives all tool arguments as a JSON object on stdin and should
+    write its result to stdout. Non-zero exit code returns stderr as an error string.
+    """
+    sh_path_str = str(sh_path)
+
+    async def _shell_tool(**kwargs: Any) -> str:
+        input_json = json.dumps(kwargs).encode()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "bash", sh_path_str,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=input_json),
+                timeout=30.0,
+            )
+            if proc.returncode != 0:
+                err = stderr.decode("utf-8", errors="replace")
+                return f"Error (exit {proc.returncode}): {err[:500]}"
+            return stdout.decode("utf-8", errors="replace")
+        except asyncio.TimeoutError:
+            return "Error: shell tool timed out after 30s"
+        except Exception as e:
+            return f"Error: {e}"
+
+    _shell_tool.__name__ = sh_path.stem
+    return _shell_tool
 
 
 class ToolLoader(BaseLoader[Tool]):
@@ -62,7 +97,10 @@ class ToolLoader(BaseLoader[Tool]):
             impl = self._registry[name]
         else:
             from nutshell.runtime.tools._registry import get_builtin
-            impl = get_builtin(name) or _make_stub(name)
+            impl = get_builtin(name)
+            if impl is None:
+                sh_path = path.with_suffix(".sh")
+                impl = _make_shell_impl(sh_path) if sh_path.exists() else _make_stub(name)
         return Tool(name=name, description=description, func=impl, schema=schema)
 
     def load_dir(self, directory: Path) -> list[Tool]:

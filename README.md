@@ -1,4 +1,4 @@
-# Nutshell `v0.8.0`
+# Nutshell `v0.9.0`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -20,7 +20,8 @@ Everything is files. The server and UI communicate only through files on disk �
 ```bash
 pip install -e .
 export ANTHROPIC_API_KEY=sk-...
-export BRAVE_API_KEY=...       # optional: enables web_search tool
+export BRAVE_API_KEY=...       # optional: enables web_search tool (default provider)
+export TAVILY_API_KEY=...      # optional: enables web_search via Tavily provider
 
 nutshell-server    # terminal 1: keep running
 nutshell-web       # terminal 2: open http://localhost:8080
@@ -124,13 +125,16 @@ A session is a running instance of an entity. Each session gets its own director
 
 ```
 sessions/<id>/
-├── params.json             ← runtime overrides: model, provider, heartbeat_interval
+├── params.json             ← runtime overrides: model, provider, heartbeat_interval, tool_providers
 ├── tasks.md                ← task board (agent reads/writes via bash)
 ├── files/                  ← attached files
 ├── prompts/
 │   └── memory.md           ← agent persistent memory (auto-appended to system prompt)
 ├── skills/
 │   └── *.md                ← per-session skill overrides (merged with entity skills)
+├── tools/
+│   ├── my_tool.json        ← agent-created tool schema
+│   └── my_tool.sh          ← agent-created tool implementation (bash, reads JSON from stdin)
 └── _system_log/
     ├── manifest.json       ← static: entity path, created_at (written once, never mutated)
     ├── status.json         ← dynamic: model_state, pid, stopped/active, last_run_at
@@ -140,7 +144,7 @@ sessions/<id>/
 
 **Key invariants:**
 - `_system_log/manifest.json` is immutable — written once at session creation.
-- `params.json` is the source of truth for model, provider, heartbeat_interval.
+- `params.json` is the source of truth for model, provider, heartbeat_interval, and tool_providers.
 - `_system_log/context.jsonl` is the sole source for conversation history — append-only, never rewritten.
 
 ---
@@ -150,24 +154,27 @@ sessions/<id>/
 On every activation (user message or heartbeat tick), the server reloads capabilities fresh from disk in this order:
 
 ```
-entity/agent.yaml           → baseline model, provider, tools, skills, system prompt
+entity/agent.yaml                   → baseline model, provider, tools, skills, system prompt
         ↓
-sessions/<id>/params.json   → override model and provider (agent can edit via bash)
+sessions/<id>/params.json           → override model, provider, heartbeat_interval, tool_providers
         ↓
-sessions/<id>/prompts/memory.md   → appended to system prompt
+sessions/<id>/prompts/memory.md     → appended to system prompt
         ↓
-sessions/<id>/skills/*.md   → merged with entity skills (session overrides by name)
+sessions/<id>/skills/*.md           → merged with entity skills (session overrides by name)
+        ↓
+sessions/<id>/tools/*.json + *.sh   → session-scoped tools (agent-created, loaded last)
 ```
 
-This means agents can **modify their own runtime configuration** by writing to files in their session directory — changing model, provider, heartbeat interval, memory, or skills — all without server restart.
+This means agents can **modify their own runtime configuration** by writing to files in their session directory — changing model, provider, heartbeat interval, memory, skills, or tools — all without server restart.
 
 `params.json` schema:
 
 ```json
 {
   "heartbeat_interval": 600.0,
-  "model": null,       // null → use agent.yaml default
-  "provider": null     // null → use agent.yaml default
+  "model": null,           // null → use agent.yaml default
+  "provider": null,        // null → use agent.yaml default
+  "tool_providers": {}     // e.g. {"web_search": "tavily"} — empty = use built-in defaults
 }
 ```
 
@@ -231,7 +238,7 @@ Tool schemas in Anthropic JSON Schema format. Built-in tools are auto-wired by n
 }
 ```
 
-**Built-in: `web_search`** — Brave Search API. Requires `BRAVE_API_KEY` environment variable.
+**Built-in: `web_search`** — Pluggable web search. Default provider: Brave (`BRAVE_API_KEY`). Switch to Tavily (`TAVILY_API_KEY`) by setting `tool_providers: {"web_search": "tavily"}` in `params.json`.
 
 ```json
 {
@@ -276,18 +283,20 @@ nutshell/
 │   │   ├── anthropic.py   # AnthropicProvider (Anthropic SDK, supports custom base_url)
 │   │   └── kimi.py        # KimiForCodingProvider (thin wrapper over AnthropicProvider)
 │   └── tool/
-│       └── web_search.py  # create_web_search_tool() — Brave Search
+│       ├── web_search.py  # create_web_search_tool() — Brave Search (default)
+│       └── tavily.py      # create_web_search_tool() — Tavily Search
 ├── runtime/
 │   ├── session.py     # Session — persistent context + heartbeat daemon loop
 │   ├── ipc.py         # FileIPC — context.jsonl + events.jsonl read/write
 │   ├── status.py      # status.json read/write
 │   ├── params.py      # params.json read/write
-│   ├── provider_factory.py  # resolve provider by name, reverse-lookup
+│   ├── provider_factory.py      # resolve LLM provider by name, reverse-lookup
+│   ├── tool_provider_factory.py # resolve tool impl by (tool_name, provider_name)
 │   ├── watcher.py     # SessionWatcher — polls sessions/ directory
 │   ├── server.py      # nutshell-server entry point
 │   ├── loaders/
 │   │   ├── agent.py   # AgentLoader: entity/ dir → Agent (reads agent.yaml, handles extends)
-│   │   ├── tool.py    # ToolLoader: .json → Tool (auto-wires built-ins)
+│   │   ├── tool.py    # ToolLoader: .json → Tool (auto-wires built-ins; .sh for shell-backed tools)
 │   │   └── skill.py   # SkillLoader: .md → Skill
 │   └── tools/
 │       ├── bash.py    # create_bash_tool(): subprocess + PTY execution
@@ -336,6 +345,11 @@ The web UI polls both files via SSE. On reconnect it resumes from the last byte 
 ---
 
 ## Changelog
+
+### v0.9.0
+- **Tool provider layer** — `web_search` now has pluggable providers (Brave, Tavily). Set `tool_providers: {"web_search": "tavily"}` in `params.json` to switch. `nutshell/runtime/tool_provider_factory.py` mirrors the LLM `provider_factory.py` pattern; adding new providers requires only a one-line registry entry.
+- **Tavily Search provider** — `nutshell/providers/tool/tavily.py`. Requires `TAVILY_API_KEY`. Same `web_search` tool schema and output format as Brave.
+- **Shell-script-backed session tools** — agents can now create their own tools at session scope: write `sessions/<id>/tools/<name>.json` (schema) + `sessions/<id>/tools/<name>.sh` (implementation, receives JSON on stdin). Loaded fresh on every activation. `ToolLoader` detects `.sh` files automatically.
 
 ### v0.8.0
 - **Skills redesign** — compliant with the [Agent Skills specification](https://agentskills.io/specification). Skills are now directories (`skills/<name>/SKILL.md`) instead of flat `.md` files. `Skill.prompt_injection` renamed to `Skill.body`; new `Skill.location` field (path to `SKILL.md`). File-backed skills use **progressive disclosure**: only name + description appear in a `<available_skills>` catalog in the system prompt; the model reads `SKILL.md` on demand via its bash/file tool. Inline skills (no `location`) retain the previous body-injection behavior for programmatic use.

@@ -138,6 +138,36 @@ class Session:
         # 4. reset tools to entity baseline (prevents duplication across activations)
         self._agent.tools = list(self._entity_tools)
 
+        # 5. apply tool provider overrides from params.json (e.g. {"web_search": "tavily"})
+        tool_providers = params.get("tool_providers") or {}
+        if tool_providers:
+            from nutshell.runtime import tool_provider_factory
+            for i, tool in enumerate(self._agent.tools):
+                if tool.name in tool_providers:
+                    impl = tool_provider_factory.resolve_tool_impl(tool.name, tool_providers[tool.name])
+                    if impl:
+                        self._agent.tools[i] = Tool(
+                            name=tool.name,
+                            description=tool.description,
+                            func=impl,
+                            schema=tool.schema,
+                        )
+
+        # 6. load session-scoped tools from sessions/<id>/tools/ (agent-created tools)
+        if self.tools_dir.exists():
+            from nutshell.runtime.loaders.tool import ToolLoader
+            try:
+                session_tools = ToolLoader().load_dir(self.tools_dir)
+            except Exception:
+                session_tools = []
+            if session_tools:
+                entity_names = {t.name for t in self._agent.tools}
+                for st in session_tools:
+                    if st.name in entity_names:
+                        self._agent.tools = [st if t.name == st.name else t for t in self._agent.tools]
+                    else:
+                        self._agent.tools.append(st)
+
     def _build_session_paths_block(self) -> str:
         template = self._agent.session_context_template
         if not template:
