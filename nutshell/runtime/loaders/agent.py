@@ -15,23 +15,28 @@ def _load_prompt(path: Path) -> str:
 class AgentLoader(BaseLoader[Agent]):
     """Load a complete Agent from an entity directory containing agent.yaml.
 
-    Supports entity inheritance via the ``extends`` field in agent.yaml.
+    Supports arbitrarily deep entity inheritance via ``extends`` in agent.yaml.
     agent.yaml always contains the full set of fields. A null value signals
     "inherit from parent":
 
         prompts:
-          system:          # null  → load from parent entity's prompts.system path
+          system:          # null  → inherit from parent (recursively resolved)
           heartbeat:       # null  → inherit
           session_context: prompts/session_context.md  # value → load from this entity
 
         tools:             # null  → inherit parent's tools list
         skills: []         # []    → explicitly no skills (do NOT inherit)
+        skills:            # null  → inherit parent's skills list
+          - skills/foo     # explicit list → resolve files child-first along ancestor chain
 
     Rules:
-    - Prompts: null value → resolve path from parent manifest, load from parent dir.
-               string value → load from this entity's dir.
-    - tools/skills: None (key absent or null) → inherit parent's list, load files
-               from parent dir.  [] or a list → use as-is, load files from this dir.
+    - Inheritance is recursive: A extends B extends C works correctly.
+    - Prompts: null → use parent's already-resolved value.
+               string value → load from this entity's directory.
+    - tools/skills: None (null/absent) → inherit parent's resolved list.
+                    [] → explicitly empty (no inheritance).
+                    [list] → resolve each file child-first along the full ancestor chain.
+    - model/provider: null/absent → inherit from parent; fallback to built-in defaults.
 
     Args:
         impl_registry: Optional dict mapping tool name -> callable.
@@ -39,6 +44,8 @@ class AgentLoader(BaseLoader[Agent]):
 
     def __init__(self, impl_registry: dict[str, Callable] | None = None) -> None:
         self._impl_registry = impl_registry or {}
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def load(self, path: Path) -> Agent:
         """Load agent from a directory containing agent.yaml."""
@@ -54,9 +61,8 @@ class AgentLoader(BaseLoader[Agent]):
 
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
 
-        # ── Resolve parent ────────────────────────────────────────────────────
-        parent_path: Path | None = None
-        parent_manifest: dict = {}
+        # ── Resolve parent (recursive) ────────────────────────────────────────
+        parent: Agent | None = None
         extends = manifest.get("extends")
         if extends:
             candidate = path.parent / extends
@@ -65,85 +71,88 @@ class AgentLoader(BaseLoader[Agent]):
                     f"Entity '{path.name}' extends '{extends}' "
                     f"but parent not found at: {candidate}"
                 )
-            parent_path = candidate
-            parent_manifest = yaml.safe_load(
-                (parent_path / "agent.yaml").read_text(encoding="utf-8")
-            ) or {}
+            parent = AgentLoader(self._impl_registry).load(candidate)
 
-        child_prompts = manifest.get("prompts") or {}
-        parent_prompts = parent_manifest.get("prompts") or {}
-
-        # ── Prompts ──────────────────────────────────────────────────────────
-        def load_prompt_key(key: str) -> str:
-            rel = child_prompts.get(key)  # None if key absent or value is null
-            if rel:
-                # Explicit path → load from this entity's directory
-                p = path / rel
-                return _load_prompt(p) if p.exists() else ""
-            # Null/absent → inherit: use parent's path, load from parent's directory
-            parent_rel = parent_prompts.get(key)
-            if parent_rel and parent_path:
-                p = parent_path / parent_rel
-                return _load_prompt(p) if p.exists() else ""
-            return ""
-
-        system_prompt = load_prompt_key("system")
-        heartbeat_prompt = load_prompt_key("heartbeat")
-        session_context_template = load_prompt_key("session_context")
+        # Ancestor directory chain: [this, parent, grandparent, ...]
+        # Used for child-first file resolution across the full inheritance depth.
+        ancestor_dirs = self._ancestor_dirs(path)
 
         def resolve_file(rel: str) -> Path | None:
-            """Child directory first, then parent directory."""
-            p = path / rel
-            if p.exists():
-                return p
-            if parent_path:
-                p = parent_path / rel
+            """Return the first existing path for rel, walking the ancestor chain."""
+            for d in ancestor_dirs:
+                p = d / rel
                 if p.exists():
                     return p
             return None
 
-        # ── Tools ─────────────────────────────────────────────────────────────
-        # None (null/absent) → inherit parent's list. [] or explicit list → use as-is.
-        # Each path in the list resolves child-first, parent-fallback.
-        raw_tools = manifest.get("tools")
-        if raw_tools is None and parent_path:
-            tools_cfg = parent_manifest.get("tools") or []
-        else:
-            tools_cfg = raw_tools or []
+        # ── Prompts ──────────────────────────────────────────────────────────
+        child_prompts = manifest.get("prompts") or {}
 
-        tool_loader = ToolLoader(impl_registry=self._impl_registry)
-        tools = [
-            tool_loader.load(resolved)
-            for t in tools_cfg
-            if (resolved := resolve_file(t)) is not None
-        ]
+        def load_prompt_key(key: str, parent_attr: str) -> str:
+            rel = child_prompts.get(key)
+            if rel:
+                p = path / rel
+                return _load_prompt(p) if p.exists() else ""
+            # null/absent → use parent's already-resolved value
+            if parent is not None:
+                return getattr(parent, parent_attr) or ""
+            return ""
+
+        system_prompt           = load_prompt_key("system",          "system_prompt")
+        heartbeat_prompt        = load_prompt_key("heartbeat",       "heartbeat_prompt")
+        session_context_template = load_prompt_key("session_context", "session_context_template")
+
+        # ── Tools ─────────────────────────────────────────────────────────────
+        raw_tools = manifest.get("tools")
+        if raw_tools is None:
+            # null → inherit parent's fully-resolved list
+            tools = list(parent.tools) if parent is not None else []
+        else:
+            tool_loader = ToolLoader(impl_registry=self._impl_registry)
+            tools = [
+                tool_loader.load(resolved)
+                for t in (raw_tools or [])
+                if (resolved := resolve_file(t)) is not None
+            ]
 
         # ── Skills ────────────────────────────────────────────────────────────
         raw_skills = manifest.get("skills")
-        if raw_skills is None and parent_path:
-            skills_cfg = parent_manifest.get("skills") or []
+        if raw_skills is None:
+            # null → inherit parent's fully-resolved list
+            skills = list(parent.skills) if parent is not None else []
         else:
-            skills_cfg = raw_skills or []
+            skills = [
+                SkillLoader().load(resolved)
+                for s in (raw_skills or [])
+                if (resolved := resolve_file(s)) is not None
+            ]
 
-        skills = [
-            SkillLoader().load(resolved)
-            for s in skills_cfg
-            if (resolved := resolve_file(s)) is not None
-        ]
+        # ── Model / Provider ─────────────────────────────────────────────────
+        model = manifest.get("model")
+        if not model:
+            model = parent.model if parent is not None else "claude-sonnet-4-6"
+
+        provider_str = manifest.get("provider")
+        if not provider_str and parent is not None:
+            try:
+                from nutshell.runtime.provider_factory import provider_name
+                provider_str = provider_name(parent._provider)
+            except Exception:
+                pass
+        provider_str = provider_str or "anthropic"
 
         # ── Assemble ──────────────────────────────────────────────────────────
         agent = Agent(
             system_prompt=system_prompt,
             tools=tools,
             skills=skills,
-            model=manifest.get("model", "claude-sonnet-4-6"),
+            model=model,
             release_policy=manifest.get("release_policy", "persistent"),
             max_iterations=manifest.get("max_iterations", 20),
             heartbeat_prompt=heartbeat_prompt,
             session_context_template=session_context_template,
         )
 
-        provider_str = manifest.get("provider", "anthropic")
         try:
             from nutshell.runtime.provider_factory import resolve_provider
             agent._provider = resolve_provider(provider_str)
@@ -160,3 +169,29 @@ class AgentLoader(BaseLoader[Agent]):
             if subdir.is_dir() and (subdir / "agent.yaml").exists():
                 agents.append(self.load(subdir))
         return agents
+
+    # ── Private ───────────────────────────────────────────────────────────────
+
+    def _ancestor_dirs(self, path: Path) -> list[Path]:
+        """Return [path, parent, grandparent, ...] by walking the extends chain."""
+        try:
+            import yaml
+        except ImportError:
+            return [path]
+
+        dirs: list[Path] = []
+        current = path
+        while True:
+            dirs.append(current)
+            mpath = current / "agent.yaml"
+            if not mpath.exists():
+                break
+            manifest = yaml.safe_load(mpath.read_text(encoding="utf-8")) or {}
+            extends = manifest.get("extends")
+            if not extends:
+                break
+            parent = current.parent / extends
+            if not (parent / "agent.yaml").exists():
+                break
+            current = parent
+        return dirs

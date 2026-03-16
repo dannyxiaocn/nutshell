@@ -1,0 +1,17 @@
+name: nutshell_dev
+description: Development assistant with nutshell project context. Extends kimi_core (kimi-for-coding model) with nutshell skill added.
+extends: kimi_core
+release_policy: persistent
+max_iterations: 20
+
+prompts:
+  system:           # inherited from kimi_core → agent_core
+  heartbeat:        # inherited
+  session_context:  # inherited
+
+tools:    # inherited from kimi_core → agent_core
+
+skills:
+  - skills/nutshell
+  - skills/reasoning
+  - skills/skill-creator

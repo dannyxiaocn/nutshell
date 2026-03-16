@@ -1,4 +1,4 @@
-# Nutshell `v0.9.0`
+# Nutshell `v0.9.1`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -345,6 +345,10 @@ The web UI polls both files via SSE. On reconnect it resumes from the last byte 
 ---
 
 ## Changelog
+
+### v0.9.1
+- **Deep entity inheritance** — `AgentLoader` now supports arbitrarily deep `extends` chains (A→B→C). Parent is loaded recursively; null fields inherit the parent's already-resolved values rather than re-reading YAML. `resolve_file` walks the full ancestor directory chain for child-first file resolution. model/provider also inherit correctly from parent when not set.
+- **`nutshell_dev` cleanup** — now extends `kimi_core` (3-level chain: nutshell_dev→kimi_core→agent_core). Redundant copies of prompts/ and tools/ removed; only the `nutshell` skill remains in the entity dir.
 
 ### v0.9.0
 - **Tool provider layer** — `web_search` now has pluggable providers (Brave, Tavily). Set `tool_providers: {"web_search": "tavily"}` in `params.json` to switch. `nutshell/runtime/tool_provider_factory.py` mirrors the LLM `provider_factory.py` pattern; adding new providers requires only a one-line registry entry.
