@@ -69,6 +69,10 @@ class Agent(BaseAgent):
         self.session_context_template = session_context_template
         self._provider = provider
         self._history: list[Message] = []
+        # Runtime-injectable fields — set by Session before each activation.
+        # Not constructor params; Session owns the values, Agent owns the rendering.
+        self.memory: str = ""
+        self.session_context: str = ""
 
     @property
     def provider(self) -> Provider:
@@ -80,6 +84,10 @@ class Agent(BaseAgent):
     def _build_system_prompt(self) -> str:
         from nutshell.skill_engine.renderer import build_skills_block
         parts = [self.system_prompt] if self.system_prompt else []
+        if self.session_context:
+            parts.append("\n\n---\n" + self.session_context)
+        if self.memory:
+            parts.append(f"\n\n---\n## Session Memory\n\n{self.memory}")
         skills_block = build_skills_block(self.skills)
         if skills_block:
             parts.append(skills_block)

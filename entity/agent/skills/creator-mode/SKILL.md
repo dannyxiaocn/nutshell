@@ -1,42 +1,44 @@
 ---
 name: creator-mode
 description: >
-  Create or modify tools (.json + .sh pairs) and skills (SKILL.md files)
-  and hot-reload them into the active conversation using reload_capabilities.
-  Use when you want to build a new capability, fix an existing tool, or update
-  a skill and test it immediately without restarting.
+  Create or modify tools (.json + .sh pairs) and skills (SKILL.md files) and
+  hot-reload them into the active conversation using reload_capabilities. Use when
+  you want to build a new capability, extend yourself with a new tool, fix an existing
+  tool, create or update a skill, or build a complete application (web server, API,
+  data pipeline, CLI) — all without restarting.
 ---
 
 ## Overview
 
-Session-scoped tools and skills live in `core/` inside your session directory:
+You can extend yourself at runtime. New tools and skills take effect immediately via `reload_capabilities` — no session restart required.
+
+Session-scoped capabilities live in `core/` inside your session directory:
 
 - **Tools**: `core/tools/<name>.json` (schema) + `core/tools/<name>.sh` (implementation)
 - **Skills**: `core/skills/<name>/SKILL.md` (frontmatter + body)
 
-After creating or editing these files, call `reload_capabilities` to make the changes available in the current conversation. No restart needed.
+**There is no limit on what a tool can do.** The shell script can call Python, Node.js, any language or binary on the system. Build first, use immediately.
 
-## Creating a tool
+---
+
+## Building a tool
 
 1. Write the JSON schema to `core/tools/<name>.json`
 2. Write the shell implementation to `core/tools/<name>.sh`
-3. Make the script executable: `chmod +x core/tools/<name>.sh`
+3. `chmod +x core/tools/<name>.sh`
 4. Call `reload_capabilities`
-5. Test the tool by calling it
+5. Test by calling the tool
 
-### Tool JSON schema template
+### JSON schema template
 
 ```json
 {
   "name": "my_tool",
-  "description": "What this tool does.",
+  "description": "What this tool does. Be specific — the model reads this to decide when to call it.",
   "input_schema": {
     "type": "object",
     "properties": {
-      "arg1": {
-        "type": "string",
-        "description": "Description of arg1."
-      }
+      "arg1": {"type": "string", "description": "Description of arg1."}
     },
     "required": ["arg1"]
   }
@@ -45,38 +47,120 @@ After creating or editing these files, call `reload_capabilities` to make the ch
 
 ### Shell tool contract
 
-- All tool arguments arrive as a JSON object on **stdin**
-- Write the result to **stdout**
-- Exit 0 = success; non-zero exit = error (stderr returned as error message)
+- All kwargs arrive as a JSON object on **stdin**
+- Write result to **stdout**
+- Exit 0 = success; non-zero = error (stderr returned as error message)
 - Timeout: 30 seconds
-- Output cap: 10 000 characters
-
-Example shell tool that reads `arg1` from stdin:
 
 ```bash
 #!/usr/bin/env bash
-set -euo pipefail
-input=$(cat)
-arg1=$(echo "$input" | python3 -c "import sys, json; print(json.load(sys.stdin)['arg1'])")
-echo "You passed: $arg1"
+python3 << 'PYEOF'
+import sys, json
+args = json.load(sys.stdin)
+result = args['arg1'].upper()
+print(result)
+PYEOF
 ```
 
-## Modifying a tool or skill
+### Building full applications
 
-1. Edit the file directly with `bash` (e.g., `sed -i`, heredoc, or a Python script)
-2. Call `reload_capabilities`
-3. Test the change
+Since `.sh` can do anything, tools can build and drive complete applications:
+
+**Persistent background process (e.g., web server)**
+```bash
+#!/usr/bin/env bash
+PORT=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('port',8000))")
+nohup python3 sessions/YOUR_ID/playground/app.py --port "$PORT" \
+  > sessions/YOUR_ID/playground/server.log 2>&1 &
+echo "Server started on port $PORT (PID $!)"
+```
+
+**Script runner**
+```bash
+#!/usr/bin/env bash
+SCRIPT=$(python3 -c "import sys,json; print(json.load(sys.stdin)['path'])")
+python3 "$SCRIPT"
+```
+
+**Data pipeline step**
+```bash
+#!/usr/bin/env bash
+python3 << 'PYEOF'
+import sys, json, csv
+args = json.load(sys.stdin)
+with open(args['path']) as f:
+    rows = list(csv.DictReader(f))
+print(json.dumps({"rows": len(rows), "columns": list(rows[0].keys())}))
+PYEOF
+```
+
+---
+
+## Creating a skill
+
+A skill is a reusable block of instructions or domain knowledge injected into your system prompt. Once created and reloaded, it appears in your `<available_skills>` catalog.
+
+**When to create a skill:**
+- Recurring workflow the user wants repeated consistently
+- Domain knowledge specific to this session or project
+- A multi-step process the user wants captured as a repeatable procedure
+
+### Anatomy of a SKILL.md
+
+```markdown
+---
+name: skill-name      # identifier, matches directory name
+description: >        # THE TRIGGER — when and why to use this skill.
+  Be specific. Include task types, user phrases, and contexts.
+  More detail = more reliable triggering.
+---
+
+Instructions in Markdown. Write in imperative form.
+Explain the *why* behind each instruction.
+```
+
+**The `description` field is the triggering mechanism.** You decide whether to read a skill based solely on name + description. Make it answer: "When exactly should I use this?"
+
+### Creating a skill
+
+```bash
+mkdir -p sessions/YOUR_ID/core/skills/my-skill
+cat > sessions/YOUR_ID/core/skills/my-skill/SKILL.md << 'EOF'
+---
+name: my-skill
+description: >
+  Describe when to trigger this skill. List task types, user phrases,
+  and contexts where it applies.
+---
+
+## Instructions
+
+Write instructions here.
+EOF
+# Call reload_capabilities
+```
+
+### Deactivating a skill
+
+```bash
+rm -rf sessions/YOUR_ID/core/skills/my-skill
+# Call reload_capabilities
+```
+
+---
 
 ## The iteration loop
 
 ```
-draft → reload_capabilities → test → revise → reload_capabilities → test → …
+build/edit → reload_capabilities → test → fix → reload_capabilities → …
 ```
 
-Repeat until the tool or skill behaves as intended. Each reload replaces the previous version in memory.
+Each reload replaces the previous version in memory. No penalty for iteration.
+
+---
 
 ## Gotchas
 
-- `reload_capabilities` itself cannot be overridden — it is always injected last and any disk-based tool with the same name is filtered out.
-- Session tools override entity tools of the same name — use this intentionally to patch a built-in without touching entity files.
-- Skills are fully reloaded on each `reload_capabilities` call — changes to `SKILL.md` take effect immediately.
+- `reload_capabilities` cannot be overridden — always injected last; any disk tool with that name is filtered out.
+- A session tool with the same name as an entity tool overrides it — use this to patch a built-in for this session.
+- Background processes are not managed by the session — store the PID in the playground if you need to stop them.

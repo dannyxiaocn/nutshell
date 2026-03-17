@@ -24,11 +24,25 @@ def _make_stub(name: str) -> Callable:
 class ToolLoader(BaseLoader[Tool]):
     """Load JSON Schema tool definition files as Tool objects.
 
+    Tool taxonomy
+    -------------
+    System tools (bash, web_search):
+        Python-implemented, registered in tool_engine/registry.py.
+        Not agent-creatable; no hot-swap.  Resolved via impl_registry or
+        BashExecutor / get_builtin().
+
+    Agent-created tools:
+        Always shell-backed (.json + .sh pair).  The .sh script receives
+        all kwargs as JSON on stdin and writes its result to stdout.
+        Agents may call Python (or any interpreter) inside the script —
+        it is still a shell tool from the system's perspective.
+        Hot-reloaded via reload_capabilities.
+
     Resolution chain (highest priority first):
-      1. impl_registry (caller-supplied callables)
-      2. BashExecutor — handles tool_name == "bash"
-      3. ShellExecutor — handles sibling .sh file exists
-      4. PythonExecutor — always returns False (placeholder)
+      1. impl_registry (caller-supplied callables) — system tools
+      2. BashExecutor  — tool_name == "bash"
+      3. ShellExecutor — sibling .sh file exists (agent-created tools)
+      4. get_builtin() — remaining system built-ins (web_search, …)
       5. Stub that raises NotImplementedError
 
     File format (Anthropic-compatible JSON Schema):

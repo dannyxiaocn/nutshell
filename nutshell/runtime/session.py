@@ -117,19 +117,14 @@ class Session:
 
         # 2. prompts from core/
         system_md = self._read_core_text("system.md")
-        heartbeat_md = self._read_core_text("heartbeat.md")
         session_ctx_md = self._read_core_text("session_context.md")
 
-        self._agent.heartbeat_prompt = heartbeat_md
-        self._agent.session_context_template = session_ctx_md
-
-        memory_content = self.memory_path.read_text(encoding="utf-8").strip()
-        memory_block = f"\n\n---\n## Session Memory\n\n{memory_content}" if memory_content else ""
-        self._agent.system_prompt = (
-            system_md
-            + self._build_session_paths_block()
-            + memory_block
+        self._agent.system_prompt = system_md
+        self._agent.session_context = (
+            session_ctx_md.format(session_id=self._session_id) if session_ctx_md else ""
         )
+        self._agent.heartbeat_prompt = self._read_core_text("heartbeat.md")
+        self._agent.memory = self.memory_path.read_text(encoding="utf-8").strip()
 
         # 3. skills from core/skills/
         try:
@@ -165,12 +160,6 @@ class Session:
         tools.append(reload_tool)
 
         self._agent.tools = tools
-
-    def _build_session_paths_block(self) -> str:
-        template = self._agent.session_context_template
-        if not template:
-            return ""
-        return "\n\n---\n" + template.format(session_id=self._session_id)
 
     # ── History persistence ────────────────────────────────────────
 

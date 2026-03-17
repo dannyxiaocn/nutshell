@@ -18,5 +18,4 @@ tools:
   - tools/web_search.json
 
 skills:
-  - skills/skill-creator
   - skills/creator-mode

@@ -1,4 +1,4 @@
-# Nutshell `v1.1.1`
+# Nutshell `v1.1.2`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -137,15 +137,40 @@ Clear the file when all work is done.
 Continue working on your tasks. When all tasks are done, respond with: SESSION_FINISHED
 ```
 
-### Built-in Tools
+### Tools
+
+**Tool taxonomy — two kinds, never mixed:**
+
+| Kind | Who creates | How implemented | Hot-reload |
+|------|------------|-----------------|-----------|
+| **System tools** | Library only | Python (in `tool_engine/`) | No |
+| **Agent tools** | Agent at runtime | Shell script (`.json` + `.sh`) | Yes, via `reload_capabilities` |
+
+**System tools (built-in):**
 
 **`bash`** — `command` (required), `timeout`, `workdir`, `pty` (PTY mode, Unix only)
 
 **`web_search`** — `query` (required), `count` (1–10), `country`, `language`, `freshness` (day/week/month/year), `date_after`, `date_before` (YYYY-MM-DD). Default provider: Brave (`BRAVE_API_KEY`). Switch to Tavily by setting `tool_providers: {"web_search": "tavily"}` in `params.json`.
 
-Both are auto-wired by name — just declare them in `agent.yaml`, no Python needed.
+Both are Python-implemented, system-only, declared in `entity/agent/tools/`.
 
-**Session-scoped custom tools** — agents create tools at runtime by writing `core/tools/<name>.json` (schema) + `core/tools/<name>.sh` (implementation, reads JSON from stdin).
+**`reload_capabilities`** — always injected by the session, cannot be overridden from disk. Triggers hot-reload of all tools, skills, and prompts from `core/` mid-session.
+
+**Agent-created tools (shell-backed):**
+
+Agents create tools at runtime by writing `core/tools/<name>.json` (schema) + `core/tools/<name>.sh` (implementation). The `.sh` script receives all kwargs as a JSON object on stdin and writes its result to stdout. Agents may use Python (or any interpreter) inside the script — it is still a shell tool from the system's perspective.
+
+```bash
+# Example .sh tool
+#!/bin/bash
+python3 -c "
+import sys, json
+args = json.load(sys.stdin)
+print(args['query'].upper())
+"
+```
+
+After writing both files, call `reload_capabilities` to make the tool available immediately without restarting.
 
 ---
 
@@ -154,45 +179,65 @@ Both are auto-wired by name — just declare them in `agent.yaml`, no Python nee
 ```
 nutshell/              ← Python library package
 ├── core/
-│   ├── agent.py       # Agent + BaseAgent — LLM loop, tool execution, history management
+│   ├── agent.py       # Agent + BaseAgent — LLM loop, system prompt assembly, tool dispatch
 │   ├── tool.py        # Tool + BaseTool + @tool decorator
 │   ├── skill.py       # Skill dataclass
-│   └── types.py       # Message, ToolCall, AgentResult
-├── providers/
-│   ├── __init__.py    # Provider ABC
-│   ├── llm/
+│   ├── types.py       # Message, ToolCall, AgentResult
+│   ├── provider.py    # Provider ABC
+│   └── loader.py      # BaseLoader ABC
+│
+├── tool_engine/       ← All tool processing (loading, execution, provider swap)
+│   ├── executor/
+│   │   ├── base.py    # BaseExecutor ABC
+│   │   ├── bash.py    # BashExecutor + create_bash_tool() — subprocess + PTY
+│   │   └── shell.py   # ShellExecutor — JSON stdin→stdout for .sh agent tools
+│   ├── providers/
+│   │   └── web_search/
+│   │       ├── brave.py    # _brave_search() (BRAVE_API_KEY)
+│   │       └── tavily.py   # _tavily_search() (TAVILY_API_KEY)
+│   ├── registry.py    # get_builtin(), resolve_tool_impl(), list_providers()
+│   ├── loader.py      # ToolLoader — .json → Tool via executor chain
+│   ├── reload.py      # create_reload_tool(session) — hot-reload built-in
+│   └── sandbox.py     # PLACEHOLDER
+│
+├── llm_engine/        ← Self-contained LLM provider layer
+│   ├── providers/
 │   │   ├── anthropic.py   # AnthropicProvider
 │   │   └── kimi.py        # KimiForCodingProvider
-│   └── tool/
-│       ├── web_search.py  # Brave Search
-│       └── tavily.py      # Tavily Search
-└── runtime/
-    ├── session.py          # Session — persistent context + heartbeat daemon loop
-    ├── ipc.py              # FileIPC — context.jsonl + events.jsonl
-    ├── status.py           # status.json read/write
-    ├── params.py           # params.json read/write
-    ├── provider_factory.py
-    ├── tool_provider_factory.py
-    ├── watcher.py          # SessionWatcher — polls _sessions/ directory
-    ├── server.py           # nutshell-server entry point
-    ├── loaders/
-    │   ├── __init__.py     # BaseLoader ABC
-    │   ├── agent.py        # AgentLoader: entity/ → Agent (handles extends chain)
-    │   ├── tool.py         # ToolLoader: .json → Tool (.sh for shell-backed tools)
-    │   └── skill.py        # SkillLoader: SKILL.md → Skill
-    └── tools/
-        ├── bash.py         # create_bash_tool(): subprocess + PTY
-        └── _registry.py    # Built-in tool registry
+│   ├── registry.py    # resolve_provider(), provider_name()
+│   └── loader.py      # AgentLoader — entity/ dir → Agent (handles extends chain)
+│
+├── skill_engine/      ← All skill processing (loading, rendering)
+│   ├── loader.py      # SkillLoader — SKILL.md → Skill
+│   └── renderer.py    # build_skills_block() — renders skills into system prompt
+│
+└── runtime/           ← Pure orchestration (no business logic)
+    ├── session.py     # Session — reads files, assigns agent fields, runs daemon loop
+    ├── ipc.py         # FileIPC — context.jsonl + events.jsonl
+    ├── status.py      # status.json read/write
+    ├── params.py      # params.json read/write
+    ├── watcher.py     # SessionWatcher — polls _sessions/ directory
+    └── server.py      # nutshell-server entry point
 
 ui/                    ← UI applications (separate from library)
-├── web/                # nutshell-web (FastAPI + SSE)
-│   ├── app.py          # routes + entry point
-│   ├── sessions.py     # session helpers
-│   └── index.html      # frontend (HTML + CSS + JS)
-├── tui.py              # nutshell-tui (Textual terminal UI)
-└── dui/                # developer UI — entity management CLI tools
-    └── new_agent.py    # nutshell-new-agent
+├── web/               # nutshell-web (FastAPI + SSE)
+│   ├── app.py         # routes + entry point
+│   ├── sessions.py    # session helpers
+│   └── index.html     # frontend (HTML + CSS + JS)
+├── tui.py             # nutshell-tui (Textual terminal UI)
+└── dui/               # developer UI — entity management CLI tools
+    └── new_agent.py   # nutshell-new-agent
 ```
+
+**Layer boundaries:**
+
+| Layer | Owns |
+|-------|------|
+| `core/` | Data types (Skill, Tool, Message, …) + Agent loop + system prompt assembly |
+| `tool_engine/` | Tool loading, executor dispatch, provider swap, hot-reload |
+| `llm_engine/` | LLM provider implementations + AgentLoader |
+| `skill_engine/` | Skill loading + skill→prompt rendering |
+| `runtime/` | File I/O → assign agent fields → trigger runs. No string formatting. |
 
 ---
 
@@ -231,11 +276,16 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 
 ## Changelog
 
+### v1.1.2
+- **System prompt assembly moved to `core/agent.py`** — `Agent` now owns all prompt composition: base + `session_context` + `memory` + skills. `runtime/session.py` only reads files and assigns the three fields; zero string formatting in runtime.
+- **Tool taxonomy clarified** — system tools (bash, web_search) are Python-implemented, system-only, not agent-creatable. Agent-created tools are always shell-backed (`.json` + `.sh`); agents may call Python inside `.sh` scripts, but the executor is always `ShellExecutor`. Removed misleading `PythonExecutor` and `HttpExecutor` placeholders.
+- **`skill_engine/renderer.py`** — skill rendering extracted from `core/agent.py` into `skill_engine/`. `build_skills_block()` handles file-backed catalog and inline injection.
+
 ### v1.1.1
 - **Remove `abstract/` and `providers/`** — `Provider` ABC moved to `core/provider.py`; `BaseLoader` ABC moved to `core/loader.py`. No more shim layers.
 
 ### v1.1.0
-- **`tool_engine/`** — new unified tool execution layer: `executor/` hierarchy (`BashExecutor`, `ShellExecutor`; `PythonExecutor`/`HttpExecutor` placeholders), `providers/web_search/` (Brave + Tavily), merged `registry.py`, `ToolLoader`, `reload_capabilities` tool factory.
+- **`tool_engine/`** — new unified tool execution layer: `executor/` hierarchy (`BashExecutor`, `ShellExecutor`), `providers/web_search/` (Brave + Tavily), merged `registry.py`, `ToolLoader`, `reload_capabilities` tool factory.
 - **`llm_engine/`** — self-contained LLM provider layer: `providers/` (Anthropic, Kimi), `registry.py`, `AgentLoader`.
 - **`skill_engine/`** — `SkillLoader` extracted from `runtime/`.
 - **`reload_capabilities` built-in tool** — agents can hot-reload tools and skills mid-session without restarting.
@@ -262,7 +312,7 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ### v1.0.0 — v1.0.1
 - **Session layout refactor** — dual-directory layout: `sessions/<id>/` (agent-visible, with `core/`, `docs/`, `playground/`) + `_sessions/<id>/` (system-only). Entity content copied to `core/` at session creation; entity dir not accessed at runtime.
 - **Entity renames** — `agent_core` → `agent`, `kimi_core` → `kimi_agent`.
-- **Default tool provider** — `DEFAULT_PARAMS` now sets `tool_providers: {"web_search": "brave"}` explicitly; `session_context.md` documents available providers.
+- **Default tool provider** — `DEFAULT_PARAMS` now sets `tool_providers: {\"web_search\": \"brave\"}` explicitly; `session_context.md` documents available providers.
 
 ### v0.9.x
 - **Deep entity inheritance** — arbitrarily deep `extends` chains; child-first file resolution at every level.

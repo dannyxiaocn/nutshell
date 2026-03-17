@@ -193,55 +193,56 @@ def test_session_skill_order_preserved(tmp_path):
 # ── Memory injection ──────────────────────────────────────────────────────────
 
 def test_memory_injected_into_system_prompt(tmp_path):
-    """Content of memory.md is appended to system_prompt each activation."""
+    """Content of memory.md is injected into the assembled prompt each activation."""
     agent = Agent(system_prompt="Base system prompt.", provider=MockProvider([]))
     session = make_session(tmp_path, agent)
 
     session.memory_path.write_text("Remember: always be concise.")
     session._load_session_capabilities()
 
-    assert "Base system prompt." in agent.system_prompt
-    assert "Remember: always be concise." in agent.system_prompt
+    full_prompt = agent._build_system_prompt()
+    assert "Base system prompt." in full_prompt
+    assert "Remember: always be concise." in full_prompt
 
 
 def test_empty_memory_not_injected(tmp_path):
-    """Empty memory.md does not append any extra block to system_prompt."""
+    """Empty memory.md does not append any extra block."""
     agent = Agent(system_prompt="Base.", provider=MockProvider([]))
     session = make_session(tmp_path, agent)
 
     session.memory_path.write_text("")
     session._load_session_capabilities()
 
-    assert "Session Memory" not in agent.system_prompt
+    assert "Session Memory" not in agent._build_system_prompt()
 
 
 def test_memory_cleared_removes_block(tmp_path):
-    """After clearing memory.md the block is gone on next load."""
+    """After clearing memory.md the block is gone on next build."""
     agent = Agent(system_prompt="Base.", provider=MockProvider([]))
     session = make_session(tmp_path, agent)
 
     session.memory_path.write_text("Some memory.")
     session._load_session_capabilities()
-    assert "Some memory." in agent.system_prompt
+    assert "Some memory." in agent._build_system_prompt()
 
     session.memory_path.write_text("")
     session._load_session_capabilities()
-    assert "Some memory." not in agent.system_prompt
+    assert "Some memory." not in agent._build_system_prompt()
 
 
 def test_memory_updated_reflects_on_next_load(tmp_path):
-    """After updating memory.md the new content appears on next load."""
+    """After updating memory.md the new content appears on next build."""
     agent = Agent(system_prompt="Base.", provider=MockProvider([]))
     session = make_session(tmp_path, agent)
 
     session.memory_path.write_text("First memory.")
     session._load_session_capabilities()
-    assert "First memory." in agent.system_prompt
+    assert "First memory." in agent._build_system_prompt()
 
     session.memory_path.write_text("Second memory.")
     session._load_session_capabilities()
-    assert "Second memory." in agent.system_prompt
-    assert "First memory." not in agent.system_prompt
+    assert "Second memory." in agent._build_system_prompt()
+    assert "First memory." not in agent._build_system_prompt()
 
 
 # ── Tool-provider override ────────────────────────────────────────────────────
