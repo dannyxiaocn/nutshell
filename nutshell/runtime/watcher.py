@@ -1,4 +1,4 @@
-"""SessionWatcher: polls sessions/ directory and manages server session tasks."""
+"""SessionWatcher: polls _sessions/ directory and manages server session tasks."""
 from __future__ import annotations
 import asyncio
 import json
@@ -10,26 +10,28 @@ _AUTO_EXPIRE_HOURS = 5
 
 
 class SessionWatcher:
-    """Polling-based watcher for the sessions/ directory.
+    """Polling-based watcher for the sessions/ and _sessions/ directories.
 
-    On each scan, discovers directories with a manifest.json that have not
-    yet been started (or have finished). Each discovered session is launched
-    as an asyncio Task running Session.run_daemon_loop().
+    On each scan, discovers directories in _sessions/ with a manifest.json
+    that have not yet been started (or have finished). Each discovered session
+    is launched as an asyncio Task running Session.run_daemon_loop().
     """
 
     def __init__(
         self,
         sessions_dir: Path,
+        system_sessions_dir: Path,
         agent_factory: Callable[[dict], object] | None = None,
     ) -> None:
         self.sessions_dir = sessions_dir
+        self.system_sessions_dir = system_sessions_dir
         self._agent_factory = agent_factory
         self._active: dict[str, asyncio.Task] = {}  # session_id → task
         self._finished: set[str] = set()  # session_ids that have completed
 
     async def run(self, stop_event: asyncio.Event) -> None:
         """Main watcher loop. Runs until stop_event is set."""
-        print(f"[server] Watching: {self.sessions_dir.absolute()}")
+        print(f"[server] Watching: {self.system_sessions_dir.absolute()}")
 
         # Initial scan — recover existing sessions
         discovered = await self._scan()
@@ -52,17 +54,17 @@ class SessionWatcher:
         print("[server] All sessions stopped.")
 
     async def _scan(self) -> list[str]:
-        """Scan sessions_dir for new or recovered manifests. Returns newly started IDs."""
-        if not self.sessions_dir.exists():
+        """Scan system_sessions_dir for new or recovered manifests. Returns newly started IDs."""
+        if not self.system_sessions_dir.exists():
             return []
         discovered: list[str] = []
 
-        for session_dir in sorted(self.sessions_dir.iterdir()):
-            if not session_dir.is_dir():
+        for system_dir in sorted(self.system_sessions_dir.iterdir()):
+            if not system_dir.is_dir():
                 continue
 
-            session_id = session_dir.name
-            manifest_path = session_dir / "_system_log" / "manifest.json"
+            session_id = system_dir.name
+            manifest_path = system_dir / "manifest.json"
 
             if not manifest_path.exists():
                 continue
@@ -71,7 +73,7 @@ class SessionWatcher:
             # restarted them (status.json status set back to active).
             if session_id in self._finished:
                 from nutshell.runtime.status import read_session_status
-                status_data = read_session_status(session_dir)
+                status_data = read_session_status(system_dir)
                 status = status_data.get("status", "active")
                 if status == "stopped":
                     continue
@@ -98,7 +100,7 @@ class SessionWatcher:
                 continue
 
             from nutshell.runtime.status import read_session_status, write_session_status
-            status_data = read_session_status(session_dir)
+            status_data = read_session_status(system_dir)
             if status_data.get("status") == "stopped":
                 # Auto-expire sessions stopped for more than _AUTO_EXPIRE_HOURS
                 stopped_at_str = status_data.get("stopped_at")
@@ -107,8 +109,8 @@ class SessionWatcher:
                     try:
                         elapsed = (datetime.now() - datetime.fromisoformat(stopped_at_str)).total_seconds()
                         if elapsed >= _AUTO_EXPIRE_HOURS * 3600:
-                            write_session_status(session_dir, status="active", stopped_at=None)
-                            tasks_path = session_dir / "tasks.md"
+                            write_session_status(system_dir, status="active", stopped_at=None)
+                            tasks_path = self.sessions_dir / session_id / "core" / "tasks.md"
                             if tasks_path.exists():
                                 tasks_path.write_text("", encoding="utf-8")
                             print(f"[server] Auto-expired stopped session: {session_id}")
@@ -120,7 +122,7 @@ class SessionWatcher:
 
             discovered.append(session_id)
             task = asyncio.create_task(
-                self._start_session(session_id, session_dir, manifest),
+                self._start_session(session_id, system_dir, manifest),
                 name=f"session-{session_id}",
             )
             self._active[session_id] = task
@@ -128,60 +130,51 @@ class SessionWatcher:
         return discovered
 
     async def _start_session(
-        self, session_id: str, session_dir: Path, manifest: dict
+        self, session_id: str, system_dir: Path, manifest: dict
     ) -> None:
-        """Load agent from manifest and run server loop."""
+        """Create a minimal agent from params and run server loop."""
         from nutshell.runtime.session import Session
         from nutshell.runtime.ipc import FileIPC
-        from nutshell.runtime.status import read_session_status, write_session_status
+        from nutshell.runtime.status import read_session_status
         from nutshell.runtime.params import read_session_params
 
-        # Read heartbeat_interval from params.json (source of truth).
-        # Falls back to 600s default for old sessions that predate params.json.
+        session_dir = self.sessions_dir / session_id
+
+        # Read heartbeat_interval from core/params.json (source of truth).
         heartbeat = float(read_session_params(session_dir).get("heartbeat_interval") or 600.0)
-        base_dir = session_dir.parent
 
         try:
             if self._agent_factory is not None:
                 agent = self._agent_factory(manifest)
             else:
-                from nutshell import AgentLoader
-                from nutshell.runtime.provider_factory import resolve_provider, provider_name
-                from nutshell.runtime.params import write_session_params
+                from nutshell.core.agent import Agent
+                from nutshell.runtime.provider_factory import resolve_provider
 
-                entity = manifest.get("entity", "entity/agent_core")
-                entity_path = Path(entity)
-                # AgentLoader sets model + provider from agent.yaml
-                agent = AgentLoader().load(entity_path)
-
-                # params.json overrides agent.yaml only when explicitly set (non-null)
                 params = read_session_params(session_dir)
-                desired_provider = (params.get("provider") or "").lower()
-                if desired_provider and provider_name(agent._provider) != desired_provider:
-                    agent._provider = resolve_provider(desired_provider)
-                if params.get("model"):
-                    agent.model = params["model"]
-
-                # Write actual running values back so params.json always reflects reality
-                write_session_params(
-                    session_dir,
-                    provider=provider_name(agent._provider) or "anthropic",
-                    model=agent.model,
-                )
+                provider_str = (params.get("provider") or "anthropic").lower()
+                provider = resolve_provider(provider_str)
+                model = params.get("model") or None
+                agent = Agent(provider=provider, **({"model": model} if model else {}))
         except Exception as exc:
-            print(f"[server] Failed to load agent for {session_id}: {exc}")
+            print(f"[server] Failed to create agent for {session_id}: {exc}")
             return
 
-        ipc = FileIPC(session_dir)
-        session = Session(agent, session_id=session_id, base_dir=base_dir, heartbeat=heartbeat)
+        ipc = FileIPC(system_dir)
+        session = Session(
+            agent,
+            session_id=session_id,
+            base_dir=self.sessions_dir,
+            system_base=system_dir.parent,
+            heartbeat=heartbeat,
+        )
 
         # Always load history (needed for user messages even when tasks are empty)
-        context_path = session_dir / "_system_log" / "context.jsonl"
+        context_path = system_dir / "context.jsonl"
         if context_path.exists() and context_path.stat().st_size > 0:
             session.load_history()
 
         # Only announce if tasks have pending work — empty/idle sessions are silent
-        tasks_path = session_dir / "tasks.md"
+        tasks_path = session_dir / "core" / "tasks.md"
         has_tasks = tasks_path.exists() and tasks_path.read_text(encoding="utf-8").strip()
         if has_tasks:
             print(f"[server] Resumed: {session_id} ({len(agent._history)} messages, tasks pending)")

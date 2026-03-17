@@ -83,7 +83,7 @@ def _ask_name() -> str:
 def _ask_parent(entity_dir: Path) -> str | None:
     """Show numbered entity list, return selected entity name or None (standalone)."""
     entities = _list_entities(entity_dir)
-    default_idx = next((i for i, n in enumerate(entities, 1) if n == "agent_core"), 1)
+    default_idx = next((i for i, n in enumerate(entities, 1) if n == "agent"), 1)
 
     print("\nExtend which entity?")
     for i, name in enumerate(entities, 1):
@@ -110,8 +110,8 @@ def _ask_parent(entity_dir: Path) -> str | None:
 # ── File scaffolding ──────────────────────────────────────────────────────────
 
 def _read_template(template_name: str, entity_dir: Path) -> str | None:
-    """Try to read a file from entity/agent_core/. Returns None if not found."""
-    candidate = entity_dir / "agent_core" / template_name
+    """Try to read a file from entity/agent/. Returns None if not found."""
+    candidate = entity_dir / "agent" / template_name
     if candidate.exists():
         return candidate.read_text(encoding="utf-8")
     return None

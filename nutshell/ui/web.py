@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
@@ -25,7 +26,8 @@ from nutshell.runtime.status import ensure_session_status, read_session_status, 
 from nutshell.runtime.params import ensure_session_params, write_session_params
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
-_DEFAULT_ENTITY = "entity/agent_core"
+_SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
+_DEFAULT_ENTITY = "entity/agent"
 _DEFAULT_PORT = 8080
 
 
@@ -39,9 +41,9 @@ def _pid_alive(pid: int | None) -> bool:
         return False
 
 
-def _read_session_info(session_dir: Path) -> dict | None:
+def _read_session_info(session_dir: Path, system_dir: Path) -> dict | None:
     """Read session metadata from manifest.json (static) and status.json (dynamic)."""
-    manifest_path = session_dir / "_system_log" / "manifest.json"
+    manifest_path = system_dir / "manifest.json"
     if not manifest_path.exists():
         return None
     try:
@@ -49,8 +51,8 @@ def _read_session_info(session_dir: Path) -> dict | None:
     except Exception:
         manifest = {}
     # All dynamic state comes from status.json
-    status_payload = read_session_status(session_dir)
-    tasks_path = session_dir / "tasks.md"
+    status_payload = read_session_status(system_dir)
+    tasks_path = session_dir / "core" / "tasks.md"
     has_tasks = tasks_path.exists() and bool(tasks_path.read_text(encoding="utf-8").strip())
     tasks_mtime = (
         datetime.fromtimestamp(tasks_path.stat().st_mtime).isoformat()
@@ -59,7 +61,7 @@ def _read_session_info(session_dir: Path) -> dict | None:
     pid_alive = _pid_alive(status_payload.get("pid"))
     status = status_payload.get("status", "active")
     return {
-        "id": session_dir.name,
+        "id": system_dir.name,
         "entity": manifest.get("entity", "?"),
         "created_at": manifest.get("created_at", ""),
         "heartbeat": manifest.get("heartbeat", 10.0),
@@ -95,9 +97,125 @@ def _sort_sessions(sessions: list[dict]) -> list[dict]:
     return sessions
 
 
+def _init_session(
+    sessions_dir: Path,
+    system_sessions_dir: Path,
+    session_id: str,
+    entity: str,
+    heartbeat: float,
+) -> None:
+    """Initialize a new session directory structure by copying entity content to core/.
+
+    Idempotent: only writes files that do not already exist, except manifest.json.
+    """
+    session_dir = sessions_dir / session_id
+    system_dir = system_sessions_dir / session_id
+    core_dir = session_dir / "core"
+
+    # Create directory structure
+    core_dir.mkdir(parents=True, exist_ok=True)
+    (core_dir / "tools").mkdir(exist_ok=True)
+    (core_dir / "skills").mkdir(exist_ok=True)
+    (session_dir / "docs").mkdir(exist_ok=True)
+    (session_dir / "playground").mkdir(exist_ok=True)
+    system_dir.mkdir(parents=True, exist_ok=True)
+
+    # Touch IPC files
+    (system_dir / "context.jsonl").touch(exist_ok=True)
+    (system_dir / "events.jsonl").touch(exist_ok=True)
+
+    # Always write manifest (static config)
+    manifest = {
+        "session_id": session_id,
+        "entity": entity,
+        "created_at": datetime.now().isoformat(),
+    }
+    (system_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # Load agent from entity to get resolved content (prompts, tools, skills)
+    entity_path = Path(entity)
+    agent = None
+    if entity_path.exists():
+        try:
+            from nutshell import AgentLoader
+            agent = AgentLoader().load(entity_path)
+        except Exception:
+            pass
+
+    if agent is not None:
+        # Write core/ prompt files (only if absent — preserve agent edits on re-creation)
+        if not (core_dir / "system.md").exists():
+            (core_dir / "system.md").write_text(agent.system_prompt or "", encoding="utf-8")
+        if not (core_dir / "heartbeat.md").exists():
+            (core_dir / "heartbeat.md").write_text(agent.heartbeat_prompt or "", encoding="utf-8")
+        if not (core_dir / "session_context.md").exists():
+            (core_dir / "session_context.md").write_text(
+                agent.session_context_template or "", encoding="utf-8"
+            )
+
+        # Write tools to core/tools/ (only if absent)
+        for t in agent.tools:
+            tool_json = core_dir / "tools" / f"{t.name}.json"
+            if not tool_json.exists():
+                schema = {"name": t.name, "description": t.description, "input_schema": t.schema}
+                tool_json.write_text(json.dumps(schema, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        # Write skills to core/skills/ (only if absent)
+        for s in agent.skills:
+            skill_dir = core_dir / "skills" / s.name
+            if not skill_dir.exists():
+                if s.location is not None:
+                    src_dir = s.location.parent
+                    if src_dir.is_dir():
+                        shutil.copytree(src_dir, skill_dir, dirs_exist_ok=True)
+                    else:
+                        skill_dir.mkdir(parents=True, exist_ok=True)
+                        (skill_dir / "SKILL.md").write_text(
+                            s.location.read_text(encoding="utf-8"), encoding="utf-8"
+                        )
+                else:
+                    skill_dir.mkdir(parents=True, exist_ok=True)
+                    content = f"---\nname: {s.name}\ndescription: {s.description}\n---\n\n{s.body}\n"
+                    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+
+        # Write params.json with entity's model+provider (only if absent)
+        if not (core_dir / "params.json").exists():
+            from nutshell.runtime.provider_factory import provider_name as pname
+            entity_provider = pname(agent._provider) or "anthropic"
+            write_session_params(session_dir, heartbeat_interval=heartbeat,
+                                 model=agent.model, provider=entity_provider)
+        else:
+            # Update heartbeat_interval only
+            write_session_params(session_dir, heartbeat_interval=heartbeat)
+    else:
+        # Fallback: create empty prompt files and default params
+        for fname in ("system.md", "heartbeat.md", "session_context.md"):
+            if not (core_dir / fname).exists():
+                (core_dir / fname).write_text("", encoding="utf-8")
+        if not (core_dir / "params.json").exists():
+            ensure_session_params(session_dir, heartbeat_interval=heartbeat)
+        else:
+            write_session_params(session_dir, heartbeat_interval=heartbeat)
+
+    # Initialize memory.md and tasks.md (only if absent)
+    if not (core_dir / "memory.md").exists():
+        (core_dir / "memory.md").write_text("", encoding="utf-8")
+    if not (core_dir / "tasks.md").exists():
+        (core_dir / "tasks.md").write_text("", encoding="utf-8")
+
+    # status.json
+    ensure_session_status(system_dir)
+    write_session_status(system_dir, heartbeat_interval=heartbeat)
+
+
 # ── FastAPI app ────────────────────────────────────────────────────────────
 
-def create_app(sessions_dir: Path) -> FastAPI:
+def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> FastAPI:
+    if system_sessions_dir is None:
+        system_sessions_dir = sessions_dir.parent / "_sessions"
+
     app = FastAPI(title="Nutshell Web UI", docs_url=None, redoc_url=None)
 
     # ── HTML ──────────────────────────────────────────────────────────────
@@ -110,13 +228,15 @@ def create_app(sessions_dir: Path) -> FastAPI:
 
     @app.get("/api/sessions")
     async def list_sessions():
-        if not sessions_dir.exists():
+        if not system_sessions_dir.exists():
             return []
         result = []
-        for d in sessions_dir.iterdir():
+        for d in system_sessions_dir.iterdir():
             if not d.is_dir():
                 continue
-            info = _read_session_info(d)
+            session_id = d.name
+            session_dir = sessions_dir / session_id
+            info = _read_session_info(session_dir, d)
             if info is not None:
                 result.append(info)
         return _sort_sessions(result)
@@ -127,36 +247,7 @@ def create_app(sessions_dir: Path) -> FastAPI:
         entity = body.get("entity", _DEFAULT_ENTITY)
         heartbeat = float(body.get("heartbeat", 600.0))
 
-        session_dir = sessions_dir / session_id
-        system_log = session_dir / "_system_log"
-        session_dir.mkdir(parents=True, exist_ok=True)
-        system_log.mkdir(exist_ok=True)
-        (session_dir / "files").mkdir(exist_ok=True)
-        (session_dir / "prompts").mkdir(exist_ok=True)
-        (session_dir / "skills").mkdir(exist_ok=True)
-        (session_dir / "tools").mkdir(exist_ok=True)
-        (system_log / "context.jsonl").touch(exist_ok=True)
-        (system_log / "events.jsonl").touch(exist_ok=True)
-        (session_dir / "tasks.md").touch(exist_ok=True)
-        memory_path = session_dir / "prompts" / "memory.md"
-        if not memory_path.exists():
-            memory_path.write_text("", encoding="utf-8")
-
-        # manifest.json is purely static config — written once, never mutated
-        manifest = {
-            "session_id": session_id,
-            "entity": entity,
-            "created_at": datetime.now().isoformat(),
-        }
-        (system_log / "manifest.json").write_text(
-            json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        # params.json is the source of truth for heartbeat_interval, model, provider
-        ensure_session_params(session_dir, heartbeat_interval=heartbeat)
-        write_session_params(session_dir, heartbeat_interval=heartbeat)
-        # status.json mirrors heartbeat_interval for UI read access
-        ensure_session_status(session_dir)
-        write_session_status(session_dir, heartbeat_interval=heartbeat)
+        _init_session(sessions_dir, system_sessions_dir, session_id, entity, heartbeat)
         return {"id": session_id, "entity": entity}
 
     # ── Messages ──────────────────────────────────────────────────────────
@@ -164,10 +255,10 @@ def create_app(sessions_dir: Path) -> FastAPI:
     @app.post("/api/sessions/{session_id}/messages")
     async def send_message(session_id: str, body: dict):
         from nutshell.runtime.ipc import FileIPC
-        session_dir = sessions_dir / session_id
-        if not session_dir.exists():
+        system_dir = system_sessions_dir / session_id
+        if not system_dir.exists():
             raise HTTPException(404, f"Session not found: {session_id}")
-        ipc = FileIPC(session_dir)
+        ipc = FileIPC(system_dir)
         msg_id = ipc.send_message(body.get("content", ""))
         return {"id": msg_id}
 
@@ -175,13 +266,13 @@ def create_app(sessions_dir: Path) -> FastAPI:
 
     @app.get("/api/sessions/{session_id}/events")
     async def stream_events(session_id: str, context_since: int = 0, events_since: int = 0):
-        session_dir = sessions_dir / session_id
-        if not session_dir.exists():
+        system_dir = system_sessions_dir / session_id
+        if not system_dir.exists():
             raise HTTPException(404, f"Session not found: {session_id}")
 
         async def generator() -> AsyncIterator[str]:
             from nutshell.runtime.ipc import FileIPC
-            ipc = FileIPC(session_dir)
+            ipc = FileIPC(system_dir)
             ctx_offset = context_since
             evt_offset = events_since
             # Drain events that appeared between history load and SSE connect
@@ -225,7 +316,7 @@ def create_app(sessions_dir: Path) -> FastAPI:
         ephemeral streaming events are not replayed.
         """
         from nutshell.runtime.ipc import FileIPC
-        ipc = FileIPC(sessions_dir / session_id)
+        ipc = FileIPC(system_sessions_dir / session_id)
         events: list[dict] = []
         context_offset = 0
         for event, off in ipc.tail_history(0):
@@ -242,10 +333,10 @@ def create_app(sessions_dir: Path) -> FastAPI:
     @app.post("/api/sessions/{session_id}/stop")
     async def stop_session(session_id: str):
         from nutshell.runtime.ipc import FileIPC
-        session_dir = sessions_dir / session_id
-        write_session_status(session_dir, status="stopped", stopped_at=datetime.now().isoformat())
-        if session_dir.exists():
-            FileIPC(session_dir).append_event(
+        system_dir = system_sessions_dir / session_id
+        write_session_status(system_dir, status="stopped", stopped_at=datetime.now().isoformat())
+        if system_dir.exists():
+            FileIPC(system_dir).append_event(
                 {"type": "status", "value": "heartbeat paused — use ▶ Start to resume"}
             )
         return {"ok": True}
@@ -253,10 +344,10 @@ def create_app(sessions_dir: Path) -> FastAPI:
     @app.post("/api/sessions/{session_id}/start")
     async def start_session(session_id: str):
         from nutshell.runtime.ipc import FileIPC
-        session_dir = sessions_dir / session_id
-        write_session_status(session_dir, status="active", stopped_at=None)
-        if session_dir.exists():
-            FileIPC(session_dir).append_event(
+        system_dir = system_sessions_dir / session_id
+        write_session_status(system_dir, status="active", stopped_at=None)
+        if system_dir.exists():
+            FileIPC(system_dir).append_event(
                 {"type": "status", "value": "heartbeat resumed"}
             )
         return {"ok": True}
@@ -265,7 +356,7 @@ def create_app(sessions_dir: Path) -> FastAPI:
 
     @app.get("/api/sessions/{session_id}/tasks")
     async def get_tasks(session_id: str):
-        tasks_path = sessions_dir / session_id / "tasks.md"
+        tasks_path = sessions_dir / session_id / "core" / "tasks.md"
         if not tasks_path.exists():
             return {"content": ""}
         return {"content": tasks_path.read_text(encoding="utf-8")}
@@ -275,7 +366,8 @@ def create_app(sessions_dir: Path) -> FastAPI:
         session_dir = sessions_dir / session_id
         if not session_dir.exists():
             raise HTTPException(404, f"Session not found: {session_id}")
-        tasks_path = session_dir / "tasks.md"
+        tasks_path = session_dir / "core" / "tasks.md"
+        tasks_path.parent.mkdir(parents=True, exist_ok=True)
         tasks_path.write_text(body.get("content", ""), encoding="utf-8")
         return {"ok": True}
 
@@ -584,7 +676,7 @@ _HTML = r"""<!DOCTYPE html>
   async function showNewSessionDialog() {
     const id = prompt('Session ID (leave empty for timestamp):') ?? null;
     if (id === null) return;
-    const entity = prompt('Entity path:', 'entity/agent_core');
+    const entity = prompt('Entity path:', 'entity/agent');
     if (!entity) return;
     const res = await fetch('/api/sessions', {
       method: 'POST',
@@ -890,12 +982,15 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=_DEFAULT_PORT)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--sessions-dir", default=str(SESSIONS_DIR), metavar="DIR")
+    parser.add_argument("--system-sessions-dir", default=str(_SYSTEM_SESSIONS_DIR), metavar="DIR")
     args = parser.parse_args()
 
     sessions_dir = Path(args.sessions_dir)
+    system_sessions_dir = Path(args.system_sessions_dir)
     sessions_dir.mkdir(parents=True, exist_ok=True)
+    system_sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    app = create_app(sessions_dir)
+    app = create_app(sessions_dir, system_sessions_dir)
     print(f"nutshell web UI: http://localhost:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

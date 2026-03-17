@@ -1,0 +1,16 @@
+name: kimi_agent
+description: "Kimi model specialist."
+model: kimi-for-coding
+provider: kimi-coding-plan
+extends: agent
+release_policy: persistent
+max_iterations: 20
+
+prompts:
+  system:           # inherited from agent
+  heartbeat:        # inherited from agent
+  session_context:  # inherited from agent
+
+tools:    # inherited from agent
+
+skills:   # inherited from agent

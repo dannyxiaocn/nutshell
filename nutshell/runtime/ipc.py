@@ -135,10 +135,10 @@ class FileIPC:
         events.jsonl  — runtime/UI events (model_status, partial_text, etc.)
     """
 
-    def __init__(self, session_dir: Path) -> None:
-        self.session_dir = session_dir
-        self.context_path = session_dir / "_system_log" / "context.jsonl"
-        self.events_path = session_dir / "_system_log" / "events.jsonl"
+    def __init__(self, system_dir: Path) -> None:
+        self.system_dir = system_dir
+        self.context_path = system_dir / "context.jsonl"
+        self.events_path = system_dir / "events.jsonl"
 
     # ── Write ────────────────────────────────────────────────────────────────
 

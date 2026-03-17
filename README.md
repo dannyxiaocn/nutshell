@@ -1,4 +1,4 @@
-# Nutshell `v0.9.2`
+# Nutshell `v1.0.0`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -27,7 +27,7 @@ nutshell-server    # terminal 1: keep running
 nutshell-web       # terminal 2: open http://localhost:8080
 ```
 
-To scaffold a new agent entity (inherits from `agent_core` by default):
+To scaffold a new agent entity (inherits from `agent` by default):
 
 ```bash
 nutshell-new-agent -n my-agent
@@ -89,12 +89,12 @@ name: my-agent
 description: ""
 model: claude-sonnet-4-6
 provider: anthropic
-extends: agent_core           # parent entity
+extends: agent                # parent entity
 release_policy: persistent
 max_iterations: 20
 
 prompts:
-  system:           # null → load from agent_core/prompts/system.md
+  system:           # null → load from agent/prompts/system.md
   heartbeat:        # null → inherit
   session_context: prompts/session_context.md  # own file → load from here
 
@@ -109,63 +109,71 @@ skills:   # null → inherit parent's full skills list
 
 When you override a single tool or skill, list all paths you want; files missing in the child directory fall back to the parent's copy automatically.
 
-`nutshell-new-agent` creates a minimal inheriting entity by default — full `agent.yaml`, empty `prompts/`/`tools/`/`skills/` dirs (with placeholder files), everything inherited from `agent_core`:
+`nutshell-new-agent` creates a minimal inheriting entity by default — full `agent.yaml`, empty `prompts/`/`tools/`/`skills/` dirs (with placeholder files), everything inherited from `agent`:
 
 ```bash
-nutshell-new-agent -n my-agent                   # extends agent_core (default)
-nutshell-new-agent -n my-agent --extends kimi_core
-nutshell-new-agent -n my-agent --no-inherit      # standalone, copies agent_core files
+nutshell-new-agent -n my-agent                   # extends agent (default)
+nutshell-new-agent -n my-agent --extends kimi_agent
+nutshell-new-agent -n my-agent --no-inherit      # standalone, copies agent files
 ```
 
 ---
 
 ### Session — Live Runtime State
 
-A session is a running instance of an entity. Each session gets its own directory:
+A session is a running instance of an entity. Each session has two sibling directories:
 
 ```
-sessions/<id>/
-├── params.json             ← runtime overrides: model, provider, heartbeat_interval, tool_providers
-├── tasks.md                ← task board (agent reads/writes via bash)
-├── files/                  ← attached files
-├── prompts/
-│   └── memory.md           ← agent persistent memory (auto-appended to system prompt)
-├── skills/
-│   └── *.md                ← per-session skill overrides (merged with entity skills)
-├── tools/
-│   ├── my_tool.json        ← agent-created tool schema
-│   └── my_tool.sh          ← agent-created tool implementation (bash, reads JSON from stdin)
-└── _system_log/
-    ├── manifest.json       ← static: entity path, created_at (written once, never mutated)
-    ├── status.json         ← dynamic: model_state, pid, stopped/active, last_run_at
-    ├── context.jsonl       ← append-only conversation history: user_input + turn events
-    └── events.jsonl        ← runtime/UI events: streaming, status, errors
+sessions/<id>/                ← agent-visible (agent reads/writes freely)
+├── core/
+│   ├── system.md             ← system prompt (copied from entity at creation, editable)
+│   ├── heartbeat.md          ← heartbeat prompt (editable)
+│   ├── session_context.md    ← session paths template (editable)
+│   ├── memory.md             ← persistent memory (auto-appended to system prompt)
+│   ├── tasks.md              ← task board
+│   ├── params.json           ← runtime config: model, provider, heartbeat_interval, tool_providers
+│   ├── tools/
+│   │   ├── my_tool.json      ← tool schema (Anthropic JSON Schema)
+│   │   └── my_tool.sh        ← tool implementation (bash, reads JSON from stdin)
+│   └── skills/
+│       └── <name>/SKILL.md   ← skill directories (loaded each activation)
+├── docs/                     ← user-uploaded files (read-only from agent perspective)
+└── playground/               ← agent's free workspace
+
+_sessions/<id>/               ← system-only twin (agent never sees this)
+├── manifest.json             ← static: entity name, created_at (written once)
+├── status.json               ← dynamic: model_state, pid, stopped/active, last_run_at
+├── context.jsonl             ← append-only conversation history: user_input + turn events
+└── events.jsonl              ← runtime/UI events: streaming, status, errors
 ```
 
 **Key invariants:**
-- `_system_log/manifest.json` is immutable — written once at session creation.
-- `params.json` is the source of truth for model, provider, heartbeat_interval, and tool_providers.
-- `_system_log/context.jsonl` is the sole source for conversation history — append-only, never rewritten.
+- `_sessions/<id>/manifest.json` is immutable — written once at session creation.
+- `core/params.json` is the source of truth for model, provider, heartbeat_interval, and tool_providers.
+- `_sessions/<id>/context.jsonl` is the sole source for conversation history — append-only, never rewritten.
+- Entity content is copied to `core/` at session creation. The entity directory is not accessed at runtime.
 
 ---
 
 ### Config Loading — How It All Fits Together
 
-On every activation (user message or heartbeat tick), the server reloads capabilities fresh from disk in this order:
+On every activation (user message or heartbeat tick), the server reloads capabilities fresh from `core/` in this order:
 
 ```
-entity/agent.yaml                   → baseline model, provider, tools, skills, system prompt
+core/params.json                    → model, provider, heartbeat_interval, tool_providers
         ↓
-sessions/<id>/params.json           → override model, provider, heartbeat_interval, tool_providers
+core/system.md                      → base system prompt
         ↓
-sessions/<id>/prompts/memory.md     → appended to system prompt
+core/session_context.md             → session paths block (appended to system prompt)
         ↓
-sessions/<id>/skills/*.md           → merged with entity skills (session overrides by name)
+core/memory.md                      → persistent memory (appended to system prompt)
         ↓
-sessions/<id>/tools/*.json + *.sh   → session-scoped tools (agent-created, loaded last)
+core/skills/*/SKILL.md              → skills (all loaded from core/skills/)
+        ↓
+core/tools/*.json + *.sh            → tools (loaded from core/tools/, tool_providers overrides applied)
 ```
 
-This means agents can **modify their own runtime configuration** by writing to files in their session directory — changing model, provider, heartbeat interval, memory, skills, or tools — all without server restart.
+This means agents can **modify their own runtime configuration** by writing to files in `core/` — changing model, provider, heartbeat interval, system prompt, memory, skills, or tools — all without server restart.
 
 `params.json` schema:
 
@@ -345,6 +353,12 @@ The web UI polls both files via SSE. On reconnect it resumes from the last byte 
 ---
 
 ## Changelog
+
+### v1.0.0
+- **Session layout refactor** — agent-visible session dir is now `sessions/<id>/core/` (prompts, tools, skills, memory, tasks, params.json) + `docs/` + `playground/`. System internals moved to a parallel `_sessions/<id>/` twin (manifest, status, context, events). Agent has full ownership of its session dir; nothing is hidden inside it.
+- **Entity copy-on-create** — when a session is born, the resolved entity (full inheritance chain) is copied into `sessions/<id>/core/`. The agent reads/writes `core/` only at runtime; the entity directory is not accessed after session creation.
+- **Entity renames** — `agent_core` → `agent`, `kimi_core` → `kimi_agent`. `nutshell_dev` now extends `kimi_agent`.
+- **`reasoning` skill removed** — removed from `agent` and `nutshell_dev` entity skills lists.
 
 ### v0.9.2
 - **`kimi_core` cleanup** — redundant placeholder prompts/ directory removed; entity now has only `agent.yaml` + empty `tools/` and `skills/` dirs.

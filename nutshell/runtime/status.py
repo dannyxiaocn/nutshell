@@ -19,12 +19,12 @@ DEFAULT_SESSION_STATUS: dict[str, Any] = {
 }
 
 
-def status_path(session_dir: Path) -> Path:
-    return session_dir / "_system_log" / "status.json"
+def status_path(system_dir: Path) -> Path:
+    return system_dir / "status.json"
 
 
-def read_session_status(session_dir: Path) -> dict:
-    path = status_path(session_dir)
+def read_session_status(system_dir: Path) -> dict:
+    path = status_path(system_dir)
     if not path.exists():
         return dict(DEFAULT_SESSION_STATUS)
     try:
@@ -36,13 +36,13 @@ def read_session_status(session_dir: Path) -> dict:
     return result
 
 
-def write_session_status(session_dir: Path, **updates: Any) -> None:
+def write_session_status(system_dir: Path, **updates: Any) -> None:
     """Update specific fields in status.json. Only provided keys are changed.
 
     Always touches updated_at. Thread-safe only for single-process access
     (relies on OS file write atomicity for small JSON payloads).
     """
-    path = status_path(session_dir)
+    path = status_path(system_dir)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
@@ -56,11 +56,12 @@ def write_session_status(session_dir: Path, **updates: Any) -> None:
         pass
 
 
-def ensure_session_status(session_dir: Path) -> None:
+def ensure_session_status(system_dir: Path) -> None:
     """Write status.json with defaults if it does not yet exist."""
-    path = status_path(session_dir)
+    path = status_path(system_dir)
     if path.exists():
         return
+    path.parent.mkdir(parents=True, exist_ok=True)
     payload = dict(DEFAULT_SESSION_STATUS)
     payload["updated_at"] = datetime.now().isoformat()
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

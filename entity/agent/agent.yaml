@@ -1,7 +1,7 @@
-# Agent manifest for agent_core
+# Agent manifest for agent
 # Paths are relative to this file's directory.
 
-name: agent_core
+name: agent
 description: A general-purpose assistant with basic capabilities.
 model: claude-sonnet-4-6
 provider: anthropic
@@ -18,5 +18,4 @@ tools:
   - tools/web_search.json
 
 skills:
-  - skills/reasoning
   - skills/skill-creator

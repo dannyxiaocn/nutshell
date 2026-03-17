@@ -18,12 +18,19 @@ class MockProvider(Provider):
         return next(self._responses)
 
 
-def _write_manifest(session_dir):
-    (session_dir / "_system_log").mkdir(exist_ok=True)
-    (session_dir / "_system_log" / "manifest.json").write_text(
-        json.dumps({"session_id": session_dir.name}, ensure_ascii=False),
-        encoding="utf-8",
+def make_session(tmp_path, agent, session_id="demo"):
+    """Create a Session with the new layout (sessions/ + _sessions/)."""
+    system_base = tmp_path / "_sessions"
+    session = Session(agent=agent, session_id=session_id, base_dir=tmp_path, system_base=system_base)
+    # Pre-populate core/ prompt files
+    (session.core_dir / "system.md").write_text(agent.system_prompt or "", encoding="utf-8")
+    (session.core_dir / "heartbeat.md").write_text(
+        getattr(agent, "heartbeat_prompt", "") or "", encoding="utf-8"
     )
+    (session.core_dir / "session_context.md").write_text(
+        getattr(agent, "session_context_template", "") or "", encoding="utf-8"
+    )
+    return session
 
 
 def test_context_event_to_display_expands_turn():
@@ -86,22 +93,20 @@ async def test_session_chat_writes_turn_to_context_and_status_to_events(tmp_path
     """chat() writes turn to context.jsonl and model_status to events.jsonl."""
     provider = MockProvider([("**done**", [])])
     agent = Agent(provider=provider)
-    session = Session(agent=agent, session_id="demo", base_dir=tmp_path)
-    _write_manifest(session.session_dir)
-    ipc = FileIPC(session.session_dir)
+    session = make_session(tmp_path, agent)
+    ipc = FileIPC(session.system_dir)
     session._ipc = ipc
 
     await session.chat("hello")
 
-    syslog = session.session_dir / "_system_log"
     context_events = [
         json.loads(line)
-        for line in (syslog / "context.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in session.system_dir.joinpath("context.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     runtime_events = [
         json.loads(line)
-        for line in (syslog / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in session.system_dir.joinpath("events.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
 
@@ -115,7 +120,7 @@ async def test_session_chat_writes_turn_to_context_and_status_to_events(tmp_path
     assert runtime_events[1]["state"] == "idle"
     assert runtime_events[1]["source"] == "user"
 
-    status = read_session_status(session.session_dir)
+    status = read_session_status(session.system_dir)
     assert status["model_state"] == "idle"
     assert status["model_source"] == "user"
 
@@ -128,23 +133,21 @@ async def test_session_chat_writes_idle_on_cancellation(tmp_path):
             raise asyncio.CancelledError()
 
     agent = Agent(provider=CancellingProvider())
-    session = Session(agent=agent, session_id="demo", base_dir=tmp_path)
-    _write_manifest(session.session_dir)
-    ipc = FileIPC(session.session_dir)
+    session = make_session(tmp_path, agent)
+    ipc = FileIPC(session.system_dir)
     session._ipc = ipc
 
     with pytest.raises(asyncio.CancelledError):
         await session.chat("hello")
 
-    syslog = session.session_dir / "_system_log"
     context_events = [
         json.loads(line)
-        for line in (syslog / "context.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in session.system_dir.joinpath("context.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     runtime_events = [
         json.loads(line)
-        for line in (syslog / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in session.system_dir.joinpath("events.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
 
@@ -156,5 +159,5 @@ async def test_session_chat_writes_idle_on_cancellation(tmp_path):
     assert runtime_events[0]["state"] == "running"
     assert runtime_events[1]["state"] == "idle"
 
-    status = read_session_status(session.session_dir)
+    status = read_session_status(session.system_dir)
     assert status["model_state"] == "idle"

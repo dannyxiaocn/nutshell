@@ -7,10 +7,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nutshell.core.agent import Agent
-from nutshell.core.skill import Skill
 from nutshell.core.tool import Tool
 from nutshell.core.types import AgentResult
-from nutshell.runtime.params import ensure_session_params, read_session_params, write_session_params
+from nutshell.runtime.params import ensure_session_params, read_session_params
 from nutshell.runtime.provider_factory import provider_name, resolve_provider
 from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
 
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
     from nutshell.runtime.ipc import FileIPC
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
+_SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
 DEFAULT_HEARTBEAT_INTERVAL = 600.0  # 10 minutes
 SESSION_FINISHED = "SESSION_FINISHED"
 
@@ -25,23 +25,29 @@ SESSION_FINISHED = "SESSION_FINISHED"
 class Session:
     """Agent persistent run context (server mode only).
 
-    Disk layout: sessions/<id>/
-        params.json      — model, provider, heartbeat_interval (source of truth; agent edits via bash)
-        tasks.md         — free-form task notes (plain file read/write)
-        files/           — associated files directory
-        prompts/
-            memory.md    — persistent memory (auto-injected each activation)
-        skills/          — per-session skill .md files
-        tools/           — reserved (v2)
-        _system_log/
-            manifest.json  — static config (entity, created_at)
-            status.json    — all dynamic runtime state
-            context.jsonl  — append-only log: user_input, turn
-            events.jsonl   — runtime/UI events
+    Disk layout:
+        sessions/<id>/                ← agent-visible
+          core/
+            system.md               ← system prompt (copied from entity at creation)
+            heartbeat.md            ← heartbeat prompt
+            session_context.md      ← session paths template
+            memory.md               ← persistent memory (auto-injected each activation)
+            tasks.md                ← task board
+            params.json             ← runtime config
+            tools/                  ← tool definitions: .json + .sh
+            skills/                 ← skill dirs
+          docs/                     ← user-uploaded files
+          playground/               ← agent's free workspace
+
+        _sessions/<id>/             ← system-only twin (agent never sees this)
+          manifest.json             ← static: entity name, created_at
+          status.json               ← dynamic runtime state
+          context.jsonl             ← conversation history
+          events.jsonl              ← runtime/UI events
 
     Usage:
         session = Session(agent, session_id="my-project")
-        ipc     = FileIPC(session.session_dir)
+        ipc     = FileIPC(session.system_dir)
         await session.run_daemon_loop(ipc)
 
     Resuming an existing session uses the same constructor — directory
@@ -53,120 +59,100 @@ class Session:
         agent: Agent,
         session_id: str | None = None,
         base_dir: Path = SESSIONS_DIR,
+        system_base: Path = _SYSTEM_SESSIONS_DIR,
         heartbeat: float = DEFAULT_HEARTBEAT_INTERVAL,
     ) -> None:
         self._agent = agent
         self._session_id = session_id or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self._base_dir = base_dir
+        self._system_base = system_base
         self._heartbeat_interval = heartbeat
         self._agent_lock: asyncio.Lock = asyncio.Lock()
         self._ipc: FileIPC | None = None
 
         # Idempotent directory creation — safe for both new and resumed sessions
         self.session_dir.mkdir(parents=True, exist_ok=True)
-        self.files_dir.mkdir(exist_ok=True)
-        self.prompts_dir.mkdir(exist_ok=True)
-        self.skills_dir.mkdir(exist_ok=True)
-        self.tools_dir.mkdir(exist_ok=True)
-        self.system_log_dir.mkdir(exist_ok=True)
+        self.core_dir.mkdir(exist_ok=True)
+        (self.core_dir / "tools").mkdir(exist_ok=True)
+        (self.core_dir / "skills").mkdir(exist_ok=True)
+        self.docs_dir.mkdir(exist_ok=True)
+        self.playground_dir.mkdir(exist_ok=True)
+        self.system_dir.mkdir(parents=True, exist_ok=True)
         if not self.tasks_path.exists():
             self.tasks_path.write_text("", encoding="utf-8")
+        if not self.memory_path.exists():
+            self.memory_path.write_text("", encoding="utf-8")
         if not self._context_path.exists():
             self._context_path.touch()
         if not self._events_path.exists():
             self._events_path.touch()
-        if not self.memory_path.exists():
-            self.memory_path.write_text("", encoding="utf-8")
-        ensure_session_status(self.session_dir)
+        ensure_session_status(self.system_dir)
         ensure_session_params(self.session_dir, heartbeat_interval=heartbeat)
-
-        # Baseline snapshot — _load_session_capabilities restores to these each activation
-        self._entity_system_prompt: str = agent.system_prompt
-        self._entity_skills: list[Skill] = list(agent.skills)
-        self._entity_tools: list[Tool] = list(agent.tools)
-        self._entity_model: str = agent.model
 
     # ── Capability loading ─────────────────────────────────────────
 
-    def _load_session_capabilities(self) -> None:
-        """Reload params, memory, and session skills. Call inside agent lock before each run."""
-        from nutshell.runtime.loaders.skill import SkillLoader
+    def _read_core_text(self, name: str) -> str:
+        """Read a file from core/ returning empty string if missing."""
+        p = self.core_dir / name
+        try:
+            return p.read_text(encoding="utf-8").strip()
+        except (FileNotFoundError, PermissionError):
+            return ""
 
-        # 1. params.json → provider + model, mirror heartbeat_interval to status.json for UI
+    def _load_session_capabilities(self) -> None:
+        """Reload params, prompts, skills, and tools from core/. Call inside agent lock before each run."""
+        from nutshell.runtime.loaders.skill import SkillLoader
+        from nutshell.runtime.loaders.tool import ToolLoader
+
+        # 1. params → provider + model
         params = read_session_params(self.session_dir)
 
-        # Switch provider if params explicitly specifies one different from current
         desired_provider = (params.get("provider") or "").lower()
         if desired_provider and provider_name(self._agent._provider) != desired_provider:
             self._agent._provider = resolve_provider(desired_provider)
 
-        # Apply model (null → entity baseline)
-        self._agent.model = params.get("model") or self._entity_model
+        self._agent.model = params.get("model") or self._agent.model
 
-        # Write actual running values back so params.json always reflects reality
-        actual_pname = provider_name(self._agent._provider)
-        if actual_pname:  # skip write for unknown/mock providers (test safety)
-            write_session_params(
-                self.session_dir,
-                provider=actual_pname,
-                model=self._agent.model,
-            )
+        write_session_status(self.system_dir, heartbeat_interval=params["heartbeat_interval"])
 
-        write_session_status(self.session_dir, heartbeat_interval=params["heartbeat_interval"])
+        # 2. prompts from core/
+        system_md = self._read_core_text("system.md")
+        heartbeat_md = self._read_core_text("heartbeat.md")
+        session_ctx_md = self._read_core_text("session_context.md")
 
-        # 2. memory.md + session paths → rebuild system_prompt
+        self._agent.heartbeat_prompt = heartbeat_md
+        self._agent.session_context_template = session_ctx_md
+
         memory_content = self.memory_path.read_text(encoding="utf-8").strip()
         memory_block = f"\n\n---\n## Session Memory\n\n{memory_content}" if memory_content else ""
         self._agent.system_prompt = (
-            self._entity_system_prompt
+            system_md
             + self._build_session_paths_block()
             + memory_block
         )
 
-        # 3. session skills: merge (session overrides entity by name, new ones appended)
-        session_skills: list[Skill] = []
+        # 3. skills from core/skills/
         try:
-            session_skills = SkillLoader().load_dir(self.skills_dir)
+            self._agent.skills = SkillLoader().load_dir(self.core_dir / "skills")
         except Exception:
-            pass
-        session_by_name = {s.name: s for s in session_skills}
-        entity_names = {s.name for s in self._entity_skills}
-        merged = [session_by_name.get(s.name, s) for s in self._entity_skills]
-        merged += [s for s in session_skills if s.name not in entity_names]
-        self._agent.skills = merged
+            self._agent.skills = []
 
-        # 4. reset tools to entity baseline (prevents duplication across activations)
-        self._agent.tools = list(self._entity_tools)
+        # 4. tools from core/tools/ + tool_providers overrides
+        try:
+            tools = ToolLoader().load_dir(self.core_dir / "tools")
+        except Exception:
+            tools = []
 
-        # 5. apply tool provider overrides from params.json (e.g. {"web_search": "tavily"})
         tool_providers = params.get("tool_providers") or {}
         if tool_providers:
             from nutshell.runtime import tool_provider_factory
-            for i, tool in enumerate(self._agent.tools):
-                if tool.name in tool_providers:
-                    impl = tool_provider_factory.resolve_tool_impl(tool.name, tool_providers[tool.name])
+            for i, t in enumerate(tools):
+                if t.name in tool_providers:
+                    impl = tool_provider_factory.resolve_tool_impl(t.name, tool_providers[t.name])
                     if impl:
-                        self._agent.tools[i] = Tool(
-                            name=tool.name,
-                            description=tool.description,
-                            func=impl,
-                            schema=tool.schema,
-                        )
+                        tools[i] = Tool(name=t.name, description=t.description, func=impl, schema=t.schema)
 
-        # 6. load session-scoped tools from sessions/<id>/tools/ (agent-created tools)
-        if self.tools_dir.exists():
-            from nutshell.runtime.loaders.tool import ToolLoader
-            try:
-                session_tools = ToolLoader().load_dir(self.tools_dir)
-            except Exception:
-                session_tools = []
-            if session_tools:
-                entity_names = {t.name for t in self._agent.tools}
-                for st in session_tools:
-                    if st.name in entity_names:
-                        self._agent.tools = [st if t.name == st.name else t for t in self._agent.tools]
-                    else:
-                        self._agent.tools.append(st)
+        self._agent.tools = tools
 
     def _build_session_paths_block(self) -> str:
         template = self._agent.session_context_template
@@ -333,22 +319,22 @@ class Session:
 
     def is_stopped(self) -> bool:
         """True if status.json has status=stopped."""
-        return read_session_status(self.session_dir).get("status") == "stopped"
+        return read_session_status(self.system_dir).get("status") == "stopped"
 
     def set_status(self, status: str) -> None:
         """Write status field to status.json. Clears stopped_at when resuming."""
         updates: dict = {"status": status}
         if status == "active":
             updates["stopped_at"] = None
-        write_session_status(self.session_dir, **updates)
+        write_session_status(self.system_dir, **updates)
 
     def _write_pid(self) -> None:
         """Write current process PID into status.json."""
-        write_session_status(self.session_dir, pid=os.getpid())
+        write_session_status(self.system_dir, pid=os.getpid())
 
     def _clear_pid(self) -> None:
         """Clear PID from status.json when daemon stops."""
-        write_session_status(self.session_dir, pid=None)
+        write_session_status(self.system_dir, pid=None)
 
     # ── Server loop ────────────────────────────────────────────────
 
@@ -369,7 +355,7 @@ class Session:
         self._ipc = ipc
         self._write_pid()
         # Reset stale "running" state from a previous crash
-        write_session_status(self.session_dir, model_state="idle", model_source="system")
+        write_session_status(self.system_dir, model_state="idle", model_source="system")
 
         # Skip existing context events — only process new user_input events.
         # Starting at current file size prevents replay of prior session messages.
@@ -382,7 +368,7 @@ class Session:
         # Cap elapsed time at current_interval so we never fire immediately on startup
         # (this handles the case where the server was down longer than one interval).
         _now_mono = asyncio.get_event_loop().time()
-        _st = read_session_status(self.session_dir)
+        _st = read_session_status(self.system_dir)
         _last_run_str = _st.get("last_run_at")
         _init_interval = float(
             read_session_params(self.session_dir).get("heartbeat_interval")
@@ -424,14 +410,14 @@ class Session:
 
                 # Auto-expire stopped sessions after 5 hours
                 if self.is_stopped():
-                    st = read_session_status(self.session_dir)
+                    st = read_session_status(self.system_dir)
                     stopped_at_str = st.get("stopped_at")
                     if stopped_at_str:
                         try:
                             elapsed = (datetime.now() - datetime.fromisoformat(stopped_at_str)).total_seconds()
                             if elapsed >= 5 * 3600:
                                 self.tasks_path.write_text("", encoding="utf-8")
-                                write_session_status(self.session_dir, status="active", stopped_at=None)
+                                write_session_status(self.system_dir, status="active", stopped_at=None)
                                 self._append_event({"type": "status", "value": "auto-expired after 5h stopped"})
                         except Exception:
                             pass
@@ -472,40 +458,36 @@ class Session:
         return self._base_dir / self._session_id
 
     @property
-    def files_dir(self) -> Path:
-        return self.session_dir / "files"
+    def core_dir(self) -> Path:
+        return self.session_dir / "core"
 
     @property
-    def prompts_dir(self) -> Path:
-        return self.session_dir / "prompts"
+    def docs_dir(self) -> Path:
+        return self.session_dir / "docs"
 
     @property
-    def skills_dir(self) -> Path:
-        return self.session_dir / "skills"
+    def playground_dir(self) -> Path:
+        return self.session_dir / "playground"
 
     @property
-    def tools_dir(self) -> Path:
-        return self.session_dir / "tools"
-
-    @property
-    def system_log_dir(self) -> Path:
-        return self.session_dir / "_system_log"
+    def system_dir(self) -> Path:
+        return self._system_base / self._session_id
 
     @property
     def memory_path(self) -> Path:
-        return self.session_dir / "prompts" / "memory.md"
+        return self.core_dir / "memory.md"
 
     @property
     def tasks_path(self) -> Path:
-        return self.session_dir / "tasks.md"
+        return self.core_dir / "tasks.md"
 
     @property
     def _context_path(self) -> Path:
-        return self.session_dir / "_system_log" / "context.jsonl"
+        return self.system_dir / "context.jsonl"
 
     @property
     def _events_path(self) -> Path:
-        return self.session_dir / "_system_log" / "events.jsonl"
+        return self.system_dir / "events.jsonl"
 
     # ── Internal ───────────────────────────────────────────────────
 
@@ -533,7 +515,7 @@ class Session:
         updates: dict = {"model_state": state, "model_source": source}
         if state == "idle":
             updates["last_run_at"] = ts
-        write_session_status(self.session_dir, **updates)
+        write_session_status(self.system_dir, **updates)
         return ts
 
     def _make_tool_call_callback(self):
