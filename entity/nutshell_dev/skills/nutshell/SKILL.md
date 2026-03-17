@@ -7,7 +7,7 @@ description: "Full development context for the nutshell project. Use this skill 
 
 This skill is your complete workbench for developing nutshell. It covers project architecture, development SOPs, and when to invoke specialist agents.
 
-Current version: **v1.0.2** | Tests: `pytest tests/ -q` (62 passing)
+Current version: **v1.0.3** | Tests: `pytest tests/ -q` (62 passing)
 
 ---
 
@@ -72,7 +72,7 @@ The simplify agent will: audit all modules, remove dead code, eliminate duplicat
 
 | File | Issue | Priority |
 |------|-------|----------|
-| `ui/web.py` (~999 lines) | FastAPI routes, HTML, CSS, JS all in one file — hard to maintain | MEDIUM |
+| ~~`ui/web.py`~~ | Refactored into `ui/web/` package in v1.0.3 | ✅ Done |
 | `providers/tool/web_search.py` + `tavily.py` | `_SCHEMA` dict is identical in both files | LOW |
 | `runtime/tools/_registry.py` | `get_builtin()` creates a new Tool instance on every call (no caching) | LOW |
 | `runtime/watcher.py` | Polls `_sessions/` every second (O(n) scan); no file-system watch | LOW |
@@ -123,7 +123,11 @@ nutshell/
 ├── cli/
 │   └── new_agent.py   — nutshell-new-agent: interactive entity scaffolder
 └── ui/
-    └── web.py         — FastAPI + SSE, http://localhost:8080
+    └── web/           — FastAPI + SSE, http://localhost:8080
+        ├── __init__.py    — re-exports create_app, main
+        ├── app.py         — FastAPI routes + _sse_format() + main()
+        ├── sessions.py    — _read_session_info, _sort_sessions, _init_session
+        └── index.html     — frontend (HTML + CSS + JS)
 ```
 
 ### Entities (inheritance chain)

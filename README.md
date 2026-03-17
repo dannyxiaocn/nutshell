@@ -1,4 +1,4 @@
-# Nutshell `v1.0.2`
+# Nutshell `v1.0.3`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -353,6 +353,11 @@ The web UI polls both files via SSE. On reconnect it resumes from the last byte 
 ---
 
 ## Changelog
+
+### v1.0.3
+- **Web UI refactor** — `ui/web.py` (1000 lines) split into `ui/web/` package: `app.py` (FastAPI routes + entry point), `sessions.py` (session helpers), `index.html` (frontend). Entry point `nutshell.ui.web:main` unchanged.
+- **`_write_if_absent` helper** — eliminates repeated `if not path.exists(): path.write_text(...)` pattern in `_init_session`.
+- **Entity load warning** — `_init_session` now logs a warning when `AgentLoader` fails instead of silently ignoring.
 
 ### v1.0.2
 - **Bug fix: history load KeyError** — `session.py` `load_history()` now skips messages without a `content` key instead of crashing silently.

@@ -1,0 +1,187 @@
+"""Nutshell Web UI — FastAPI server with SSE streaming.
+
+Browser connects via SSE to receive real-time agent output; sends messages
+via POST. FastAPI is a thin HTTP wrapper over FileIPC — no agent logic here.
+
+Usage:
+    nutshell-web
+    nutshell-web --port 8080 --sessions-dir ./sessions
+    python -m nutshell.ui.web
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import AsyncIterator
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, StreamingResponse
+
+from nutshell.runtime.status import write_session_status
+from .sessions import _init_session, _read_session_info, _sort_sessions
+
+SESSIONS_DIR = Path(__file__).parent.parent.parent.parent / "sessions"
+_SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent.parent / "_sessions"
+_DEFAULT_ENTITY = "entity/agent"
+_DEFAULT_PORT = 8080
+
+_HTML = (Path(__file__).parent / "index.html").read_text(encoding="utf-8")
+
+
+def _sse_format(event: dict) -> str:
+    etype = event.get("type", "message")
+    data = json.dumps(event, ensure_ascii=False)
+    return f"event: {etype}\ndata: {data}\n\n"
+
+
+def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> FastAPI:
+    if system_sessions_dir is None:
+        system_sessions_dir = sessions_dir.parent / "_sessions"
+
+    app = FastAPI(title="Nutshell Web UI", docs_url=None, redoc_url=None)
+
+    @app.get("/", response_class=HTMLResponse)
+    async def index():
+        return _HTML
+
+    @app.get("/api/sessions")
+    async def list_sessions():
+        if not system_sessions_dir.exists():
+            return []
+        result = []
+        for d in system_sessions_dir.iterdir():
+            if not d.is_dir():
+                continue
+            info = _read_session_info(sessions_dir / d.name, d)
+            if info is not None:
+                result.append(info)
+        return _sort_sessions(result)
+
+    @app.post("/api/sessions")
+    async def create_session(body: dict):
+        session_id = body.get("id") or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        entity = body.get("entity", _DEFAULT_ENTITY)
+        heartbeat = float(body.get("heartbeat", 600.0))
+        _init_session(sessions_dir, system_sessions_dir, session_id, entity, heartbeat)
+        return {"id": session_id, "entity": entity}
+
+    @app.post("/api/sessions/{session_id}/messages")
+    async def send_message(session_id: str, body: dict):
+        from nutshell.runtime.ipc import FileIPC
+        system_dir = system_sessions_dir / session_id
+        if not system_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+        msg_id = FileIPC(system_dir).send_message(body.get("content", ""))
+        return {"id": msg_id}
+
+    @app.get("/api/sessions/{session_id}/events")
+    async def stream_events(session_id: str, context_since: int = 0, events_since: int = 0):
+        system_dir = system_sessions_dir / session_id
+        if not system_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+
+        async def generator() -> AsyncIterator[str]:
+            from nutshell.runtime.ipc import FileIPC
+            ipc = FileIPC(system_dir)
+            ctx_offset = context_since
+            evt_offset = events_since
+            for event, new_offset in ipc.tail_context(ctx_offset):
+                ctx_offset = new_offset
+                yield _sse_format(event)
+            for event, new_offset in ipc.tail_runtime_events(evt_offset):
+                evt_offset = new_offset
+                yield _sse_format(event)
+            while True:
+                await asyncio.sleep(0.3)
+                for event, new_offset in ipc.tail_context(ctx_offset):
+                    ctx_offset = new_offset
+                    yield _sse_format(event)
+                for event, new_offset in ipc.tail_runtime_events(evt_offset):
+                    evt_offset = new_offset
+                    yield _sse_format(event)
+
+        return StreamingResponse(
+            generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/api/sessions/{session_id}/history")
+    async def get_history(session_id: str):
+        from nutshell.runtime.ipc import FileIPC
+        ipc = FileIPC(system_sessions_dir / session_id)
+        events: list[dict] = []
+        context_offset = 0
+        for event, off in ipc.tail_history(0):
+            events.append(event)
+            context_offset = off
+        return {
+            "events": events,
+            "context_offset": context_offset,
+            "events_offset": ipc.events_size(),
+        }
+
+    @app.post("/api/sessions/{session_id}/stop")
+    async def stop_session(session_id: str):
+        from nutshell.runtime.ipc import FileIPC
+        system_dir = system_sessions_dir / session_id
+        write_session_status(system_dir, status="stopped", stopped_at=datetime.now().isoformat())
+        if system_dir.exists():
+            FileIPC(system_dir).append_event(
+                {"type": "status", "value": "heartbeat paused — use ▶ Start to resume"}
+            )
+        return {"ok": True}
+
+    @app.post("/api/sessions/{session_id}/start")
+    async def start_session(session_id: str):
+        from nutshell.runtime.ipc import FileIPC
+        system_dir = system_sessions_dir / session_id
+        write_session_status(system_dir, status="active", stopped_at=None)
+        if system_dir.exists():
+            FileIPC(system_dir).append_event({"type": "status", "value": "heartbeat resumed"})
+        return {"ok": True}
+
+    @app.get("/api/sessions/{session_id}/tasks")
+    async def get_tasks(session_id: str):
+        tasks_path = sessions_dir / session_id / "core" / "tasks.md"
+        if not tasks_path.exists():
+            return {"content": ""}
+        return {"content": tasks_path.read_text(encoding="utf-8")}
+
+    @app.put("/api/sessions/{session_id}/tasks")
+    async def set_tasks(session_id: str, body: dict):
+        session_dir = sessions_dir / session_id
+        if not session_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+        tasks_path = session_dir / "core" / "tasks.md"
+        tasks_path.parent.mkdir(parents=True, exist_ok=True)
+        tasks_path.write_text(body.get("content", ""), encoding="utf-8")
+        return {"ok": True}
+
+    return app
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Nutshell Web UI")
+    parser.add_argument("--port", type=int, default=_DEFAULT_PORT)
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--sessions-dir", default=str(SESSIONS_DIR), metavar="DIR")
+    parser.add_argument("--system-sessions-dir", default=str(_SYSTEM_SESSIONS_DIR), metavar="DIR")
+    args = parser.parse_args()
+
+    sessions_dir = Path(args.sessions_dir)
+    system_sessions_dir = Path(args.system_sessions_dir)
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    system_sessions_dir.mkdir(parents=True, exist_ok=True)
+
+    app = create_app(sessions_dir, system_sessions_dir)
+    print(f"nutshell web UI: http://localhost:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+
+
+if __name__ == "__main__":
+    main()
