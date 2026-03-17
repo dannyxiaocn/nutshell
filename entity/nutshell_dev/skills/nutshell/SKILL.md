@@ -7,7 +7,7 @@ description: "Full development context for the nutshell project. Use this skill 
 
 This skill is your complete workbench for developing nutshell. It covers project architecture, development SOPs, and when to invoke specialist agents.
 
-Current version: **v1.0.3** | Tests: `pytest tests/ -q` (62 passing)
+Current version: **v1.0.4** | Tests: `pytest tests/ -q` (62 passing)
 
 ---
 
@@ -123,11 +123,12 @@ nutshell/
 ├── cli/
 │   └── new_agent.py   — nutshell-new-agent: interactive entity scaffolder
 └── ui/
-    └── web/           — FastAPI + SSE, http://localhost:8080
-        ├── __init__.py    — re-exports create_app, main
-        ├── app.py         — FastAPI routes + _sse_format() + main()
-        ├── sessions.py    — _read_session_info, _sort_sessions, _init_session
-        └── index.html     — frontend (HTML + CSS + JS)
+    ├── web/           — FastAPI + SSE, http://localhost:8080
+    │   ├── __init__.py    — re-exports create_app, main
+    │   ├── app.py         — FastAPI routes + _sse_format() + main()
+    │   ├── sessions.py    — _read_session_info, _sort_sessions, _init_session
+    │   └── index.html     — frontend (HTML + CSS + JS)
+    └── tui.py         — Textual TUI, nutshell-tui entry point
 ```
 
 ### Entities (inheritance chain)

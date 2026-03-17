@@ -1,4 +1,4 @@
-# Nutshell `v1.0.3`
+# Nutshell `v1.0.4`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -9,6 +9,7 @@ A minimal Python agent runtime. Agents run as persistent server-managed sessions
 ```
 nutshell-server    ← always-on process (manages all sessions)
 nutshell-web       ← web UI at http://localhost:8080
+nutshell-tui       ← terminal UI (Textual, no web server needed)
 ```
 
 Everything is files. The server and UI communicate only through files on disk — no sockets, no shared memory. You can kill the UI, restart the server, and sessions resume exactly where they left off.
@@ -24,7 +25,8 @@ export BRAVE_API_KEY=...       # optional: enables web_search tool (default prov
 export TAVILY_API_KEY=...      # optional: enables web_search via Tavily provider
 
 nutshell-server    # terminal 1: keep running
-nutshell-web       # terminal 2: open http://localhost:8080
+nutshell-web       # terminal 2a: web UI at http://localhost:8080
+nutshell-tui       # terminal 2b: terminal UI (alternative to web)
 ```
 
 To scaffold a new agent entity (inherits from `agent` by default):
@@ -183,10 +185,11 @@ nutshell/
 ├── cli/
 │   └── new_agent.py        # nutshell-new-agent
 └── ui/
-    └── web/                # nutshell-web (FastAPI + SSE)
-        ├── app.py          # routes + entry point
-        ├── sessions.py     # session helpers
-        └── index.html      # frontend (HTML + CSS + JS)
+    ├── web/                # nutshell-web (FastAPI + SSE)
+    │   ├── app.py          # routes + entry point
+    │   ├── sessions.py     # session helpers
+    │   └── index.html      # frontend (HTML + CSS + JS)
+    └── tui.py              # nutshell-tui (Textual terminal UI)
 ```
 
 ---
@@ -225,6 +228,9 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.0.4
+- **Terminal UI** — `nutshell-tui`: Textual-based three-panel TUI (sessions | chat | tasks). Reads files directly via `FileIPC` — only `nutshell-server` required, `nutshell-web` not needed. Features: session list with status indicators, full history replay, real-time polling (0.5s), streaming thinking indicator, task editor, stop/start/new session.
 
 ### v1.0.3
 - **Web UI refactor** — `ui/web.py` (1000 lines) split into `ui/web/` package: `app.py`, `sessions.py`, `index.html`. Entry point `nutshell.ui.web:main` unchanged.
