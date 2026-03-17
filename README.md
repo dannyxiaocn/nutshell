@@ -1,4 +1,4 @@
-# Nutshell `v1.0.0`
+# Nutshell `v1.0.1`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -353,6 +353,10 @@ The web UI polls both files via SSE. On reconnect it resumes from the last byte 
 ---
 
 ## Changelog
+
+### v1.0.1
+- **Default tool provider** — `tool_providers` in `DEFAULT_PARAMS` now defaults to `{"web_search": "brave"}` instead of `{}`, making the active provider explicit in every new session's `params.json`.
+- **Session context docs** — `session_context.md` now lists available `web_search` providers (`brave` / `tavily`) so agents know they can switch backends by editing `params.json`.
 
 ### v1.0.0
 - **Session layout refactor** — agent-visible session dir is now `sessions/<id>/core/` (prompts, tools, skills, memory, tasks, params.json) + `docs/` + `playground/`. System internals moved to a parallel `_sessions/<id>/` twin (manifest, status, context, events). Agent has full ownership of its session dir; nothing is hidden inside it.

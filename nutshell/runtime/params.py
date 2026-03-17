@@ -5,7 +5,7 @@ DEFAULT_PARAMS: dict = {
     "heartbeat_interval": 600.0,
     "model": None,          # None → use agent.yaml default
     "provider": None,       # None → use Anthropic
-    "tool_providers": {},   # e.g. {"web_search": "tavily"} — empty = use built-in defaults
+    "tool_providers": {"web_search": "brave"},  # web_search: "brave" | "tavily"
 }
 
 
