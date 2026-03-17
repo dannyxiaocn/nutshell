@@ -1,4 +1,4 @@
-# Nutshell `v1.0.1`
+# Nutshell `v1.0.2`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -353,6 +353,14 @@ The web UI polls both files via SSE. On reconnect it resumes from the last byte 
 ---
 
 ## Changelog
+
+### v1.0.2
+- **Bug fix: history load KeyError** — `session.py` `load_history()` now skips messages without a `content` key instead of crashing silently.
+- **Bug fix: heartbeat_interval validation** — `params.py` `read_session_params()` now clamps values below 1.0 to the default (600s), preventing runaway heartbeat firing on zero/negative config.
+- **Bug fix: YAML frontmatter type guard** — `skill.py` `_parse_frontmatter()` now handles YAML parse errors and non-dict frontmatter gracefully.
+- **Bug fix: SKILL.md invalid YAML** — fixed unquoted colon in `nutshell_dev` skill description that caused the entity loader to raise a YAML `ScannerError`.
+- **Narrowed exception handling** — `session.py` `_load_session_capabilities()` now logs a warning for unexpected skill/tool load failures instead of silently using empty lists.
+- **Watcher auto-expire logging** — `watcher.py` now logs auto-expire errors instead of silently passing.
 
 ### v1.0.1
 - **Default tool provider** — `tool_providers` in `DEFAULT_PARAMS` now defaults to `{"web_search": "brave"}` instead of `{}`, making the active provider explicit in every new session's `params.json`.

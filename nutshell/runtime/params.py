@@ -17,7 +17,12 @@ def read_session_params(session_dir: Path) -> dict:
     p = params_path(session_dir)
     if not p.exists():
         return dict(DEFAULT_PARAMS)
-    return {**DEFAULT_PARAMS, **json.loads(p.read_text(encoding="utf-8"))}
+    params = {**DEFAULT_PARAMS, **json.loads(p.read_text(encoding="utf-8"))}
+    # Guard against zero/negative heartbeat_interval which would cause the timer to fire constantly
+    interval = params.get("heartbeat_interval")
+    if interval is not None and float(interval) < 1.0:
+        params["heartbeat_interval"] = DEFAULT_PARAMS["heartbeat_interval"]
+    return params
 
 
 def write_session_params(session_dir: Path, **updates) -> None:

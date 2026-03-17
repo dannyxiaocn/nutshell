@@ -115,8 +115,8 @@ class SessionWatcher:
                                 tasks_path.write_text("", encoding="utf-8")
                             print(f"[server] Auto-expired stopped session: {session_id}")
                             auto_expired = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[watcher] Auto-expire error for {session_id}: {e}")
                 if not auto_expired:
                     continue
 

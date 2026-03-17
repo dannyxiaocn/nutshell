@@ -1,104 +1,198 @@
 ---
 name: nutshell
-description: Load and understand the entire project structure and context. Use this skill when you need comprehensive knowledge about the project architecture, file organization, configuration files, existing entities, skills, tools, and their relationships. This skill provides a bird's-eye view of the codebase.
+description: "Full development context for the nutshell project. Use this skill for any task involving nutshell: writing code, adding features, fixing bugs, running tests, bumping versions, updating docs, simplifying the codebase, or understanding architecture. Load whenever working on this repo."
 ---
 
-# Nutshell - Project Context Skill
+# Nutshell — Developer Skill
 
-This skill gives you complete visibility into the entire project structure. Use it whenever you need to:
+This skill is your complete workbench for developing nutshell. It covers project architecture, development SOPs, and when to invoke specialist agents.
 
-1. **Understand project architecture** — Get a high-level view of how the project is organized
-2. **Find specific files or configurations** — Locate entities, skills, tools, prompts
-3. **Understand relationships** — See how different components connect
-4. **Navigate the codebase** — Know where to look for specific functionality
-5. **Check existing implementations** — Avoid duplicating work or understand patterns
+Current version: **v1.0.2** | Tests: `pytest tests/ -q` (62 passing)
 
-## Project Structure Overview
+---
 
-```
-.
-├── entity/                    # Agent entity definitions
-│   ├── agent_core/           # Base agent with core capabilities
-│   │   ├── agent.yaml        # Entity manifest
-│   │   ├── prompts/          # System prompts
-│   │   ├── skills/           # Core skills (reasoning, skill-creator)
-│   │   └── tools/            # Core tools (bash, web_search)
-│   ├── kimi_core/            # Kimi-specific agent variant
-│   └── nutshell_dev/         # This entity (inherits agent_core + nutshell skill)
-├── sessions/                 # Session directories
-│   └── {session_id}/
-│       ├── params.json       # Session configuration
-│       ├── tasks.md          # Task board
-│       ├── prompts/memory.md # Persistent memory
-│       └── _system_log/      # System internals
-└── README.md                 # Project documentation
-```
+## SOPs
 
-## Quick Reference: Key Files
-
-### Entities
-- `entity/agent_core/agent.yaml` — Base agent configuration
-- `entity/kimi_core/agent.yaml` — Kimi agent variant
-- `entity/nutshell_dev/agent.yaml` — This entity (with nutshell skill)
-
-### Core Skills
-- `entity/agent_core/skills/reasoning/SKILL.md` — Step-by-step reasoning
-- `entity/agent_core/skills/skill-creator/SKILL.md` — Skill development toolkit
-- `entity/nutshell_dev/skills/nutshell/SKILL.md` — This skill (project context)
-
-### Core Tools
-- `entity/agent_core/tools/bash.json` — Shell command execution
-- `entity/agent_core/tools/web_search.json` — Web search capability
-
-### Prompts
-- `entity/agent_core/prompts/system.md` — Main system prompt
-- `entity/agent_core/prompts/heartbeat.md` — Heartbeat activation prompt
-- `entity/agent_core/prompts/session_context.md` — Session context template
-
-## How to Use This Skill
-
-When a user asks something that requires project-wide knowledge:
-
-1. **First, consult this skill** — Read SKILL.md to understand what's available
-2. **Explore as needed** — Use bash tool to list directories, read files
-3. **Connect the dots** — Understand how components relate
-4. **Provide informed answers** — Based on actual project state
-
-## Common Queries
-
-| User asks about... | You should... |
-|-------------------|---------------|
-| "What entities exist?" | List `entity/` directory, describe each |
-| "How do skills work?" | Explain skill structure, show examples |
-| "What's in the project?" | Give high-level overview from this skill |
-| "How do I create a skill?" | Reference skill-creator skill |
-| "Where is X configured?" | Navigate to relevant config file |
-| "What tools are available?" | List tools from entity manifests |
-
-## Exploration Commands
-
-Use these bash commands to explore dynamically:
-
+### 1. After Any Code Change
 ```bash
-# List all entities
-ls -la entity/
+pytest tests/ -q          # must pass before anything else
+```
+Then:
+1. Update `README.md` — relevant section + new Changelog entry under `## Changelog`
+2. Bump version in **both** `pyproject.toml` (`version = "X.Y.Z"`) **and** `README.md` heading (`# Nutshell \`vX.Y.Z\``)
+3. Commit: `git commit -m "vX.Y.Z: {short summary}"`
+4. Push: `git push`
 
-# See an entity's configuration
-cat entity/{name}/agent.yaml
+**Versioning rules:**
+- Patch (1.0.X): bug fixes, no API change
+- Minor (1.X.0): new features, backward compatible
+- Major (X.0.0): breaking API changes
 
-# List all skills across entities
-find entity/ -name "SKILL.md" -type f
+### 2. Adding a Built-in Tool
+1. Implement in `nutshell/providers/tool/<name>.py` — expose `create_<name>_tool() -> Tool`
+2. Register in `nutshell/runtime/tools/_registry.py`
+3. Add `entity/agent/tools/<name>.json` (JSON Schema)
+4. Add to `entity/agent/agent.yaml` tools list
+5. Run full SOP (tests → docs → version → commit → push)
 
-# Find all YAML configs
-find . -name "*.yaml" -o -name "*.yml" | grep -v node_modules
+### 3. Adding a New LLM Provider
+1. Implement in `nutshell/providers/llm/<name>.py` extending `AnthropicProvider` or `Provider`
+2. Register in `nutshell/runtime/provider_factory.py` `_REGISTRY`
+3. Export from `nutshell/providers/llm/__init__.py`
 
-# Search for specific content
-grep -r "search_term" entity/ --include="*.md" --include="*.yaml"
+### 4. Adding a New Tool Provider (e.g. new web_search backend)
+1. Implement in `nutshell/providers/tool/<name>.py` — expose `async _<name>_search()`
+2. Register in `nutshell/runtime/tool_provider_factory.py` `_REGISTRY`
+3. Agent switches via `params.json`: `{"tool_providers": {"web_search": "<name>"}}`
+
+### 5. Adding a New Entity
+```bash
+nutshell-new-agent -n <name>   # interactive — picks parent, scaffolds files
+```
+Then edit `entity/<name>/agent.yaml` to set model, provider, description.
+
+---
+
+## When to Use the Simplify Agent
+
+Run the simplify agent when:
+- Codebase has grown significantly (multiple new features merged)
+- You notice dead code, unused imports, or duplicated logic
+- A refactor left behind stale scaffolding
+- The user asks to "clean up", "simplify", or "reduce code"
+- After a major feature is complete and the implementation can be tightened
+
+To invoke: spawn a subagent with instructions from `agents/simplify.md` in this skill directory.
+
+The simplify agent will: audit all modules, remove dead code, eliminate duplication, fix obvious bugs, and verify tests still pass — without changing behaviour.
+
+---
+
+## Known Technical Debt
+
+| File | Issue | Priority |
+|------|-------|----------|
+| `ui/web.py` (~999 lines) | FastAPI routes, HTML, CSS, JS all in one file — hard to maintain | MEDIUM |
+| `providers/tool/web_search.py` + `tavily.py` | `_SCHEMA` dict is identical in both files | LOW |
+| `runtime/tools/_registry.py` | `get_builtin()` creates a new Tool instance on every call (no caching) | LOW |
+| `runtime/watcher.py` | Polls `_sessions/` every second (O(n) scan); no file-system watch | LOW |
+| `session.py:_reshape_history()` | Detects heartbeat prompts via hardcoded string "Heartbeat activation" | LOW |
+
+---
+
+## Project Architecture
+
+### Core design principles
+- **File-based IPC only** — no sockets; server ↔ UI communicate via `context.jsonl` + `events.jsonl`
+- **Capability reload on every activation** — agent reads `core/` fresh before each run; no restart needed
+- **Dual-directory sessions** — `sessions/<id>/` (agent-visible) + `_sessions/<id>/` (system-only)
+- **Entity copy-on-create** — full inheritance chain resolved and copied into `core/` at session creation; entity dir never accessed at runtime
+
+### Package layout
+```
+nutshell/
+├── abstract/         — ABCs: BaseAgent, BaseTool, Provider, BaseLoader
+├── core/
+│   ├── agent.py      — Agent: LLM loop, tool dispatch, history, on_text_chunk/on_tool_call
+│   ├── tool.py       — Tool + @tool decorator (auto-schema from type hints)
+│   ├── skill.py      — Skill dataclass
+│   └── types.py      — Message, ToolCall, AgentResult
+├── providers/
+│   ├── llm/
+│   │   ├── anthropic.py  — AnthropicProvider (streaming, custom base_url)
+│   │   └── kimi.py       — KimiForCodingProvider (extends Anthropic, KIMI_FOR_CODING_API_KEY)
+│   └── tool/
+│       ├── web_search.py — Brave Search (_web_search, BRAVE_API_KEY)
+│       └── tavily.py     — Tavily Search (_tavily_search, TAVILY_API_KEY)
+├── runtime/
+│   ├── session.py         — Session: chat(), tick(), run_daemon_loop(), _load_session_capabilities()
+│   ├── ipc.py             — FileIPC(system_dir): context.jsonl + events.jsonl
+│   ├── status.py          — status.json: read/write_session_status(system_dir, ...)
+│   ├── params.py          — params.json: DEFAULT_PARAMS, read/write/ensure_session_params(session_dir)
+│   ├── provider_factory.py      — resolve_provider(name), provider_name(provider)
+│   ├── tool_provider_factory.py — resolve_tool_impl(tool_name, provider_name), list_providers()
+│   ├── watcher.py         — SessionWatcher: polls _sessions/
+│   ├── server.py          — nutshell-server entry point
+│   ├── loaders/
+│   │   ├── agent.py   — AgentLoader: deep extends chain, child-first file resolution
+│   │   ├── tool.py    — ToolLoader: .json + built-in registry + .sh shell tools
+│   │   └── skill.py   — SkillLoader: YAML frontmatter + body
+│   └── tools/
+│       ├── bash.py        — create_bash_tool() subprocess + PTY modes
+│       └── _registry.py   — built-in registry: {bash, web_search}
+├── cli/
+│   └── new_agent.py   — nutshell-new-agent: interactive entity scaffolder
+└── ui/
+    └── web.py         — FastAPI + SSE, http://localhost:8080
 ```
 
-## Notes
+### Entities (inheritance chain)
+```
+agent  ←  kimi_agent  ←  nutshell_dev
+```
+- `entity/agent/` — base: claude-sonnet-4-6, anthropic, tools: bash+web_search, skills: skill-creator
+- `entity/kimi_agent/` — kimi-for-coding, kimi-coding-plan, all else inherited
+- `entity/nutshell_dev/` — extra skill: nutshell (this), all else inherited
 
-- This skill is automatically loaded for nutshell_dev entity
-- The project follows a modular architecture: entities → skills → tools → prompts
-- All paths in entity manifests are relative to the manifest file's directory
-- Skills are self-contained with their own SKILL.md documentation
+**Inheritance rules:** `null` = inherit parent · `[]` = explicitly empty · explicit list = child-first file resolution
+
+---
+
+## Session Disk Layout
+
+```
+sessions/<id>/core/          ← agent reads/writes
+  system.md heartbeat.md session_context.md memory.md tasks.md
+  params.json                ← SOURCE OF TRUTH for runtime config
+  tools/  <name>.json + <name>.sh   ← agent-created tools
+  skills/ <name>/SKILL.md           ← session-level skills
+sessions/<id>/docs/          ← user uploads (read-only)
+sessions/<id>/playground/    ← free workspace
+
+_sessions/<id>/              ← system-only, never touch
+  manifest.json              ← STATIC: entity, created_at
+  status.json                ← DYNAMIC: model_state, pid, status, last_run_at...
+  context.jsonl              ← user_input + turn events
+  events.jsonl               ← model_status, partial_text, tool_call...
+```
+
+### params.json defaults
+```json
+{
+  "heartbeat_interval": 600.0,
+  "model": null,
+  "provider": null,
+  "tool_providers": {"web_search": "brave"}
+}
+```
+`tool_providers.web_search`: `"brave"` (default, needs `BRAVE_API_KEY`) or `"tavily"` (needs `TAVILY_API_KEY`)
+
+### status.json fields
+`model_state`: running|idle · `model_source`: user|heartbeat|system · `status`: active|stopped · `pid` · `last_run_at` · `heartbeat_interval`
+
+---
+
+## Key API Notes
+
+**`status.py` / `ipc.py`** — take `system_dir` (`_sessions/<id>/`), NOT `session_dir`
+**`params.py`** — takes `session_dir` (`sessions/<id>/`)
+**`Session(agent, base_dir, system_base, heartbeat)`** — `session.core_dir` → `sessions/<id>/core/`, `session.system_dir` → `_sessions/<id>/`
+
+### Built-in tools
+**bash**: `command` (required), `timeout`, `workdir`, `pty` (PTY mode for interactive programs, Unix only)
+**web_search**: `query` (required), `count=5`, `country`, `language`, `freshness` (day|week|month|year), `date_after`, `date_before` (YYYY-MM-DD)
+
+### LLM providers
+| Name | Class | Env Var |
+|---|---|---|
+| `anthropic` | `AnthropicProvider` | `ANTHROPIC_API_KEY` |
+| `kimi-coding-plan` | `KimiForCodingProvider` | `KIMI_FOR_CODING_API_KEY` |
+
+---
+
+## Heartbeat Mechanics
+- Fires every `heartbeat_interval` seconds (default 600s, read fresh from params.json each cycle)
+- Skipped when: tasks.md empty · agent lock held · session stopped
+- `last_tick_time` resets **after** every agent run (user or heartbeat)
+- `SESSION_FINISHED` in response → clears tasks, rolls back heartbeat history
+- On server restart: timer initialised from `last_run_at` in status.json

@@ -16,7 +16,12 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
         import yaml
     except ImportError:
         raise ImportError("Install pyyaml to use SkillLoader: pip install pyyaml")
-    meta = yaml.safe_load(parts[1]) or {}
+    try:
+        meta = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        meta = None
+    if not isinstance(meta, dict):
+        meta = {}
     body = parts[2].strip()
     return meta, body
 

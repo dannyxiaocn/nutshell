@@ -134,13 +134,19 @@ class Session:
         # 3. skills from core/skills/
         try:
             self._agent.skills = SkillLoader().load_dir(self.core_dir / "skills")
-        except Exception:
+        except (FileNotFoundError, PermissionError):
+            self._agent.skills = []
+        except Exception as e:
+            print(f"[session] Warning: failed to load skills: {e}")
             self._agent.skills = []
 
         # 4. tools from core/tools/ + tool_providers overrides
         try:
             tools = ToolLoader().load_dir(self.core_dir / "tools")
-        except Exception:
+        except (FileNotFoundError, PermissionError):
+            tools = []
+        except Exception as e:
+            print(f"[session] Warning: failed to load tools: {e}")
             tools = []
 
         tool_providers = params.get("tool_providers") or {}
@@ -212,7 +218,10 @@ class Session:
                         event = json.loads(line)
                         if event.get("type") == "turn":
                             for m in event.get("messages", []):
-                                content = self._clean_content_for_api(m["content"])
+                                raw_content = m.get("content")
+                                if raw_content is None:
+                                    continue
+                                content = self._clean_content_for_api(raw_content)
                                 history.append(Message(role=m["role"], content=content))
                     except json.JSONDecodeError:
                         pass
