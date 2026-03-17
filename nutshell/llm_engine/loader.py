@@ -2,10 +2,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from nutshell.runtime.loaders import BaseLoader
+from nutshell.abstract import BaseLoader
 from nutshell.core.agent import Agent
-from nutshell.runtime.loaders.skill import SkillLoader
-from nutshell.runtime.loaders.tool import ToolLoader
+from nutshell.skill_engine.loader import SkillLoader
+from nutshell.tool_engine.loader import ToolLoader
 
 
 def _load_prompt(path: Path) -> str:
@@ -16,36 +16,10 @@ class AgentLoader(BaseLoader[Agent]):
     """Load a complete Agent from an entity directory containing agent.yaml.
 
     Supports arbitrarily deep entity inheritance via ``extends`` in agent.yaml.
-    agent.yaml always contains the full set of fields. A null value signals
-    "inherit from parent":
-
-        prompts:
-          system:          # null  → inherit from parent (recursively resolved)
-          heartbeat:       # null  → inherit
-          session_context: prompts/session_context.md  # value → load from this entity
-
-        tools:             # null  → inherit parent's tools list
-        skills: []         # []    → explicitly no skills (do NOT inherit)
-        skills:            # null  → inherit parent's skills list
-          - skills/foo     # explicit list → resolve files child-first along ancestor chain
-
-    Rules:
-    - Inheritance is recursive: A extends B extends C works correctly.
-    - Prompts: null → use parent's already-resolved value.
-               string value → load from this entity's directory.
-    - tools/skills: None (null/absent) → inherit parent's resolved list.
-                    [] → explicitly empty (no inheritance).
-                    [list] → resolve each file child-first along the full ancestor chain.
-    - model/provider: null/absent → inherit from parent; fallback to built-in defaults.
-
-    Args:
-        impl_registry: Optional dict mapping tool name -> callable.
     """
 
     def __init__(self, impl_registry: dict[str, Callable] | None = None) -> None:
         self._impl_registry = impl_registry or {}
-
-    # ── Public API ────────────────────────────────────────────────────────────
 
     def load(self, path: Path) -> Agent:
         """Load agent from a directory containing agent.yaml."""
@@ -61,7 +35,6 @@ class AgentLoader(BaseLoader[Agent]):
 
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
 
-        # ── Resolve parent (recursive) ────────────────────────────────────────
         parent: Agent | None = None
         extends = manifest.get("extends")
         if extends:
@@ -73,19 +46,15 @@ class AgentLoader(BaseLoader[Agent]):
                 )
             parent = AgentLoader(self._impl_registry).load(candidate)
 
-        # Ancestor directory chain: [this, parent, grandparent, ...]
-        # Used for child-first file resolution across the full inheritance depth.
         ancestor_dirs = self._ancestor_dirs(path)
 
         def resolve_file(rel: str) -> Path | None:
-            """Return the first existing path for rel, walking the ancestor chain."""
             for d in ancestor_dirs:
                 p = d / rel
                 if p.exists():
                     return p
             return None
 
-        # ── Prompts ──────────────────────────────────────────────────────────
         child_prompts = manifest.get("prompts") or {}
 
         def load_prompt_key(key: str, parent_attr: str) -> str:
@@ -93,19 +62,16 @@ class AgentLoader(BaseLoader[Agent]):
             if rel:
                 p = path / rel
                 return _load_prompt(p) if p.exists() else ""
-            # null/absent → use parent's already-resolved value
             if parent is not None:
                 return getattr(parent, parent_attr) or ""
             return ""
 
-        system_prompt           = load_prompt_key("system",          "system_prompt")
-        heartbeat_prompt        = load_prompt_key("heartbeat",       "heartbeat_prompt")
+        system_prompt            = load_prompt_key("system",          "system_prompt")
+        heartbeat_prompt         = load_prompt_key("heartbeat",       "heartbeat_prompt")
         session_context_template = load_prompt_key("session_context", "session_context_template")
 
-        # ── Tools ─────────────────────────────────────────────────────────────
         raw_tools = manifest.get("tools")
         if raw_tools is None:
-            # null → inherit parent's fully-resolved list
             tools = list(parent.tools) if parent is not None else []
         else:
             tool_loader = ToolLoader(impl_registry=self._impl_registry)
@@ -115,10 +81,8 @@ class AgentLoader(BaseLoader[Agent]):
                 if (resolved := resolve_file(t)) is not None
             ]
 
-        # ── Skills ────────────────────────────────────────────────────────────
         raw_skills = manifest.get("skills")
         if raw_skills is None:
-            # null → inherit parent's fully-resolved list
             skills = list(parent.skills) if parent is not None else []
         else:
             skills = [
@@ -127,7 +91,6 @@ class AgentLoader(BaseLoader[Agent]):
                 if (resolved := resolve_file(s)) is not None
             ]
 
-        # ── Model / Provider ─────────────────────────────────────────────────
         model = manifest.get("model")
         if not model:
             model = parent.model if parent is not None else "claude-sonnet-4-6"
@@ -135,13 +98,12 @@ class AgentLoader(BaseLoader[Agent]):
         provider_str = manifest.get("provider")
         if not provider_str and parent is not None:
             try:
-                from nutshell.runtime.provider_factory import provider_name
+                from nutshell.llm_engine.registry import provider_name
                 provider_str = provider_name(parent._provider)
             except Exception:
                 pass
         provider_str = provider_str or "anthropic"
 
-        # ── Assemble ──────────────────────────────────────────────────────────
         agent = Agent(
             system_prompt=system_prompt,
             tools=tools,
@@ -154,7 +116,7 @@ class AgentLoader(BaseLoader[Agent]):
         )
 
         try:
-            from nutshell.runtime.provider_factory import resolve_provider
+            from nutshell.llm_engine.registry import resolve_provider
             agent._provider = resolve_provider(provider_str)
         except Exception:
             pass
@@ -169,8 +131,6 @@ class AgentLoader(BaseLoader[Agent]):
             if subdir.is_dir() and (subdir / "agent.yaml").exists():
                 agents.append(self.load(subdir))
         return agents
-
-    # ── Private ───────────────────────────────────────────────────────────────
 
     def _ancestor_dirs(self, path: Path) -> list[Path]:
         """Return [path, parent, grandparent, ...] by walking the extends chain."""
@@ -195,3 +155,9 @@ class AgentLoader(BaseLoader[Agent]):
                 break
             current = parent
         return dirs
+
+    def load_from_entity(self, name: str) -> Agent:
+        """Load agent by entity name from the default entity/ directory."""
+        from pathlib import Path
+        entity_dir = Path(__file__).parent.parent.parent / "entity" / name
+        return self.load(entity_dir)

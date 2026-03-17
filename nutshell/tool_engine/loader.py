@@ -1,11 +1,13 @@
 from __future__ import annotations
-import asyncio
+
 import json
 from pathlib import Path
 from typing import Any, Callable
 
-from nutshell.runtime.loaders import BaseLoader
 from nutshell.core.tool import Tool
+from nutshell.abstract import BaseLoader
+from nutshell.tool_engine.executor.bash import BashExecutor
+from nutshell.tool_engine.executor.shell import ShellExecutor
 
 
 def _make_stub(name: str) -> Callable:
@@ -19,45 +21,15 @@ def _make_stub(name: str) -> Callable:
     return _stub
 
 
-def _make_shell_impl(sh_path: Path) -> Callable:
-    """Return an async impl that runs a shell script, passing kwargs as JSON on stdin.
-
-    The script receives all tool arguments as a JSON object on stdin and should
-    write its result to stdout. Non-zero exit code returns stderr as an error string.
-    """
-    sh_path_str = str(sh_path)
-
-    async def _shell_tool(**kwargs: Any) -> str:
-        input_json = json.dumps(kwargs).encode()
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "bash", sh_path_str,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=input_json),
-                timeout=30.0,
-            )
-            if proc.returncode != 0:
-                err = stderr.decode("utf-8", errors="replace")
-                return f"Error (exit {proc.returncode}): {err[:500]}"
-            return stdout.decode("utf-8", errors="replace")
-        except asyncio.TimeoutError:
-            return "Error: shell tool timed out after 30s"
-        except Exception as e:
-            return f"Error: {e}"
-
-    _shell_tool.__name__ = sh_path.stem
-    return _shell_tool
-
-
 class ToolLoader(BaseLoader[Tool]):
     """Load JSON Schema tool definition files as Tool objects.
 
-    The JSON file defines schema/metadata; Python implementations are
-    provided separately via impl_registry or register().
+    Resolution chain (highest priority first):
+      1. impl_registry (caller-supplied callables)
+      2. BashExecutor — handles tool_name == "bash"
+      3. ShellExecutor — handles sibling .sh file exists
+      4. PythonExecutor — always returns False (placeholder)
+      5. Stub that raises NotImplementedError
 
     File format (Anthropic-compatible JSON Schema):
         {
@@ -93,14 +65,28 @@ class ToolLoader(BaseLoader[Tool]):
             "type": "object", "properties": {}, "required": []
         }
 
+        # Resolution chain
         if name in self._registry:
             impl = self._registry[name]
+        elif BashExecutor.can_handle(name, path):
+            executor = BashExecutor()
+            async def _bash_impl(**kwargs: Any) -> str:
+                return await executor.execute(**kwargs)
+            _bash_impl.__name__ = "bash"
+            impl = _bash_impl
+        elif ShellExecutor.can_handle(name, path):
+            executor = ShellExecutor(path.with_suffix(".sh"))
+            async def _shell_impl(**kwargs: Any) -> str:
+                return await executor.execute(**kwargs)
+            _shell_impl.__name__ = name
+            impl = _shell_impl
         else:
-            from nutshell.runtime.tools._registry import get_builtin
+            # Check built-in registry as fallback before stub
+            from nutshell.tool_engine.registry import get_builtin
             impl = get_builtin(name)
             if impl is None:
-                sh_path = path.with_suffix(".sh")
-                impl = _make_shell_impl(sh_path) if sh_path.exists() else _make_stub(name)
+                impl = _make_stub(name)
+
         return Tool(name=name, description=description, func=impl, schema=schema)
 
     def load_dir(self, directory: Path) -> list[Tool]:

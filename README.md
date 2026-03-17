@@ -1,4 +1,4 @@
-# Nutshell `v1.0.6`
+# Nutshell `v1.1.0`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -230,6 +230,15 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.1.0
+- **`tool_engine/`** — new unified tool execution layer: `executor/` hierarchy (`BashExecutor`, `ShellExecutor`; `PythonExecutor`/`HttpExecutor` placeholders), `providers/web_search/` (Brave + Tavily), merged `registry.py`, `ToolLoader`, `reload_capabilities` tool factory.
+- **`llm_engine/`** — self-contained LLM provider layer: `providers/` (Anthropic, Kimi), `registry.py`, `AgentLoader`.
+- **`skill_engine/`** — `SkillLoader` extracted from `runtime/`.
+- **`abstract/`** — reinstated: `Provider` ABC and `BaseLoader` ABC live here. `providers/__init__.py` is now a shim.
+- **`reload_capabilities` built-in tool** — agents can hot-reload tools and skills mid-session without restarting.
+- **`creator-mode` skill** — guides agents through the tool/skill creation and iteration loop.
+- **`runtime/`** slimmed to pure orchestration (session, server, watcher, IPC). All loader/provider code moved to engine packages.
 
 ### v1.0.6
 - **Package separation** — `ui/` moved from `nutshell/ui/` to repo root alongside `nutshell/`. UI is now a distinct application package (`ui.*`) that consumes the library (`nutshell.*`).

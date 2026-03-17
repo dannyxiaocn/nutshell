@@ -73,7 +73,7 @@ class Agent(BaseAgent):
     @property
     def provider(self) -> Provider:
         if self._provider is None:
-            from nutshell.providers.llm.anthropic import AnthropicProvider
+            from nutshell.llm_engine.providers.anthropic import AnthropicProvider
             self._provider = AnthropicProvider()
         return self._provider
 

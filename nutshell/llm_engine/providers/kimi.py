@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os
 
-from nutshell.providers.llm.anthropic import AnthropicProvider
+from nutshell.llm_engine.providers.anthropic import AnthropicProvider
 
 _KIMI_BASE_URL = "https://api.kimi.com/coding/"
 

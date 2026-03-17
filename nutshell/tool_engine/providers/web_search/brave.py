@@ -84,7 +84,7 @@ def _brave_search_sync(
     return "\n".join(lines).rstrip()
 
 
-async def _web_search(
+async def _brave_search(
     query: str,
     count: int = 5,
     country: Optional[str] = None,
@@ -123,6 +123,6 @@ def create_web_search_tool() -> Tool:
             "Search the web using Brave Search. Returns titles, URLs, and descriptions. "
             "Requires BRAVE_API_KEY environment variable."
         ),
-        func=_web_search,
+        func=_brave_search,
         schema=_SCHEMA,
     )

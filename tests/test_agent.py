@@ -113,7 +113,7 @@ async def test_file_skill_uses_catalog_in_system_prompt(tmp_path):
     skill_md = skill_dir / "SKILL.md"
     skill_md.write_text("---\nname: math\ndescription: Math expert\n---\n\nYou are a math genius.\n")
 
-    from nutshell.runtime.loaders.skill import SkillLoader
+    from nutshell.skill_engine.loader import SkillLoader
     skill = SkillLoader().load(skill_dir)
 
     captured = {}

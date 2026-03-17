@@ -14,9 +14,11 @@ import asyncio
 import os
 import re
 import subprocess
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 
 from nutshell.core.tool import Tool
+from nutshell.tool_engine.executor.base import BaseExecutor
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mGKHF]")
 _MAX_OUTPUT = 10_000
@@ -121,11 +123,6 @@ def _run_pty_sync(command: str, timeout: float, workdir: str | None, max_output:
     return output.rstrip() + suffix
 
 
-def _monotonic() -> float:
-    import time
-    return time.monotonic()
-
-
 async def _run_pty(
     command: str,
     timeout: float,
@@ -136,6 +133,35 @@ async def _run_pty(
     return await loop.run_in_executor(
         None, _run_pty_sync, command, timeout, workdir, max_output
     )
+
+
+# ── Executor class ─────────────────────────────────────────────────────────────
+
+class BashExecutor(BaseExecutor):
+    """Executor for the built-in bash tool."""
+
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        workdir: str | None = None,
+        max_output: int = _MAX_OUTPUT,
+    ) -> None:
+        self._timeout = timeout
+        self._workdir = workdir
+        self._max_output = max_output
+
+    @classmethod
+    def can_handle(cls, tool_name: str, tool_path: Path | None) -> bool:
+        return tool_name == "bash"
+
+    async def execute(self, **kwargs: Any) -> str:
+        command: str = kwargs["command"]
+        timeout = float(kwargs.get("timeout") or self._timeout)
+        workdir = kwargs.get("workdir") or self._workdir
+        pty = bool(kwargs.get("pty", False))
+        if pty:
+            return await _run_pty(command, timeout, workdir, self._max_output)
+        return await _run_subprocess(command, timeout, workdir, self._max_output)
 
 
 # ── Factory ────────────────────────────────────────────────────────────────────
@@ -154,9 +180,7 @@ def create_bash_tool(
         workdir: Default working directory (None = inherit from process).
         max_output: Max characters of output returned to the model.
     """
-    _default_timeout = timeout
-    _default_workdir = workdir
-    _max_output = max_output
+    executor = BashExecutor(timeout=timeout, workdir=workdir, max_output=max_output)
 
     async def bash(
         command: str,
@@ -174,13 +198,7 @@ def create_bash_tool(
                  Unix only. Useful for commands that buffer output differently
                  or check terminal width.
         """
-        _timeout = timeout if timeout is not None else _default_timeout
-        _workdir = workdir if workdir is not None else _default_workdir
-        _use_pty = bool(pty)
-
-        if _use_pty:
-            return await _run_pty(command, _timeout, _workdir, _max_output)
-        return await _run_subprocess(command, _timeout, _workdir, _max_output)
+        return await executor.execute(command=command, timeout=timeout, workdir=workdir, pty=pty)
 
     return Tool(
         name="bash",

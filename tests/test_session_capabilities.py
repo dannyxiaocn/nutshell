@@ -248,7 +248,7 @@ def test_memory_updated_reflects_on_next_load(tmp_path):
 
 def test_tool_provider_override_switches_impl(tmp_path, monkeypatch):
     """params.json tool_providers field replaces the tool's implementation callable."""
-    from nutshell.runtime import tool_provider_factory
+    import nutshell.tool_engine.registry as _registry
 
     call_log: list[str] = []
 
@@ -257,7 +257,7 @@ def test_tool_provider_override_switches_impl(tmp_path, monkeypatch):
         return "tavily result"
 
     monkeypatch.setattr(
-        tool_provider_factory,
+        _registry,
         "resolve_tool_impl",
         lambda tool_name, provider_name: fake_tavily if (tool_name == "web_search" and provider_name == "tavily") else None,
     )
@@ -289,10 +289,10 @@ def test_tool_provider_override_switches_impl(tmp_path, monkeypatch):
 
 def test_tool_provider_unknown_keeps_original_impl(tmp_path, monkeypatch):
     """If resolve_tool_impl returns None for unknown provider, original shell impl is kept."""
-    from nutshell.runtime import tool_provider_factory
+    import nutshell.tool_engine.registry as _registry
 
     monkeypatch.setattr(
-        tool_provider_factory,
+        _registry,
         "resolve_tool_impl",
         lambda tool_name, provider_name: None,
     )

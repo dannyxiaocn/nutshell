@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 
-from nutshell.runtime.loaders import BaseLoader
+from nutshell.abstract import BaseLoader
 from nutshell.core.skill import Skill
 
 
@@ -30,8 +30,6 @@ def _load_skill_file(path: Path) -> Skill:
     """Parse a SKILL.md (or legacy .md) file and return a Skill."""
     text = path.read_text(encoding="utf-8")
     meta, body = _parse_frontmatter(text)
-    # For SKILL.md inside a directory, default name = directory name.
-    # For a legacy flat .md file, default name = file stem.
     default_name = path.parent.stem if path.name == "SKILL.md" else path.stem
     name = meta.get("name") or default_name
     description = meta.get("description") or ""
@@ -43,18 +41,13 @@ class SkillLoader(BaseLoader[Skill]):
 
     Supports two layouts:
 
-    1. **Directory layout** (preferred, per AgentSkills spec):
+    1. **Directory layout** (preferred):
        ``skills/reasoning/SKILL.md``
        Pass the *directory* path; ``SKILL.md`` is discovered automatically.
 
     2. **Legacy flat file** (backward-compatible):
        ``skills/reasoning.md``
        Pass the file path directly.
-
-    When ``location`` is set on the returned ``Skill``, the agent runtime
-    lists the skill in a catalog and the model reads the file on demand
-    (progressive disclosure).  When ``location`` is None (programmatic
-    construction), the body is injected inline into the system prompt.
     """
 
     def load(self, path: Path) -> Skill:
@@ -69,12 +62,7 @@ class SkillLoader(BaseLoader[Skill]):
         return _load_skill_file(path)
 
     def load_dir(self, directory: Path) -> list[Skill]:
-        """Load all skills from a directory.
-
-        Scans for:
-        - Subdirectories containing ``SKILL.md`` (preferred format).
-        - Legacy ``*.md`` files (backward-compatible).
-        """
+        """Load all skills from a directory."""
         directory = Path(directory)
         skills: list[Skill] = []
         for p in sorted(directory.iterdir()):

@@ -5,14 +5,14 @@ from nutshell.core.tool import Tool, BaseTool, tool
 from nutshell.core.skill import Skill
 from nutshell.core.types import AgentResult, Message, ToolCall
 from nutshell.providers import Provider
-from nutshell.providers.llm.anthropic import AnthropicProvider
-from nutshell.runtime.loaders import BaseLoader
+from nutshell.llm_engine.providers.anthropic import AnthropicProvider
+from nutshell.abstract import BaseLoader
 from nutshell.runtime.session import Session, SESSION_FINISHED
 from nutshell.runtime.ipc import FileIPC
-from nutshell.runtime.loaders.tool import ToolLoader
-from nutshell.runtime.loaders.skill import SkillLoader
-from nutshell.runtime.loaders.agent import AgentLoader
-from nutshell.runtime.tools import create_bash_tool
+from nutshell.tool_engine.loader import ToolLoader
+from nutshell.skill_engine.loader import SkillLoader
+from nutshell.llm_engine.loader import AgentLoader
+from nutshell.tool_engine.executor.bash import create_bash_tool
 
 __all__ = [
     # Core

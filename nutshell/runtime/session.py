@@ -10,7 +10,7 @@ from nutshell.core.agent import Agent
 from nutshell.core.tool import Tool
 from nutshell.core.types import AgentResult
 from nutshell.runtime.params import ensure_session_params, read_session_params
-from nutshell.runtime.provider_factory import provider_name, resolve_provider
+from nutshell.llm_engine.registry import provider_name, resolve_provider
 from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
 
 if TYPE_CHECKING:
@@ -101,8 +101,8 @@ class Session:
 
     def _load_session_capabilities(self) -> None:
         """Reload params, prompts, skills, and tools from core/. Call inside agent lock before each run."""
-        from nutshell.runtime.loaders.skill import SkillLoader
-        from nutshell.runtime.loaders.tool import ToolLoader
+        from nutshell.skill_engine.loader import SkillLoader
+        from nutshell.tool_engine.loader import ToolLoader
 
         # 1. params → provider + model
         params = read_session_params(self.session_dir)
@@ -151,12 +151,18 @@ class Session:
 
         tool_providers = params.get("tool_providers") or {}
         if tool_providers:
-            from nutshell.runtime import tool_provider_factory
+            from nutshell.tool_engine.registry import resolve_tool_impl
             for i, t in enumerate(tools):
                 if t.name in tool_providers:
-                    impl = tool_provider_factory.resolve_tool_impl(t.name, tool_providers[t.name])
+                    impl = resolve_tool_impl(t.name, tool_providers[t.name])
                     if impl:
                         tools[i] = Tool(name=t.name, description=t.description, func=impl, schema=t.schema)
+
+        # Inject reload_capabilities — always present, cannot be overridden from disk
+        from nutshell.tool_engine.reload import create_reload_tool
+        reload_tool = create_reload_tool(self)
+        tools = [t for t in tools if t.name != "reload_capabilities"]
+        tools.append(reload_tool)
 
         self._agent.tools = tools
 
