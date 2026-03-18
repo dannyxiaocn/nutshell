@@ -150,7 +150,7 @@ def _init_session(
                     (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
 
         if not (core_dir / "params.json").exists():
-            from nutshell.runtime.provider_factory import provider_name as pname
+            from nutshell.llm_engine.registry import provider_name as pname
             entity_provider = pname(agent._provider) or "anthropic"
             write_session_params(session_dir, heartbeat_interval=heartbeat,
                                  model=agent.model, provider=entity_provider)

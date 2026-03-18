@@ -148,7 +148,7 @@ class SessionWatcher:
                 agent = self._agent_factory(manifest)
             else:
                 from nutshell.core.agent import Agent
-                from nutshell.runtime.provider_factory import resolve_provider
+                from nutshell.llm_engine.registry import resolve_provider
 
                 params = read_session_params(session_dir)
                 provider_str = (params.get("provider") or "anthropic").lower()

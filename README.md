@@ -1,4 +1,4 @@
-# Nutshell `v1.1.3`
+# Nutshell `v1.1.4`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -274,6 +274,9 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.1.4
+- **Fix stale imports** — `watcher.py` and `ui/web/sessions.py` were importing from `nutshell.runtime.provider_factory` (removed in v1.1.2); updated to `nutshell.llm_engine.registry`.
 
 ### v1.1.3
 - **`session.md` replaces `session_context.md`** — the session operational guide (task board, memory, skills, tools, params, playground conventions) is now a first-class prompt file with `{session_id}` substituted at load time via `str.replace()` (replaces `.format()`, safe for JSON code examples). Old sessions with `session_context.md` continue to work via automatic fallback.
