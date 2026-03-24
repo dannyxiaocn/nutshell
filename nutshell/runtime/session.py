@@ -127,6 +127,16 @@ class Session:
         self._agent.heartbeat_prompt = self._read_core_text("heartbeat.md")
         self._agent.memory = self.memory_path.read_text(encoding="utf-8").strip()
 
+        # Extra named memory layers from core/memory/*.md (sorted, non-empty only)
+        memory_dir = self.core_dir / "memory"
+        extra_layers: list[tuple[str, str]] = []
+        if memory_dir.is_dir():
+            for md_file in sorted(memory_dir.glob("*.md")):
+                content = md_file.read_text(encoding="utf-8").strip()
+                if content:
+                    extra_layers.append((md_file.stem, content))
+        self._agent.memory_layers = extra_layers
+
         # 3. skills from core/skills/
         try:
             self._agent.skills = SkillLoader().load_dir(self.core_dir / "skills")

@@ -45,10 +45,12 @@ class AnthropicProvider(Provider):
         if api_tools:
             kwargs["tools"] = api_tools
 
+        saw_streamed_thinking = False
         if on_text_chunk is not None:
             async with self._client.messages.stream(**kwargs) as stream:
-                async for text in stream.text_stream:
-                    on_text_chunk(text)
+                async for event in stream:
+                    if _forward_stream_event(event, on_text_chunk):
+                        saw_streamed_thinking = True
                 response = await stream.get_final_message()
         else:
             response = await self._client.messages.create(**kwargs)
@@ -59,10 +61,43 @@ class AnthropicProvider(Provider):
         for block in response.content:
             if block.type == "text":
                 content_text += block.text
+            elif block.type == "thinking":
+                thinking_text = _extract_thinking_text(block)
+                if thinking_text and on_text_chunk is not None and not saw_streamed_thinking:
+                    on_text_chunk(thinking_text)
             elif block.type == "tool_use":
                 tool_calls.append(ToolCall(id=block.id, name=block.name, input=block.input))
 
         return content_text, tool_calls
+
+
+def _forward_stream_event(event: Any, on_text_chunk: Callable[[str], None]) -> bool:
+    if getattr(event, "type", None) != "content_block_delta":
+        return False
+
+    delta = getattr(event, "delta", None)
+    delta_type = getattr(delta, "type", None)
+    if delta_type == "text_delta":
+        text = getattr(delta, "text", None)
+        if text:
+            on_text_chunk(text)
+        return False
+    if delta_type == "thinking_delta":
+        thinking = getattr(delta, "thinking", None)
+        if thinking:
+            on_text_chunk(thinking)
+            return True
+    return False
+
+
+def _extract_thinking_text(block: Any) -> str:
+    thinking = getattr(block, "thinking", None)
+    if isinstance(thinking, str):
+        return thinking
+    text = getattr(block, "text", None)
+    if isinstance(text, str):
+        return text
+    return ""
 
 
 def _to_api_messages(messages: list[Message]) -> list[dict]:

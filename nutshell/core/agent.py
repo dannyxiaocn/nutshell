@@ -72,6 +72,9 @@ class Agent(BaseAgent):
         # Runtime-injectable fields — set by Session before each activation.
         # Not constructor params; Session owns the values, Agent owns the rendering.
         self.memory: str = ""
+        # Extra named memory layers from core/memory/*.md, sorted by filename.
+        # Each entry is (label, content) where label is the .md file stem.
+        self.memory_layers: list[tuple[str, str]] = []
         self.session_context: str = ""
 
     @property
@@ -86,8 +89,13 @@ class Agent(BaseAgent):
         parts = [self.system_prompt] if self.system_prompt else []
         if self.session_context:
             parts.append("\n\n---\n" + self.session_context)
-        if self.memory:
-            parts.append(f"\n\n---\n## Session Memory\n\n{self.memory}")
+        if self.memory or self.memory_layers:
+            memory_parts = []
+            if self.memory:
+                memory_parts.append(f"## Session Memory\n\n{self.memory}")
+            for name, content in self.memory_layers:
+                memory_parts.append(f"## Memory: {name}\n\n{content}")
+            parts.append("\n\n---\n" + "\n\n".join(memory_parts))
         skills_block = build_skills_block(self.skills)
         if skills_block:
             parts.append(skills_block)

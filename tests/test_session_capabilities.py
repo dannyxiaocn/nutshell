@@ -245,6 +245,103 @@ def test_memory_updated_reflects_on_next_load(tmp_path):
     assert "First memory." not in agent._build_system_prompt()
 
 
+# ── Layered memory (core/memory/) ────────────────────────────────────────────
+
+def test_memory_layer_dir_loaded(tmp_path):
+    """Files in core/memory/ are loaded as extra labeled layers."""
+    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
+    session = make_session(tmp_path, agent)
+
+    memory_dir = session.core_dir / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "facts.md").write_text("fact one")
+    session._load_session_capabilities()
+
+    full_prompt = agent._build_system_prompt()
+    assert "## Memory: facts" in full_prompt
+    assert "fact one" in full_prompt
+
+
+def test_memory_layers_sorted_order(tmp_path):
+    """core/memory/ files are loaded in sorted (alphabetical) filename order."""
+    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
+    session = make_session(tmp_path, agent)
+
+    memory_dir = session.core_dir / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "beta.md").write_text("beta content")
+    (memory_dir / "alpha.md").write_text("alpha content")
+    (memory_dir / "gamma.md").write_text("gamma content")
+    session._load_session_capabilities()
+
+    names = [name for name, _ in agent.memory_layers]
+    assert names == ["alpha", "beta", "gamma"]
+
+
+def test_memory_layers_empty_files_skipped(tmp_path):
+    """Empty files in core/memory/ are not included as layers."""
+    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
+    session = make_session(tmp_path, agent)
+
+    memory_dir = session.core_dir / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "empty.md").write_text("")
+    (memory_dir / "nonempty.md").write_text("some content")
+    session._load_session_capabilities()
+
+    names = [name for name, _ in agent.memory_layers]
+    assert "empty" not in names
+    assert "nonempty" in names
+
+
+def test_memory_primary_and_layers_both_rendered(tmp_path):
+    """Primary memory.md and core/memory/ layers are both present in the prompt."""
+    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
+    session = make_session(tmp_path, agent)
+
+    session.memory_path.write_text("primary content")
+    memory_dir = session.core_dir / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "extra.md").write_text("extra content")
+    session._load_session_capabilities()
+
+    full_prompt = agent._build_system_prompt()
+    assert "## Session Memory" in full_prompt
+    assert "primary content" in full_prompt
+    assert "## Memory: extra" in full_prompt
+    assert "extra content" in full_prompt
+
+
+def test_memory_only_layers_no_primary(tmp_path):
+    """core/memory/ layers work correctly when memory.md is empty."""
+    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
+    session = make_session(tmp_path, agent)
+
+    # memory.md is empty (default)
+    memory_dir = session.core_dir / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "notes.md").write_text("layer note")
+    session._load_session_capabilities()
+
+    full_prompt = agent._build_system_prompt()
+    assert "## Memory: notes" in full_prompt
+    assert "layer note" in full_prompt
+    assert "## Session Memory" not in full_prompt
+
+
+def test_no_memory_dir_backward_compat(tmp_path):
+    """When core/memory/ does not exist, behavior is identical to before."""
+    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
+    session = make_session(tmp_path, agent)
+
+    session.memory_path.write_text("legacy memory")
+    session._load_session_capabilities()
+
+    full_prompt = agent._build_system_prompt()
+    assert "## Session Memory\n\nlegacy memory" in full_prompt
+    assert agent.memory_layers == []
+
+
 # ── Tool-provider override ────────────────────────────────────────────────────
 
 def test_tool_provider_override_switches_impl(tmp_path, monkeypatch):

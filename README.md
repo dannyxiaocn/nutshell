@@ -1,4 +1,4 @@
-# Nutshell `v1.1.6`
+# Nutshell `v1.1.7`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -267,13 +267,13 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 
 ---
 
-## TODO
-
-- **`thinking` block support** — `AnthropicProvider` silently discards `thinking` blocks returned by models with extended thinking. Fix: detect `block.type == "thinking"` in `complete()` and forward via callback or prepend to `on_text_chunk`.
-
 ---
 
 ## Changelog
+
+### v1.1.7
+- **Anthropic thinking block support** — `AnthropicProvider` now surfaces extended thinking: streaming path forwards `thinking_delta` events via `on_text_chunk`; non-streaming fallback extracts thinking from final message content blocks. Thinking appears in the UI thinking bubble, not in `content_text`.
+- **Layered session memory** — `core/memory/*.md` files are loaded as named memory layers. Each non-empty file becomes a `## Memory: {stem}` section in the system prompt, sorted alphabetically. Coexists with primary `memory.md`. Backward-compatible: old sessions without `core/memory/` are unaffected.
 
 ### v1.1.6
 - **System prompt optimization** — `session.md` reduced from 176 lines to ~20 lines (table format). Detailed bash examples (task board, memory, params) moved into `creator-mode` skill (lazy-loaded on demand). Saves ~2000 tokens per activation without losing any information.
