@@ -237,7 +237,7 @@ class Session:
 
     # ── Activation ────────────────────────────────────────────────
 
-    async def chat(self, message: str) -> AgentResult:
+    async def chat(self, message: str, *, user_input_id: str | None = None) -> AgentResult:
         """Run agent with user message. Holds agent lock — blocks heartbeat tick."""
         old_len = len(self._agent._history)
         self._set_model_status("running", "user")
@@ -261,6 +261,8 @@ class Session:
             "triggered_by": "user",
             "messages": self._serialize_turn_messages(result.messages[old_len:]),
         }
+        if user_input_id:
+            turn["user_input_id"] = user_input_id
         if get_tool_call_count() > 0:
             turn["has_streaming_tools"] = True
         self._append_context(turn)
@@ -353,7 +355,7 @@ class Session:
 
     # ── Server loop ────────────────────────────────────────────────
 
-    async def run_daemon_loop(self, ipc: "FileIPC") -> None:
+    async def run_daemon_loop(self, ipc: "FileIPC", stop_event: asyncio.Event | None = None) -> None:
         """Run as a server-managed session.
 
         Polls context.jsonl for user_input events every 0.5s.
@@ -369,6 +371,7 @@ class Session:
         """
         self._ipc = ipc
         self._write_pid()
+        os.environ["NUTSHELL_SESSION_ID"] = self._session_id
         # Reset stale "running" state from a previous crash
         write_session_status(self.system_dir, model_state="idle", model_source="system")
 
@@ -405,6 +408,7 @@ class Session:
                 inputs, input_offset = ipc.poll_inputs(input_offset)
                 for msg in inputs:
                     content = msg.get("content", "")
+                    msg_id = msg.get("id")
                     # User message wakes a stopped session
                     if self.is_stopped():
                         self.set_status("active")
@@ -413,7 +417,7 @@ class Session:
                     # (e.g., a heartbeat prompt interrupted mid-run)
                     content = self._reshape_history(content)
                     try:
-                        await self.chat(content)
+                        await self.chat(content, user_input_id=msg_id)
                     except Exception as exc:
                         self._append_event({"type": "error", "content": str(exc)})
                     finally:
@@ -454,6 +458,8 @@ class Session:
                     # so tick duration never cuts into the next interval.
                     last_tick_time = asyncio.get_event_loop().time()
 
+                if stop_event is not None and stop_event.is_set():
+                    break
                 await asyncio.sleep(0.5)
 
         except asyncio.CancelledError:

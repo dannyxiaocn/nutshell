@@ -26,9 +26,15 @@ def _make_web_search() -> Callable:
     return _brave_search
 
 
+def _make_send_to_session() -> Callable:
+    from nutshell.tool_engine.providers.session_msg import send_to_session
+    return send_to_session
+
+
 _BUILTIN_FACTORIES: dict[str, Callable[[], Callable]] = {
-    "bash":       _make_bash,
-    "web_search": _make_web_search,
+    "bash":             _make_bash,
+    "web_search":       _make_web_search,
+    "send_to_session":  _make_send_to_session,
 }
 
 

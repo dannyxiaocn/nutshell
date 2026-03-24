@@ -1,4 +1,4 @@
-# Nutshell `v1.1.8`
+# Nutshell `v1.1.9`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -28,6 +28,29 @@ nutshell-server    # terminal 1: keep running
 nutshell-web       # terminal 2a: web UI at http://localhost:8080
 nutshell-tui       # terminal 2b: terminal UI (alternative to web)
 ```
+
+## CLI
+
+```bash
+# New session (no server required — spins up a daemon for one response)
+nutshell-chat "Plan a data pipeline"
+# → prints agent response, then:
+# Session: 2026-03-24_10-00-00
+
+# Continue an existing session (requires nutshell-server running)
+nutshell-chat --session 2026-03-24_10-00-00 "Status update?"
+
+# Different entity
+nutshell-chat --entity kimi_agent "Review this code snippet"
+
+# Fire-and-forget (don't wait for response)
+nutshell-chat --session <id> --no-wait "Run overnight report"
+
+# Custom timeout
+nutshell-chat --session <id> --timeout 60 "Complex question"
+```
+
+---
 
 To scaffold a new agent entity (inherits from `agent` by default):
 
@@ -270,6 +293,12 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.1.9
+- **`nutshell-chat` CLI** — single-shot agent interaction from terminal. `nutshell-chat "message"` creates a new session (self-contained daemon, no server needed); `--session <id>` continues an existing one. Always prints agent response; new sessions also print `Session: <id>`. Supports `--no-wait`, `--timeout`, `--entity`.
+- **`send_to_session` system tool** — agents can message other sessions by ID. `mode=sync` blocks until the target replies; `mode=async` fires-and-forgets. Self-call detection, clear timeout errors.
+- **`user_input_id` in turn events** — `turn` events now carry `user_input_id` linking the response to its triggering message, eliminating heartbeat-turn confusion for CLI and multi-agent polling.
+- **`stop_event` in `run_daemon_loop`** — clean CLI shutdown without `CancelledError`.
 
 ### v1.1.8
 - **`as_tool(clear_history=True)`** — persistent agents can now act as stateless workers in multi-agent pipelines. Pass `clear_history=True` to `as_tool()` to reset sub-agent history on each tool invocation.
