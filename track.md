@@ -12,6 +12,9 @@
 
 > 用 nutshell 的 agent 来完成 nutshell 自身的开发任务——真正的 filesystem-as-everything 实践。
 
+> ⚠️ **核心原则（不可忽略）：实现类任务必须派发给 nutshell_dev 执行，Claude Code 不直接写代码。**
+> 唯一例外：维护类操作（更新 track.md / MEMORY.md / 周期检查）可由 Claude Code 直接完成。
+
 ### 角色分工
 
 | 角色 | 职责 |
@@ -25,8 +28,9 @@
 
 ```
 1. Claude Code 读 track.md → 选取合适的 [ ] 任务
-2. Claude Code 启动 / 继续 nutshell_dev 会话，传递任务描述
-   nutshell chat --entity nutshell_dev "任务：..."
+2. 【必须】派发给 nutshell_dev：
+   nutshell chat --entity nutshell_dev --timeout 300 "任务：<描述>"
+   （保存返回的 Session ID）
 3. 监控进度
    nutshell log SESSION_ID -n 10      # 查看 agent 对话记录
    nutshell tasks SESSION_ID          # 查看 agent 任务板
