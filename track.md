@@ -173,7 +173,7 @@ agent 自己就可以使用，自己就可以迭代
 
 ## Agent Usage
 
-- [ ] Repo as a skill (deepwiki)
+- [x] Repo as a skill (deepwiki) <!-- ffcb72d v1.3.20 -->
 - [ ] 对于每个 repo，直接创建一个 repo_dev 的 agent 来开发
     - [ ] 先建 wiki —> 实现 —> 更新 logistics 文件（readme, changelog, memory）—> git push
 - [ ] yisebi 创建一个"懂王、行动派"的角色，在各种社交媒体上留言等，提供广泛价值
