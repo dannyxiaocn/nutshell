@@ -12,6 +12,7 @@ Usage:
     nutshell review                         Review pending entity update requests
     nutshell server                         Start the Nutshell server
     nutshell web                            Start the web UI (monitoring)
+    nutshell tui                            Start the terminal UI (TUI)
 
 All session-management commands (sessions, new, stop, start, tasks) work without
 a running server — they read/write the _sessions/ directory directly.
@@ -642,6 +643,7 @@ def _exec_entrypoint(name: str) -> int:
     mapping = {
         "server": ("nutshell.runtime.server", "main"),
         "web":    ("ui.web", "main"),
+        "tui":    ("ui.tui", "main"),
     }
     if name in mapping:
         module_path, fn = mapping[name]
@@ -677,6 +679,7 @@ def main() -> None:
             "  nutshell review                     Review agent update requests\n"
             "  nutshell server                     Start the server\n"
             "  nutshell web                        Start the web UI (monitoring)\n"
+            "  nutshell tui                        Start the terminal UI (TUI)\n"
         ),
     )
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
@@ -693,6 +696,7 @@ def main() -> None:
     _add_review_parser(subparsers)
     _add_exec_parser(subparsers, "server", "Start the Nutshell server daemon.")
     _add_exec_parser(subparsers, "web",    "Start the web UI at http://localhost:8080 (monitoring).")
+    _add_exec_parser(subparsers, "tui",    "Start the terminal UI (TUI) — sessions, chat, tasks.")
 
     args = parser.parse_args()
     sys.exit(args.func(args))

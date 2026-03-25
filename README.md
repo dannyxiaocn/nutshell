@@ -1,4 +1,4 @@
-# Nutshell `v1.3.11`
+# Nutshell `v1.3.12`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -73,6 +73,7 @@ nutshell entity new -n my-agent --standalone  # standalone (no inheritance)
 nutshell review                       # review pending agent entity-update requests
 nutshell server                       # start the server daemon
 nutshell web                          # start the web UI at http://localhost:8080 (monitoring)
+nutshell tui                          # start the terminal UI (sessions · chat · tasks)
 ```
 
 ---
@@ -82,6 +83,7 @@ nutshell web                          # start the web UI at http://localhost:808
 ```
 nutshell server    ← always-on process: manages all sessions, dispatches heartbeats
 nutshell web       ← optional web UI at http://localhost:8080 for monitoring
+nutshell tui       ← optional terminal UI: sessions list, live chat, tasks panel
 ```
 
 Everything is files. The server and UI communicate only through files on disk — no sockets, no shared memory. You can kill the UI, restart the server, and sessions resume exactly where they left off.
@@ -354,6 +356,12 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.12
+- **TUI restored**: `nutshell tui` launches a Textual terminal UI with a three-pane layout: session list (left), live chat log with rich markdown (center), and task board editor (right). Real-time polling (0.5s events, 3s sessions, 2s tasks). Supports send message, stop/resume session, create new session, edit tasks.
+- `ui/tui.py` re-introduced; `nutshell-tui` entry point added to `pyproject.toml`.
+- `nutshell tui` subcommand added to the unified CLI.
+- Refactored vs old TUI: uses shared `_read_session_info`/`_sort_sessions` from `ui.web.sessions` instead of duplicating session-reading logic.
 
 ### v1.3.11
 - **nutshell_dev autonomous heartbeat**: `entity/nutshell_dev` now ships a custom `prompts/heartbeat.md` that drives fully autonomous task selection from `track.md`. On each heartbeat: empty task board → reads `track.md`, picks the first actionable `[ ]` item, writes it to `core/tasks.md`, and begins; non-empty board → follows SOP, commits, pushes, marks done, then picks the next task or returns `SESSION_FINISHED`.
