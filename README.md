@@ -1,4 +1,4 @@
-# Nutshell `v1.3.3`
+# Nutshell `v1.3.4`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -49,6 +49,10 @@ nutshell start SESSION_ID             # resume heartbeat (server must be running
 
 nutshell tasks                        # show latest session's task board
 nutshell tasks SESSION_ID             # show specific session's task board
+
+nutshell log                          # show latest session's last 5 turns
+nutshell log SESSION_ID               # specific session
+nutshell log SESSION_ID -n 20         # last 20 turns
 ```
 
 ### Entity Management
@@ -293,6 +297,10 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.4
+- **`nutshell log [SESSION_ID] [-n N]`** — new CLI subcommand to display recent conversation history from a session's `context.jsonl`. Shows user messages, agent replies, tool calls, and token usage. Defaults to latest session, last 5 turns.
+- 8 new tests in `test_cli_main.py` (27 total); 184 total tests.
 
 ### v1.3.3
 - **`nutshell tasks [SESSION_ID]`** — new CLI subcommand to display a session's task board (`core/tasks.md`). Defaults to the most recently active session. Makes the agent's work visible to users from the terminal.

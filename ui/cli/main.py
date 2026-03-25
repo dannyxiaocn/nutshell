@@ -6,6 +6,7 @@ Usage:
     nutshell new [SESSION_ID] [options]     Create a new session (no message)
     nutshell stop SESSION_ID                Stop a session's heartbeat
     nutshell start SESSION_ID               Resume a stopped session
+    nutshell log [SESSION_ID] [-n N]        Show recent conversation history
     nutshell tasks [SESSION_ID]             Show a session's task board
     nutshell entity new [options]           Scaffold a new entity directory
     nutshell review                         Review pending entity update requests
@@ -298,6 +299,141 @@ def cmd_start(args) -> int:
     return 0
 
 
+# ── Subcommand: log ───────────────────────────────────────────────────────────
+
+def _add_log_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "log",
+        help="Show recent conversation history for a session.",
+        description=(
+            "Display the last N conversation turns from a session.\n\n"
+            "Examples:\n"
+            "  nutshell log                         Show latest session, last 5 turns\n"
+            "  nutshell log 2026-03-25_10-00-00     Specific session, last 5 turns\n"
+            "  nutshell log --n 20                  Latest session, last 20 turns\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("session_id", nargs="?", default=None,
+                   help="Session ID (default: most recently active session)")
+    p.add_argument("-n", type=int, default=5, dest="num_turns",
+                   metavar="N", help="Number of turns to show (default: 5)")
+    p.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE,
+                   help=argparse.SUPPRESS)
+    p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE,
+                   help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_log)
+
+
+def _fmt_msg_content(content) -> str:
+    """Flatten message content to a display string (handles str and list)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif block.get("type") == "tool_use":
+                    parts.append(f"[tool: {block.get('name', '?')}({json.dumps(block.get('input', {}), ensure_ascii=False)})]")
+                elif block.get("type") == "tool_result":
+                    inner = block.get("content", "")
+                    preview = (inner[:80] + "…") if isinstance(inner, str) and len(inner) > 80 else inner
+                    parts.append(f"[result: {preview}]")
+        return " ".join(p for p in parts if p)
+    return str(content)
+
+
+def cmd_log(args) -> int:
+    session_id = args.session_id
+
+    if not session_id:
+        sessions = _read_all_sessions(args.sessions_base, args.system_base)
+        if not sessions:
+            print("No sessions found.", file=sys.stderr)
+            return 1
+        session_id = sessions[0]["id"]
+
+    context_path = args.system_base / session_id / "context.jsonl"
+    if not context_path.exists():
+        if not (args.system_base / session_id / "manifest.json").exists():
+            print(f"Error: session '{session_id}' not found", file=sys.stderr)
+            return 1
+        print(f"[{session_id}] No conversation history yet.")
+        return 0
+
+    lines = [l for l in context_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    events = []
+    for line in lines:
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+
+    # Group into (user_input, turn) pairs
+    inputs_by_id: dict[str, dict] = {}
+    turns: list[dict] = []
+    for ev in events:
+        if ev.get("type") == "user_input":
+            inputs_by_id[ev["id"]] = ev
+        elif ev.get("type") == "turn":
+            turns.append(ev)
+
+    # Show last N turns
+    turns_to_show = turns[-args.num_turns:]
+    if not turns_to_show:
+        # Show any unpaired user_inputs
+        recent_inputs = list(inputs_by_id.values())[-args.num_turns:]
+        if recent_inputs:
+            print(f"[{session_id}] — pending (no agent response yet)")
+            print("─" * 60)
+            for inp in recent_inputs:
+                ts = inp.get("ts", "")[:16].replace("T", " ")
+                print(f"  USER  {ts}  {inp.get('content', '')}")
+        else:
+            print(f"[{session_id}] No conversation history yet.")
+        return 0
+
+    print(f"[{session_id}] last {len(turns_to_show)} turn(s)")
+    print("─" * 60)
+    for turn in turns_to_show:
+        uid = turn.get("user_input_id")
+        user_ev = inputs_by_id.get(uid) if uid else None
+        ts = (user_ev or turn).get("ts", "")[:16].replace("T", " ")
+
+        # User line
+        user_text = user_ev.get("content", "") if user_ev else ""
+        if user_text:
+            print(f"  USER  {ts}  {user_text}")
+
+        # Agent messages (skip the echoed user message)
+        messages = turn.get("messages", [])
+        for msg in messages:
+            role = msg.get("role", "")
+            if role == "assistant":
+                text = _fmt_msg_content(msg.get("content", ""))
+                if text:
+                    print(f"  AGENT          {text}")
+            elif role == "tool":
+                pass  # skip tool results in display
+
+        # Token usage
+        usage = turn.get("usage")
+        if usage and (usage.get("input") or usage.get("output")):
+            parts = []
+            if usage.get("input"):
+                parts.append(f"↑{usage['input']}")
+            if usage.get("output"):
+                parts.append(f"↓{usage['output']}")
+            if usage.get("cache_read"):
+                parts.append(f"📦{usage['cache_read']}")
+            print(f"         {'  '.join(parts)}")
+        print()
+
+    return 0
+
+
 # ── Subcommand: tasks ─────────────────────────────────────────────────────────
 
 def _add_tasks_parser(subparsers) -> None:
@@ -473,6 +609,7 @@ def main() -> None:
             "  nutshell chat --session ID MSG      Send to existing session\n"
             "  nutshell stop SESSION_ID            Stop heartbeat\n"
             "  nutshell start SESSION_ID           Resume heartbeat\n"
+            "  nutshell log [SESSION_ID] [-n N]    Show conversation history\n"
             "  nutshell tasks [SESSION_ID]         Show session task board\n\n"
             "Entity management:\n"
             "  nutshell entity new                 Scaffold entity interactively\n"
@@ -491,6 +628,7 @@ def main() -> None:
     _add_new_parser(subparsers)
     _add_stop_parser(subparsers)
     _add_start_parser(subparsers)
+    _add_log_parser(subparsers)
     _add_tasks_parser(subparsers)
     _add_entity_parser(subparsers)
     _add_review_parser(subparsers)

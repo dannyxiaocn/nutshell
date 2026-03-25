@@ -12,10 +12,12 @@ from ui.cli.main import (
     cmd_sessions,
     cmd_stop,
     cmd_start,
+    cmd_log,
     cmd_tasks,
     _read_all_sessions,
     _fmt_ago,
     _session_tone,
+    _fmt_msg_content,
 )
 
 
@@ -294,3 +296,131 @@ def test_cmd_tasks_defaults_to_latest(tmp_path, capsys):
     out = capsys.readouterr().out
     # Output should reference one of the sessions (whichever is "latest")
     assert "session" in out
+
+
+# ── _fmt_msg_content ──────────────────────────────────────────────────────────
+
+def test_fmt_msg_content_str():
+    assert _fmt_msg_content("hello") == "hello"
+
+
+def test_fmt_msg_content_list_text():
+    content = [{"type": "text", "text": "hi there"}]
+    assert _fmt_msg_content(content) == "hi there"
+
+
+def test_fmt_msg_content_list_tool_use():
+    content = [{"type": "tool_use", "name": "bash", "input": {"command": "pwd"}}]
+    result = _fmt_msg_content(content)
+    assert "tool: bash" in result
+    assert "pwd" in result
+
+
+def test_fmt_msg_content_list_mixed():
+    content = [
+        {"type": "tool_use", "name": "bash", "input": {}},
+        {"type": "text", "text": "done"},
+    ]
+    result = _fmt_msg_content(content)
+    assert "tool: bash" in result
+    assert "done" in result
+
+
+# ── cmd_log ───────────────────────────────────────────────────────────────────
+
+def _seed_context(tmp_path: Path, session_id: str, events: list) -> tuple[Path, Path]:
+    """Seed a session with context.jsonl events."""
+    import json as _json
+    sessions, system = _seed_session(tmp_path, session_id)
+    context_path = system / session_id / "context.jsonl"
+    context_path.write_text(
+        "\n".join(_json.dumps(e) for e in events) + "\n",
+        encoding="utf-8",
+    )
+    return sessions, system
+
+
+def test_cmd_log_basic(tmp_path, capsys):
+    import argparse
+    events = [
+        {"type": "user_input", "content": "say hello", "id": "uid-1", "ts": "2026-03-25T10:00:00"},
+        {"type": "turn", "triggered_by": "user",
+         "messages": [
+             {"role": "user", "content": "say hello", "ts": "2026-03-25T10:00:01"},
+             {"role": "assistant", "content": "Hello!", "ts": "2026-03-25T10:00:02"},
+         ],
+         "user_input_id": "uid-1",
+         "usage": {"input": 100, "output": 5, "cache_read": 0, "cache_write": 0},
+         "ts": "2026-03-25T10:00:02"},
+    ]
+    sessions, system = _seed_context(tmp_path, "log-session", events)
+    args = argparse.Namespace(
+        session_id="log-session",
+        num_turns=5,
+        sessions_base=sessions,
+        system_base=system,
+    )
+    code = cmd_log(args)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "say hello" in out
+    assert "Hello!" in out
+    assert "↑100" in out
+    assert "↓5" in out
+
+
+def test_cmd_log_no_history(tmp_path, capsys):
+    import argparse
+    _, system = _seed_session(tmp_path, "no-log-session")
+    args = argparse.Namespace(
+        session_id="no-log-session",
+        num_turns=5,
+        sessions_base=tmp_path / "sessions",
+        system_base=system,
+    )
+    code = cmd_log(args)
+    assert code == 0
+    assert "No conversation" in capsys.readouterr().out
+
+
+def test_cmd_log_not_found(tmp_path, capsys):
+    import argparse
+    args = argparse.Namespace(
+        session_id="ghost",
+        num_turns=5,
+        sessions_base=tmp_path / "sessions",
+        system_base=tmp_path / "_sessions",
+    )
+    code = cmd_log(args)
+    assert code == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cmd_log_limits_turns(tmp_path, capsys):
+    import argparse
+
+    def _make_turn(n):
+        return [
+            {"type": "user_input", "content": f"msg{n}", "id": f"uid-{n}", "ts": "2026-03-25T10:00:00"},
+            {"type": "turn", "triggered_by": "user",
+             "messages": [{"role": "assistant", "content": f"reply{n}", "ts": "2026-03-25T10:00:01"}],
+             "user_input_id": f"uid-{n}", "ts": "2026-03-25T10:00:01"},
+        ]
+
+    events = []
+    for i in range(1, 6):
+        events.extend(_make_turn(i))
+
+    sessions, system = _seed_context(tmp_path, "limit-session", events)
+    args = argparse.Namespace(
+        session_id="limit-session",
+        num_turns=2,
+        sessions_base=sessions,
+        system_base=system,
+    )
+    code = cmd_log(args)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "reply4" in out
+    assert "reply5" in out
+    assert "reply1" not in out
