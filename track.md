@@ -97,8 +97,8 @@ agent 自己就可以使用，自己就可以迭代
         - [x] [版本控制] 更新不同代 prompt、skills、tools、以及模型的对应版本控制 —> 主要针对于 entity —> 这个是科研迭代系统的重要组件 <!-- d239374 v1.3.14 -->
             - [x] 可以让 Agent 可知的情况下，提交对应的 update request，人类来审核 —> 也就是完成从 session 彻底到 global 的更新（在 nutshell-server 侧给出提示，然后人类通过 cli 工具来同意） <!-- 3abfba4 v1.2.1 -->
             - [x] 把 entity 复制到每个 session 里面，然后做一次同步，这样每个 session 的 agent 只读 session，不更改全局，但它也可以更改，在这个地方要加一个版本控制的机制，然后 nutshell 来协调
-    - [ ] 权限，安全性是要仔细考虑的问题
-        - [ ] python 可以写出来一些系统级 tool？以及一些为了避免错误的？
+    - [x] 权限，安全性是要仔细考虑的问题 <!-- 272c76b v1.3.19 sandbox -->
+        - [x] python 可以写出来一些系统级 tool？以及一些为了避免错误的？<!-- 272c76b v1.3.19 sandbox blocked_patterns -->
             - [x] 剩下的都用 bash，可以创建 python，然后 bash 来跑，但这仍然属于 bash
             - [x] 所有的 tool 中系统 python 是 only-系统权限应用，不开放给 agent 来创造/修改的权限，也不需要热插拔
     - [x] 让 agent 可以自己迭代 tool 和 skill（修改）
