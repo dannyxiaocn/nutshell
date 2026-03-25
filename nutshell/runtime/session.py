@@ -270,6 +270,7 @@ class Session:
         if result.usage and result.usage.total_tokens > 0:
             turn["usage"] = result.usage.as_dict()
         self._append_context(turn)
+        self._write_harness_snapshot(result, "user")
         self._set_model_status("idle", "user")
         return result
 
@@ -343,6 +344,7 @@ class Session:
                 if result.usage and result.usage.total_tokens > 0:
                     turn["usage"] = result.usage.as_dict()
                 self._append_context(turn)
+                self._write_harness_snapshot(result, "heartbeat")
 
         self._set_model_status("idle", "heartbeat")
         return result
@@ -526,6 +528,41 @@ class Session:
         return self.system_dir / "events.jsonl"
 
     # ── Internal ───────────────────────────────────────────────────
+
+    def _write_harness_snapshot(self, result: AgentResult, triggered_by: str) -> None:
+        """Write a per-turn performance snapshot to core/memory/harness.md.
+
+        Gives the agent a compact, always-visible summary of its recent
+        performance so it can self-adjust (e.g. use fewer tool calls, be
+        more concise, stay within token budgets).
+
+        The file is a memory layer — auto-injected into every activation
+        via the standard memory_layers mechanism.
+        """
+        usage = result.usage
+        history_turns = len(self._agent._history)
+        tool_names = sorted({tc.name for tc in result.tool_calls}) if result.tool_calls else []
+
+        lines = [
+            "# Harness — Last Turn Performance",
+            "",
+            f"| Metric | Value |",
+            f"|--------|-------|",
+            f"| triggered_by | {triggered_by} |",
+            f"| iterations | {result.iterations} |",
+            f"| tool_calls | {len(result.tool_calls)} |",
+            f"| tools_used | {', '.join(tool_names) if tool_names else '(none)'} |",
+            f"| input_tokens | {usage.input_tokens:,} |",
+            f"| output_tokens | {usage.output_tokens:,} |",
+            f"| total_tokens | {usage.total_tokens:,} |",
+            f"| cache_read | {usage.cache_read_tokens:,} |",
+            f"| cache_write | {usage.cache_write_tokens:,} |",
+            f"| history_turns | {history_turns} |",
+            f"| model | {self._agent.model} |",
+        ]
+        harness_path = self.core_dir / "memory" / "harness.md"
+        harness_path.parent.mkdir(parents=True, exist_ok=True)
+        harness_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _append_context(self, event: dict) -> None:
         """Append a conversation event (user_input or turn) to context.jsonl."""

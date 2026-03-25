@@ -1,4 +1,4 @@
-# Nutshell `v1.3.17`
+# Nutshell `v1.3.18`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -356,6 +356,11 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.18
+- **Harness feedback system**: After every agent turn, a performance snapshot is automatically written to `core/memory/harness.md`. The agent sees it next turn as a memory layer: triggered_by, iterations, tool_calls, tokens (input/output/cache), history_turns, model. Enables self-adjustment without external monitoring. Works for both `chat()` (user-triggered) and `tick()` (heartbeat) turns.
+- `AgentResult.iterations` — new field counting tool-call loop iterations per turn, set in `agent.run()`.
+- 11 new tests in `test_harness.py`; 264 total.
 
 ### v1.3.17
 - **`nutshell token-report [SESSION_ID]`**: New diagnostic command showing per-turn token costs — columns: turn #, timestamp, trigger preview, input/output/cache-read/cache-write tokens. Includes session totals, cache hit rate, and top-3 most expensive turns. Makes prompt token economics visible so users and agents can find cheaper paths.

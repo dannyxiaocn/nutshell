@@ -50,3 +50,4 @@ class AgentResult:
     tool_calls: list[ToolCall] = field(default_factory=list)
     messages: list[Message] = field(default_factory=list)
     usage: TokenUsage = field(default_factory=TokenUsage)
+    iterations: int = 0

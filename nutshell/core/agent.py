@@ -168,7 +168,9 @@ class Agent(BaseAgent):
             self.provider, "_supports_cache_control", False
         )
 
+        iterations = 0
         for _ in range(self.max_iterations):
+            iterations += 1
             content, tool_calls, turn_usage = await self.provider.complete(
                 messages=messages,
                 tools=self.tools,
@@ -217,6 +219,7 @@ class Agent(BaseAgent):
             tool_calls=all_tool_calls,
             usage=total_usage,
             messages=list(messages),
+            iterations=iterations,
         )
 
         if self.release_policy == "auto":
