@@ -286,8 +286,8 @@ def main() -> None:
         help="Send without waiting for a response",
     )
     parser.add_argument(
-        "--timeout", type=float, default=120.0,
-        help="Seconds to wait for response (default: 120)",
+        "--timeout", type=float, default=300.0,
+        help="Seconds to wait for response (default: 300)",
     )
     # Hidden args for testing path overrides
     parser.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE,

@@ -1,4 +1,4 @@
-# Nutshell `v1.3.6`
+# Nutshell `v1.3.7`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -297,6 +297,9 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.7
+- **Chat timeout default increased** — `nutshell chat` and `nutshell-chat` default `--timeout` raised from 120s to 300s. Complex agent tasks (especially with `--entity`) no longer time out prematurely while the agent is still working.
 
 ### v1.3.6
 - **Entity layered memory seeding** — `session_factory.init_session()` now copies all `.md` files from `entity/<name>/memory/` into `session/core/memory/` on first creation (idempotent). Entities can pre-seed layered memory layers alongside the flat `memory.md`.

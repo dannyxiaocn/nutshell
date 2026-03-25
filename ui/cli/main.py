@@ -114,8 +114,8 @@ def _add_chat_parser(subparsers) -> None:
     p.add_argument("--entity", default="agent", metavar="NAME",
                    help="Entity for new session (default: agent)")
     p.add_argument("--no-wait", action="store_true", help="Fire-and-forget")
-    p.add_argument("--timeout", type=float, default=120.0,
-                   help="Seconds to wait for a response (default: 120)")
+    p.add_argument("--timeout", type=float, default=300.0,
+                   help="Seconds to wait for a response (default: 300)")
     p.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE,
                    help=argparse.SUPPRESS)
     p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE,
