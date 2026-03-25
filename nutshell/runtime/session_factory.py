@@ -148,6 +148,19 @@ def init_session(
         _write_if_absent(core_dir / "memory.md", entity_memory.read_text(encoding="utf-8"))
     else:
         _write_if_absent(core_dir / "memory.md", "")
+
+    # Seed layered memory from entity memory/ directory
+    # Copies .md files from entity/<name>/memory/ → session/core/memory/
+    # Only copies files that do not already exist (idempotent).
+    entity_memory_dir = ent_base / entity_name / "memory"
+    if entity_memory_dir.is_dir():
+        session_memory_dir = core_dir / "memory"
+        session_memory_dir.mkdir(exist_ok=True)
+        for src_file in sorted(entity_memory_dir.glob("*.md")):
+            dst_file = session_memory_dir / src_file.name
+            if not dst_file.exists():
+                shutil.copy2(src_file, dst_file)
+
     _write_if_absent(core_dir / "tasks.md", "")
 
     ensure_session_status(system_dir)

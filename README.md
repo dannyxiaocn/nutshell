@@ -1,4 +1,4 @@
-# Nutshell `v1.3.5`
+# Nutshell `v1.3.6`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -297,6 +297,11 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.6
+- **Entity layered memory seeding** — `session_factory.init_session()` now copies all `.md` files from `entity/<name>/memory/` into `session/core/memory/` on first creation (idempotent). Entities can pre-seed layered memory layers alongside the flat `memory.md`.
+- **`entity/nutshell_dev/memory/track_sop.md`** — layer memory teaching nutshell_dev how to read/complete/update track.md tasks.
+- 3 new tests in `test_spawn_session.py`; 187 total.
 
 ### v1.3.5
 - **Entity `memory.md` seeding** — `session_factory.init_session()` now copies `entity/<name>/memory.md` into `core/memory.md` on first session creation (if absent). Entities can pre-seed agent memory.

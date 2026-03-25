@@ -136,3 +136,70 @@ def test_spawn_session_registered_as_builtin():
     impl = get_builtin("spawn_session")
     assert impl is not None
     assert callable(impl)
+
+
+# ── entity memory/ directory seeding ─────────────────────────────────────────
+
+def test_init_session_copies_entity_memory_directory(tmp_path):
+    """Entity memory/*.md files are copied to session core/memory/."""
+    entity_dir = tmp_path / "entity" / "test-ent"
+    mem_dir = entity_dir / "memory"
+    mem_dir.mkdir(parents=True)
+    (mem_dir / "layer_a.md").write_text("Alpha layer", encoding="utf-8")
+    (mem_dir / "layer_b.md").write_text("Beta layer", encoding="utf-8")
+    # Non-.md files should be ignored
+    (mem_dir / "notes.txt").write_text("should not be copied", encoding="utf-8")
+
+    init_session(
+        session_id="mem-dir-session",
+        entity_name="test-ent",
+        sessions_base=tmp_path / "sessions",
+        system_sessions_base=tmp_path / "_sessions",
+        entity_base=tmp_path / "entity",
+    )
+
+    session_mem = tmp_path / "sessions" / "mem-dir-session" / "core" / "memory"
+    assert session_mem.is_dir()
+    assert (session_mem / "layer_a.md").read_text(encoding="utf-8") == "Alpha layer"
+    assert (session_mem / "layer_b.md").read_text(encoding="utf-8") == "Beta layer"
+    assert not (session_mem / "notes.txt").exists()
+
+
+def test_init_session_memory_directory_idempotent(tmp_path):
+    """Second init_session call does not overwrite existing memory layer files."""
+    entity_dir = tmp_path / "entity" / "test-ent"
+    mem_dir = entity_dir / "memory"
+    mem_dir.mkdir(parents=True)
+    (mem_dir / "config.md").write_text("original from entity", encoding="utf-8")
+
+    kwargs = dict(
+        session_id="idem-mem-session",
+        entity_name="test-ent",
+        sessions_base=tmp_path / "sessions",
+        system_sessions_base=tmp_path / "_sessions",
+        entity_base=tmp_path / "entity",
+    )
+    init_session(**kwargs)
+
+    # Agent modifies the file in session
+    session_file = tmp_path / "sessions" / "idem-mem-session" / "core" / "memory" / "config.md"
+    session_file.write_text("agent modified this", encoding="utf-8")
+
+    # Second init should NOT overwrite
+    init_session(**kwargs)
+    assert session_file.read_text(encoding="utf-8") == "agent modified this"
+
+
+def test_init_session_no_entity_memory_dir_no_error(tmp_path):
+    """When entity has no memory/ directory, no error and no core/memory/ created."""
+    init_session(
+        session_id="no-mem-dir-session",
+        entity_name="nonexistent-entity",
+        sessions_base=tmp_path / "sessions",
+        system_sessions_base=tmp_path / "_sessions",
+        entity_base=tmp_path / "entity",
+    )
+
+    session_mem = tmp_path / "sessions" / "no-mem-dir-session" / "core" / "memory"
+    # memory/ dir should NOT be created if entity has no memory/ dir
+    assert not session_mem.exists()
