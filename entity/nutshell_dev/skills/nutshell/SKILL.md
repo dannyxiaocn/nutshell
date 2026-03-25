@@ -7,7 +7,7 @@ description: "Full development context for the nutshell project. Use this skill 
 
 Complete workbench for developing nutshell.
 
-Current version: **v1.2.6** | Tests: `pytest tests/ -q` (146 passing)
+Current version: **v1.2.7** | Tests: `pytest tests/ -q` (150 passing)
 
 ---
 
@@ -50,7 +50,8 @@ _BUILTIN_FACTORIES: dict[str, Callable[[], Tool]] = {
 
 1. Implement `nutshell/llm_engine/providers/<name>.py` extending `Provider`
 2. Register in `nutshell/llm_engine/registry.py` `_PROVIDERS` dict
-3. `complete()` must accept `on_text_chunk=None`, `cache_system_prefix=""`, `cache_last_human_turn=False` kwargs
+3. `complete()` must return `(str, list[ToolCall], TokenUsage)` — 3-tuple
+4. `complete()` must accept `on_text_chunk=None`, `cache_system_prefix=""`, `cache_last_human_turn=False` kwargs
 
 ### 4. Adding a New Entity
 
