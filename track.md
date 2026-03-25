@@ -12,17 +12,29 @@
 
 > 用 nutshell 的 agent 来完成 nutshell 自身的开发任务——真正的 filesystem-as-everything 实践。
 
-### SOP
-1. 用 `entity/nutshell_dev` agent 领取 track.md 中的任务
-2. 发现 bug/error → 立即修复 nutshell 本身
-3. 发现缺少功能 → 在 track.md 加 new todo
-4. 持续更新 nutshell_dev 的 memory / skill / tool，让它越来越强
+### 角色分工
 
-### 使用方式
-```bash
-nutshell chat --entity nutshell_dev "领取 track.md 中的下一个任务并实现"
-nutshell log -n 10                    # 查看 agent 进展
-nutshell tasks                        # 查看 agent 任务板
+| 角色 | 职责 |
+|------|------|
+| **Claude Code（我）** | 从 track.md **选取**任务，向 nutshell_dev **派发**任务，**审核**产出，**调整**方向，**标记**完成 + commit ID |
+| **nutshell_dev agent** | 接受任务指令，**执行**具体实现（写代码、跑测试、commit），更新自己的 memory/skill/tool |
+
+> **关键原则：任务选取和最终判断权在 Claude Code。** nutshell_dev 是执行者，不是决策者。Claude Code 全程负责任务的正确性与完成质量。
+
+### 工作流（每次迭代）
+
+```
+1. Claude Code 读 track.md → 选取合适的 [ ] 任务
+2. Claude Code 启动 / 继续 nutshell_dev 会话，传递任务描述
+   nutshell chat --entity nutshell_dev "任务：..."
+3. 监控进度
+   nutshell log SESSION_ID -n 10      # 查看 agent 对话记录
+   nutshell tasks SESSION_ID          # 查看 agent 任务板
+4. 审核产出：代码正确性、测试通过、commit 信息
+5. 若有问题 → 继续发消息给 nutshell_dev 纠偏
+   nutshell chat --session SESSION_ID "修正：..."
+6. 通过后 → Claude Code 在 track.md 标记 [x] + commit ID
+7. 若发现 nutshell 缺失功能 → Claude Code 在 track.md 加新 [ ] todo
 ```
 
 ### 待完成（nutshell_dev 驱动）
