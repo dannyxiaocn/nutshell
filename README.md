@@ -1,4 +1,4 @@
-# Nutshell `v1.3.2`
+# Nutshell `v1.3.3`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -46,6 +46,9 @@ nutshell new my-project --entity agent  # specific ID
 
 nutshell stop SESSION_ID              # pause heartbeat
 nutshell start SESSION_ID             # resume heartbeat (server must be running)
+
+nutshell tasks                        # show latest session's task board
+nutshell tasks SESSION_ID             # show specific session's task board
 ```
 
 ### Entity Management
@@ -290,6 +293,10 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.3
+- **`nutshell tasks [SESSION_ID]`** — new CLI subcommand to display a session's task board (`core/tasks.md`). Defaults to the most recently active session. Makes the agent's work visible to users from the terminal.
+- 5 new tests in `test_cli_main.py`; 176 total.
 
 ### v1.3.2
 - **TUI removed** — `ui/tui.py` deleted; `nutshell-tui` entry point removed. Web UI retained for monitoring.

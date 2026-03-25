@@ -6,12 +6,13 @@ Usage:
     nutshell new [SESSION_ID] [options]     Create a new session (no message)
     nutshell stop SESSION_ID                Stop a session's heartbeat
     nutshell start SESSION_ID               Resume a stopped session
+    nutshell tasks [SESSION_ID]             Show a session's task board
     nutshell entity new [options]           Scaffold a new entity directory
     nutshell review                         Review pending entity update requests
     nutshell server                         Start the Nutshell server
     nutshell web                            Start the web UI (monitoring)
 
-All session-management commands (sessions, new, stop, start) work without
+All session-management commands (sessions, new, stop, start, tasks) work without
 a running server — they read/write the _sessions/ directory directly.
 """
 from __future__ import annotations
@@ -297,6 +298,59 @@ def cmd_start(args) -> int:
     return 0
 
 
+# ── Subcommand: tasks ─────────────────────────────────────────────────────────
+
+def _add_tasks_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "tasks",
+        help="Show a session's task board (core/tasks.md).",
+        description=(
+            "Display the task board for a session.\n\n"
+            "Examples:\n"
+            "  nutshell tasks                       Show latest session's tasks\n"
+            "  nutshell tasks 2026-03-25_10-00-00   Show specific session\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("session_id", nargs="?", default=None,
+                   help="Session ID (default: most recently active session)")
+    p.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE,
+                   help=argparse.SUPPRESS)
+    p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE,
+                   help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_tasks)
+
+
+def cmd_tasks(args) -> int:
+    session_id = args.session_id
+
+    # Resolve session_id: if not given, use the most recently active session
+    if not session_id:
+        sessions = _read_all_sessions(args.sessions_base, args.system_base)
+        if not sessions:
+            print("No sessions found.", file=sys.stderr)
+            return 1
+        session_id = sessions[0]["id"]
+
+    tasks_path = args.sessions_base / session_id / "core" / "tasks.md"
+    if not tasks_path.exists():
+        # Check if the session exists at all
+        if not (args.system_base / session_id / "manifest.json").exists():
+            print(f"Error: session '{session_id}' not found", file=sys.stderr)
+            return 1
+        print(f"[{session_id}] tasks.md is empty.")
+        return 0
+
+    content = tasks_path.read_text().strip()
+    print(f"[{session_id}] tasks.md")
+    print("─" * 60)
+    if content:
+        print(content)
+    else:
+        print("(empty)")
+    return 0
+
+
 # ── Subcommand: entity ────────────────────────────────────────────────────────
 
 def _add_entity_parser(subparsers) -> None:
@@ -418,7 +472,8 @@ def main() -> None:
             "  nutshell chat MESSAGE               New session + send message\n"
             "  nutshell chat --session ID MSG      Send to existing session\n"
             "  nutshell stop SESSION_ID            Stop heartbeat\n"
-            "  nutshell start SESSION_ID           Resume heartbeat\n\n"
+            "  nutshell start SESSION_ID           Resume heartbeat\n"
+            "  nutshell tasks [SESSION_ID]         Show session task board\n\n"
             "Entity management:\n"
             "  nutshell entity new                 Scaffold entity interactively\n"
             "  nutshell entity new -n NAME         Scaffold entity by name\n\n"
@@ -436,6 +491,7 @@ def main() -> None:
     _add_new_parser(subparsers)
     _add_stop_parser(subparsers)
     _add_start_parser(subparsers)
+    _add_tasks_parser(subparsers)
     _add_entity_parser(subparsers)
     _add_review_parser(subparsers)
     _add_exec_parser(subparsers, "server", "Start the Nutshell server daemon.")

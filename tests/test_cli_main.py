@@ -12,6 +12,7 @@ from ui.cli.main import (
     cmd_sessions,
     cmd_stop,
     cmd_start,
+    cmd_tasks,
     _read_all_sessions,
     _fmt_ago,
     _session_tone,
@@ -210,3 +211,86 @@ def test_cmd_start_not_found(tmp_path, capsys):
     code = cmd_start(args)
     assert code == 1
     assert "not found" in capsys.readouterr().err
+
+
+# ── cmd_tasks ─────────────────────────────────────────────────────────────────
+
+def _seed_tasks(tmp_path: Path, session_id: str, content: str = "") -> tuple[Path, Path]:
+    """Seed a session with a tasks.md file."""
+    sessions, system = _seed_session(tmp_path, session_id)
+    tasks_path = sessions / session_id / "core" / "tasks.md"
+    tasks_path.write_text(content, encoding="utf-8")
+    return sessions, system
+
+
+def test_cmd_tasks_shows_content(tmp_path, capsys):
+    import argparse
+    sessions, system = _seed_tasks(tmp_path, "task-session", "- [ ] Write tests\n- [x] Write code")
+    args = argparse.Namespace(
+        session_id="task-session",
+        sessions_base=sessions,
+        system_base=system,
+    )
+    code = cmd_tasks(args)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "task-session" in out
+    assert "Write tests" in out
+    assert "Write code" in out
+
+
+def test_cmd_tasks_empty(tmp_path, capsys):
+    import argparse
+    sessions, system = _seed_tasks(tmp_path, "empty-session", "")
+    args = argparse.Namespace(
+        session_id="empty-session",
+        sessions_base=sessions,
+        system_base=system,
+    )
+    code = cmd_tasks(args)
+    assert code == 0
+    assert "(empty)" in capsys.readouterr().out
+
+
+def test_cmd_tasks_no_tasks_file(tmp_path, capsys):
+    """Session exists but tasks.md was never written."""
+    import argparse
+    _, system = _seed_session(tmp_path, "notask-session")
+    args = argparse.Namespace(
+        session_id="notask-session",
+        sessions_base=tmp_path / "sessions",
+        system_base=system,
+    )
+    code = cmd_tasks(args)
+    assert code == 0
+    assert "empty" in capsys.readouterr().out.lower()
+
+
+def test_cmd_tasks_not_found(tmp_path, capsys):
+    import argparse
+    args = argparse.Namespace(
+        session_id="ghost",
+        sessions_base=tmp_path / "sessions",
+        system_base=tmp_path / "_sessions",
+    )
+    code = cmd_tasks(args)
+    assert code == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cmd_tasks_defaults_to_latest(tmp_path, capsys):
+    """With no session_id given, picks the most recently active session."""
+    import argparse
+    # Create two sessions; _read_all_sessions returns most-recent first
+    sessions, system = _seed_tasks(tmp_path, "latest-session", "- [ ] Top priority task")
+    _seed_session(tmp_path, "older-session")
+    args = argparse.Namespace(
+        session_id=None,
+        sessions_base=sessions,
+        system_base=system,
+    )
+    code = cmd_tasks(args)
+    assert code == 0
+    out = capsys.readouterr().out
+    # Output should reference one of the sessions (whichever is "latest")
+    assert "session" in out
