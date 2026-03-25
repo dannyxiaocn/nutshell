@@ -10,6 +10,7 @@ Usage:
     nutshell tasks [SESSION_ID]             Show a session's task board
     nutshell entity new [options]           Scaffold a new entity directory
     nutshell entity log NAME                Show entity version changelog
+    nutshell prompt-stats [SESSION_ID]      Show prompt space breakdown for a session
     nutshell review                         Review pending entity update requests
     nutshell server                         Start the Nutshell server
     nutshell web                            Start the web UI (monitoring)
@@ -548,6 +549,146 @@ def cmd_tasks(args) -> int:
     return 0
 
 
+# ── Subcommand: prompt-stats ──────────────────────────────────────────────────
+
+_MEMORY_LAYER_INLINE_LINES = 60  # must match Agent._MEMORY_LAYER_INLINE_LINES
+
+
+def _add_prompt_stats_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "prompt-stats",
+        help="Show prompt space breakdown for a session.",
+        description=(
+            "Display a component-by-component breakdown of system prompt size.\n\n"
+            "Examples:\n"
+            "  nutshell prompt-stats                       Latest session\n"
+            "  nutshell prompt-stats 2026-03-25_10-00-00   Specific session\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("session_id", nargs="?", default=None,
+                   help="Session ID (default: most recently active session)")
+    p.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE,
+                   help=argparse.SUPPRESS)
+    p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE,
+                   help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_prompt_stats)
+
+
+def _prompt_stats_row(label: str, content: str, note: str = "") -> tuple[str, int, int, int]:
+    """Return (label, lines_disk, chars_prompt, tokens_est) for a prompt component."""
+    lines = len(content.splitlines())
+    chars = len(content)
+    tokens = max(1, chars // 4)
+    return (label, lines, chars, tokens, note)
+
+
+def cmd_prompt_stats(args) -> int:
+    session_id = args.session_id
+    if not session_id:
+        sessions = _read_all_sessions(args.sessions_base, args.system_base)
+        if not sessions:
+            print("No sessions found.", file=sys.stderr)
+            return 1
+        session_id = sessions[0]["id"]
+
+    core = args.sessions_base / session_id / "core"
+    if not core.exists():
+        print(f"Error: session '{session_id}' not found", file=sys.stderr)
+        return 1
+
+    rows: list[tuple] = []  # (label, lines, chars, tokens, note)
+
+    def _read(path: Path) -> str:
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    # ── Static (cached) section ───────────────────────────────────────────────
+    system_content = _read(core / "system.md")
+    rows.append(_prompt_stats_row("system.md", system_content))
+
+    session_content = _read(core / "session.md") or _read(core / "session_context.md")
+    rows.append(_prompt_stats_row("session.md", session_content))
+
+    # ── Dynamic section ───────────────────────────────────────────────────────
+    memory_content = _read(core / "memory.md")
+    rows.append(_prompt_stats_row("memory.md", memory_content))
+
+    mem_dir = core / "memory"
+    if mem_dir.exists():
+        for md_file in sorted(mem_dir.glob("*.md")):
+            content = md_file.read_text(encoding="utf-8")
+            disk_lines = len(content.splitlines())
+            if disk_lines > _MEMORY_LAYER_INLINE_LINES:
+                # truncated in prompt
+                truncated = "\n".join(content.splitlines()[:_MEMORY_LAYER_INLINE_LINES])
+                note = f"truncated ({disk_lines}→{_MEMORY_LAYER_INLINE_LINES} lines)"
+                rows.append(_prompt_stats_row(f"memory/{md_file.stem}", truncated, note))
+            else:
+                rows.append(_prompt_stats_row(f"memory/{md_file.stem}", content))
+
+    # skills: count skills dir entries
+    skills_dir = core / "skills"
+    skill_names: list[str] = []
+    if skills_dir.exists():
+        skill_names = [d.name for d in sorted(skills_dir.iterdir()) if d.is_dir()]
+    # Each skill contributes a catalog line (file-backed = catalog only, ~40 chars each)
+    catalog_chars = sum(40 + len(n) for n in skill_names)
+    skill_note = f"{len(skill_names)} skills (catalog only; bodies loaded on demand)"
+    rows.append((
+        "skills (catalog)",
+        len(skill_names),
+        catalog_chars,
+        max(1, catalog_chars // 4),
+        skill_note,
+    ))
+
+    # ── Heartbeat (separate activation) ──────────────────────────────────────
+    hb_content = _read(core / "heartbeat.md")
+    rows.append(_prompt_stats_row("heartbeat.md *", hb_content, "heartbeat activations only"))
+
+    # ── Render table ──────────────────────────────────────────────────────────
+    COL = (34, 7, 8, 8)
+    header = f"{'Component':<{COL[0]}}  {'Lines':>{COL[1]}}  {'Chars':>{COL[2]}}  {'~Tokens':>{COL[3]}}  Note"
+    sep = "─" * (sum(COL) + 10 + 40)
+
+    print(f"[{session_id}] prompt-stats")
+    print(sep)
+    print(header)
+    print(sep)
+
+    # Group: Static
+    print("  STATIC (cached)")
+    static_rows = rows[:2]
+    for label, lines, chars, tokens, note in static_rows:
+        print(f"  {label:<{COL[0]}}  {lines:>{COL[1]}}  {chars:>{COL[2]}}  {tokens:>{COL[3]}}  {note}")
+
+    # Group: Dynamic
+    dynamic_rows = rows[2:-1]
+    print("  DYNAMIC")
+    for label, lines, chars, tokens, note in dynamic_rows:
+        print(f"  {label:<{COL[0]}}  {lines:>{COL[1]}}  {chars:>{COL[2]}}  {tokens:>{COL[3]}}  {note}")
+
+    # Group: Heartbeat
+    print("  HEARTBEAT")
+    label, lines, chars, tokens, note = rows[-1]
+    print(f"  {label:<{COL[0]}}  {lines:>{COL[1]}}  {chars:>{COL[2]}}  {tokens:>{COL[3]}}  {note}")
+
+    print(sep)
+
+    # Totals (static + dynamic, excluding heartbeat)
+    chat_rows = rows[:-1]
+    total_chars = sum(r[2] for r in chat_rows)
+    total_tokens = sum(r[3] for r in chat_rows)
+    static_chars = sum(r[2] for r in static_rows)
+    static_tokens = sum(r[3] for r in static_rows)
+    dynamic_chars = sum(r[2] for r in dynamic_rows)
+    dynamic_tokens = sum(r[3] for r in dynamic_rows)
+    print(f"  {'TOTAL (chat)':<{COL[0]}}  {'':>{COL[1]}}  {total_chars:>{COL[2]}}  {total_tokens:>{COL[3]}}  static {static_tokens} + dynamic {dynamic_tokens}")
+    print()
+    print("  * heartbeat.md is injected during autonomous heartbeat ticks, not regular chat.")
+    return 0
+
+
 # ── Subcommand: entity ────────────────────────────────────────────────────────
 
 def _add_entity_parser(subparsers) -> None:
@@ -711,6 +852,8 @@ def main() -> None:
             "  nutshell entity new                 Scaffold entity interactively\n"
             "  nutshell entity new -n NAME         Scaffold entity by name\n"
             "  nutshell entity log NAME            Show entity version changelog\n\n"
+            "Diagnostics:\n"
+            "  nutshell prompt-stats [SESSION_ID]  Show prompt space breakdown\n\n"
             "Other:\n"
             "  nutshell review                     Review agent update requests\n"
             "  nutshell server                     Start the server\n"
@@ -729,6 +872,7 @@ def main() -> None:
     _add_log_parser(subparsers)
     _add_tasks_parser(subparsers)
     _add_entity_parser(subparsers)
+    _add_prompt_stats_parser(subparsers)
     _add_review_parser(subparsers)
     _add_exec_parser(subparsers, "server", "Start the Nutshell server daemon.")
     _add_exec_parser(subparsers, "web",    "Start the web UI at http://localhost:8080 (monitoring).")

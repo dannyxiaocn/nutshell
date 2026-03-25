@@ -1,4 +1,4 @@
-# Nutshell `v1.3.14`
+# Nutshell `v1.3.15`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -356,6 +356,10 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.15
+- **`nutshell prompt-stats [SESSION_ID]`**: New diagnostic command showing a component-by-component breakdown of system prompt size — static (cached: `system.md`, `session.md`), dynamic (`memory.md`, memory layers with truncation notes, skills catalog), and heartbeat sections. Columns: Lines (disk), Chars (prompt), ~Tokens (chars/4). Helps reason about prompt space allocation and cost vs. effectiveness trade-offs.
+- 9 new tests in `test_cli_prompt_stats.py`; 234 total.
 
 ### v1.3.14
 - **Entity version control**: Every entity now has a `version` field in `agent.yaml` (starting at `1.0.0`). When a human applies an agent-proposed update via `nutshell review`, the patch version is bumped automatically (`1.0.0 → 1.0.1`) and a changelog entry is appended to `entity/<name>/CHANGELOG.md`, recording the file changed, session ID, and reason.
