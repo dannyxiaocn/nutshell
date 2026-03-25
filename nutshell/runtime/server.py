@@ -34,6 +34,8 @@ async def _run(sessions_dir: Path, system_sessions_dir: Path) -> None:
 
 
 def main() -> None:
+    from nutshell.runtime.env import load_dotenv
+    load_dotenv()
     parser = argparse.ArgumentParser(
         description="Nutshell server — backend system",
         formatter_class=argparse.RawDescriptionHelpFormatter,
