@@ -1,4 +1,4 @@
-# Nutshell `v1.3.29`
+# Nutshell `v1.3.30`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -399,6 +399,13 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 
 ## Changelog
 
+
+### v1.3.30
+- **QjbQ — independent notification relay service** — new `qjbq/` top-level package (alongside `nutshell/`, `ui/`). FastAPI server on port 8081 with three endpoints: `POST /api/notify` (write app notification to any session), `GET /api/notify/{session_id}` (list notifications), `GET /health`. Lets agents send persistent, system-prompt-visible notifications to other sessions via HTTP.
+- **`qjbq-server` CLI** — standalone entry point (`qjbq.cli:main`) to launch the relay server.
+- **`nutshell-server --with-qjbq`** — optional flag to auto-start qjbq-server as a background process alongside the nutshell server.
+- **`entity/agent/skills/qjbq/`** — new skill teaching agents how to use the QjbQ HTTP API (curl examples, endpoint reference).
+- 13 new tests in `test_qjbq_server.py`; 447 total tests.
 
 ### v1.3.29
 - **`nutshell chat --keep-alive`** — after receiving the reply, launches `nutshell-server` in the background so the session keeps its heartbeat active; prints `[heartbeat active — server running in background]`

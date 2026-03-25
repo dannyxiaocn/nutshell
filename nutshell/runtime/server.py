@@ -8,10 +8,13 @@ Usage:
     python -m nutshell.runtime.server
     python -m nutshell.runtime.server --sessions-dir ~/my-sessions
     nutshell-server
+    nutshell-server --with-qjbq          # also start qjbq-server
 """
 import argparse
 import asyncio
 import signal
+import subprocess
+import sys
 from pathlib import Path
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
@@ -53,6 +56,12 @@ def main() -> None:
         metavar="DIR",
         help=f"Directory for system session internals (default: {_SYSTEM_SESSIONS_DIR})",
     )
+    parser.add_argument(
+        "--with-qjbq",
+        action="store_true",
+        default=False,
+        help="Also start qjbq-server (notification relay) as a background process",
+    )
     args = parser.parse_args()
 
     sessions_dir = Path(args.sessions_dir)
@@ -60,7 +69,27 @@ def main() -> None:
     sessions_dir.mkdir(parents=True, exist_ok=True)
     system_sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    asyncio.run(_run(sessions_dir, system_sessions_dir))
+    # ── Optional: start qjbq-server alongside ────────────────────────
+    qjbq_proc = None
+    if args.with_qjbq:
+        try:
+            qjbq_proc = subprocess.Popen(
+                [sys.executable, "-m", "qjbq.cli",
+                 "--sessions-dir", str(sessions_dir)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            print(f"qjbq-server started (pid {qjbq_proc.pid})")
+        except Exception as exc:
+            print(f"Warning: failed to start qjbq-server: {exc}")
+
+    try:
+        asyncio.run(_run(sessions_dir, system_sessions_dir))
+    finally:
+        if qjbq_proc is not None:
+            qjbq_proc.terminate()
+            qjbq_proc.wait(timeout=5)
+            print("qjbq-server stopped.")
 
 
 if __name__ == "__main__":
