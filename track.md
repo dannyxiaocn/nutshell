@@ -137,7 +137,7 @@ agent 自己就可以使用，自己就可以迭代
 ## UI
 
 - [ ] subagent ACP to OpenClaw
-- [ ] 做一个 TUI
+- [x] 做一个 TUI <!-- 4420309 v1.3.12 -->
 - [x] 添加一下 CUI，可以让 agent 直接调用使用 <!-- 809efc0 v1.1.9 + ee1dc63 v1.3.1 -->
 - [x] 系统兼容 openclaw，直接继承他里面的那些 skills 和 tools? —> 自行 load 就好了
 - [x] 接口兼容 claude code，直接在里面用 —> Anthropic SDK
