@@ -78,7 +78,7 @@ agent 自己就可以使用，自己就可以迭代
         - [x] [memory recall] 同时，session memory 也要搞 <!-- 5dd735b v1.2.3 -->
             - [x] session memory 里面包含了 project memory，也要分层 <!-- 71f9c66 v1.1.7 -->
     - [x] creator mode skill 要搞，一定要参考 skill-creator 是怎么写的 <!-- d86c2b6 -->
-        - [ ] [版本控制] 更新不同代 prompt、skills、tools、以及模型的对应版本控制 —> 主要针对于 entity —> 这个是科研迭代系统的重要组件
+        - [x] [版本控制] 更新不同代 prompt、skills、tools、以及模型的对应版本控制 —> 主要针对于 entity —> 这个是科研迭代系统的重要组件 <!-- d239374 v1.3.14 -->
             - [x] 可以让 Agent 可知的情况下，提交对应的 update request，人类来审核 —> 也就是完成从 session 彻底到 global 的更新（在 nutshell-server 侧给出提示，然后人类通过 cli 工具来同意） <!-- 3abfba4 v1.2.1 -->
             - [x] 把 entity 复制到每个 session 里面，然后做一次同步，这样每个 session 的 agent 只读 session，不更改全局，但它也可以更改，在这个地方要加一个版本控制的机制，然后 nutshell 来协调
     - [ ] 权限，安全性是要仔细考虑的问题
