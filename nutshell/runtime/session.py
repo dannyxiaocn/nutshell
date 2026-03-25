@@ -291,15 +291,35 @@ class Session:
         self._set_model_status("idle", "user")
         return result
 
+    _DEFAULT_PERSISTENT_PROMPT = (
+        "Check for incoming messages from other agents. "
+        "Review your current state. If nothing needs attention, rest."
+    )
+
     async def tick(self) -> AgentResult | None:
         """Single heartbeat: run agent if tasks are non-empty.
 
-        Returns None if tasks are empty.
+        Returns None if tasks are empty (unless persistent mode is enabled).
         Clears tasks and prunes history if agent responds SESSION_FINISHED.
+
+        **Persistent mode**: when ``persistent=True`` in params.json and tasks
+        are empty, the agent is still activated using ``default_task`` (or a
+        built-in fallback prompt).  This keeps the agent alive indefinitely.
         """
         tasks_content = self.tasks_path.read_text(encoding="utf-8").strip()
+
+        # Determine triggered_by label for logging
+        triggered_by = "heartbeat"
+
         if not tasks_content:
-            return None
+            # Check persistent mode
+            params = read_session_params(self.session_dir)
+            if not params.get("persistent"):
+                return None
+            # Persistent mode — use default_task as the prompt
+            default_task = params.get("default_task") or self._DEFAULT_PERSISTENT_PROMPT
+            tasks_content = default_task
+            triggered_by = "heartbeat_default"
 
         # Snapshot history so we can roll back if SESSION_FINISHED
         history_snapshot = list(self._agent._history)
@@ -317,7 +337,7 @@ class Session:
         # before the thinking bubble (not after the agent turn is complete)
         trigger_ts = datetime.now().isoformat()
         self._append_event({"type": "heartbeat_trigger", "ts": trigger_ts})
-        self._set_model_status("running", "heartbeat")
+        self._set_model_status("running", triggered_by)
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
         on_chunk = self._make_text_chunk_callback()
         try:
@@ -329,7 +349,7 @@ class Session:
                     on_tool_call=tool_call_cb,
                 )
         except BaseException:
-            self._set_model_status("idle", "heartbeat")
+            self._set_model_status("idle", triggered_by)
             raise
         finally:
             on_chunk.flush()
@@ -354,7 +374,7 @@ class Session:
             if not self.is_stopped():
                 turn: dict = {
                     "type": "turn",
-                    "triggered_by": "heartbeat",
+                    "triggered_by": triggered_by,
                     "pre_triggered": True,  # heartbeat_trigger was pre-emitted
                     "trigger_ts": trigger_ts,
                     "messages": self._serialize_turn_messages(result.messages[old_len:]),
@@ -364,9 +384,9 @@ class Session:
                 if result.usage and result.usage.total_tokens > 0:
                     turn["usage"] = result.usage.as_dict()
                 self._append_context(turn)
-                self._write_harness_snapshot(result, "heartbeat")
+                self._write_harness_snapshot(result, triggered_by)
 
-        self._set_model_status("idle", "heartbeat")
+        self._set_model_status("idle", triggered_by)
         return result
 
     # ── Stop / Start ───────────────────────────────────────────────

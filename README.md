@@ -1,4 +1,4 @@
-# Nutshell `v1.3.26`
+# Nutshell `v1.3.27`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -166,7 +166,9 @@ _sessions/<id>/               ← system-only (agent never sees this)
   "heartbeat_interval": 600.0,
   "model": null,
   "provider": null,
-  "tool_providers": {"web_search": "brave"}
+  "tool_providers": {"web_search": "brave"},
+  "persistent": false,
+  "default_task": null
 }
 ```
 
@@ -363,6 +365,12 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.27
+- **persistent agent** — new `persistent` and `default_task` fields in `params.json`; when `persistent=true` and tasks are empty, tick() fires using `default_task` (or a built-in fallback) with `triggered_by='heartbeat_default'`
+- Entity-level `params:` block in `agent.yaml` — propagated to session `params.json` on creation (supports `persistent`, `default_task`, `heartbeat_interval`)
+- New `entity/persistent_agent/` — extends `agent` with 12-hour heartbeat, persistent mode, and a system prompt focused on autonomous state maintenance and message checking
+- 13 new tests in `test_persistent_agent.py`; 403 total
 
 ### v1.3.26
 - **receptionist agent entity** — new `entity/receptionist/` implementing the receptionist–worker pattern: a friendly front-desk agent handles user communication while delegating complex tasks to a background core agent

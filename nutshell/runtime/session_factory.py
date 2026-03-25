@@ -25,6 +25,24 @@ def _write_if_absent(path: Path, content: str) -> None:
         path.write_text(content, encoding="utf-8")
 
 
+
+
+def _load_entity_params(entity_dir: Path) -> dict:
+    """Read the ``params`` mapping from an entity's agent.yaml (if any).
+
+    Returns a dict of param overrides (e.g. persistent, default_task,
+    heartbeat_interval) that should be written into the session's params.json.
+    """
+    yaml_path = entity_dir / "agent.yaml"
+    if not yaml_path.exists():
+        return {}
+    try:
+        import yaml
+        manifest = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return dict(manifest.get("params") or {})
+
 def init_session(
     session_id: str,
     entity_name: str,
@@ -89,6 +107,11 @@ def init_session(
         except Exception as e:
             print(f"[session_factory] Warning: failed to load entity '{entity_name}': {e}")
 
+    # Load entity-level param overrides (persistent, default_task, etc.)
+    entity_params = _load_entity_params(entity_dir)
+    # Entity heartbeat_interval overrides the caller's default
+    effective_heartbeat = entity_params.pop("heartbeat_interval", None) or heartbeat
+
     if agent is not None:
         _write_if_absent(core_dir / "system.md", agent.system_prompt or "")
         _write_if_absent(core_dir / "heartbeat.md", agent.heartbeat_prompt or "")
@@ -128,19 +151,20 @@ def init_session(
             entity_provider = pname(agent._provider) or "anthropic"
             write_session_params(
                 session_dir,
-                heartbeat_interval=heartbeat,
+                heartbeat_interval=effective_heartbeat,
                 model=agent.model,
                 provider=entity_provider,
+                **entity_params,
             )
         else:
-            write_session_params(session_dir, heartbeat_interval=heartbeat)
+            write_session_params(session_dir, heartbeat_interval=effective_heartbeat, **entity_params)
     else:
         for fname in ("system.md", "heartbeat.md", "session.md"):
             _write_if_absent(core_dir / fname, "")
         if not (core_dir / "params.json").exists():
-            ensure_session_params(session_dir, heartbeat_interval=heartbeat)
+            ensure_session_params(session_dir, heartbeat_interval=effective_heartbeat, **entity_params)
         else:
-            write_session_params(session_dir, heartbeat_interval=heartbeat)
+            write_session_params(session_dir, heartbeat_interval=effective_heartbeat, **entity_params)
 
     # Seed memory.md from entity if the entity provides one
     entity_memory = (ent_base / entity_name / "memory.md") if entity_dir.exists() else None
@@ -164,7 +188,7 @@ def init_session(
     _write_if_absent(core_dir / "tasks.md", "")
 
     ensure_session_status(system_dir)
-    write_session_status(system_dir, heartbeat_interval=heartbeat)
+    write_session_status(system_dir, heartbeat_interval=effective_heartbeat)
 
     # Write optional initial message
     if initial_message:

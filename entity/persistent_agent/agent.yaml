@@ -1,0 +1,17 @@
+# Persistent agent — stays alive even with no tasks.
+# Wakes on a long heartbeat (12 h) to check messages and maintain state.
+
+name: persistent_agent
+extends: agent
+description: >-
+  A persistent, always-on agent that wakes periodically to check incoming
+  messages, review its state, and act on anything that needs attention.
+version: 1.0.0
+
+params:
+  persistent: true
+  default_task: >-
+    Check incoming messages from other agents via nutshell friends and
+    send_to_session. Review core/memory/ for anything that needs attention.
+    If nothing to do, summarize current state briefly.
+  heartbeat_interval: 43200
