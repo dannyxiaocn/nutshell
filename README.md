@@ -1,4 +1,4 @@
-# Nutshell `v1.2.2`
+# Nutshell `v1.2.3`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking, accessible via web browser.
 
@@ -293,6 +293,12 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.2.3
+- **`fetch_url` tool** — fetches any URL and returns plain text (HTML stripped). stdlib-only, no extra dependencies. Pairs with `web_search`: search first, then fetch the best result.
+- **`recall_memory` tool** — selective memory search. Agents can query `memory.md` and `memory/*.md` for specific facts without loading all memory into context. Reduces dynamic suffix size for long-running sessions.
+- Both tools registered as builtins and exposed via `entity/agent/tools/`.
+- 10 new tests in `test_fetch_url.py`; 135 total.
 
 ### v1.2.2
 - **`spawn_session` tool** — agents can now create new sub-sessions dynamically. Initialises from any entity, optionally writes an initial message, and registers on disk for `nutshell-server` to pick up automatically. Use `send_to_session` to communicate with the spawned session.
