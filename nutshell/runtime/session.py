@@ -10,6 +10,7 @@ from nutshell.core.agent import Agent
 from nutshell.core.tool import Tool
 from nutshell.core.types import AgentResult
 from nutshell.runtime.params import ensure_session_params, read_session_params
+from nutshell.runtime.model_eval import evaluate_task_complexity, suggest_model
 from nutshell.llm_engine.registry import provider_name, resolve_provider
 from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
 
@@ -305,6 +306,10 @@ class Session:
         **Persistent mode**: when ``persistent=True`` in params.json and tasks
         are empty, the agent is still activated using ``default_task`` (or a
         built-in fallback prompt).  This keeps the agent alive indefinitely.
+
+        **Auto-model**: when ``auto_model=True`` in params.json, evaluates
+        task complexity and temporarily overrides the agent model for this
+        tick.  The original model is restored after the tick completes.
         """
         tasks_content = self.tasks_path.read_text(encoding="utf-8").strip()
 
@@ -320,6 +325,22 @@ class Session:
             default_task = params.get("default_task") or self._DEFAULT_PERSISTENT_PROMPT
             tasks_content = default_task
             triggered_by = "heartbeat_default"
+
+        # ── Auto-model selection ───────────────────────────────────
+        auto_model_override: dict | None = None
+        params = read_session_params(self.session_dir)
+        if params.get("auto_model"):
+            original_model = self._agent.model
+            provider_key = (params.get("provider") or "anthropic").lower()
+            complexity = evaluate_task_complexity(tasks_content)
+            suggested = suggest_model(complexity, provider_key)
+            if suggested and suggested != original_model:
+                self._agent.model = suggested
+                auto_model_override = {
+                    "original_model": original_model,
+                    "suggested_model": suggested,
+                    "complexity": complexity,
+                }
 
         # Snapshot history so we can roll back if SESSION_FINISHED
         history_snapshot = list(self._agent._history)
@@ -349,6 +370,8 @@ class Session:
                     on_tool_call=tool_call_cb,
                 )
         except BaseException:
+            if auto_model_override:
+                self._agent.model = auto_model_override["original_model"]
             self._set_model_status("idle", triggered_by)
             raise
         finally:
@@ -384,7 +407,11 @@ class Session:
                 if result.usage and result.usage.total_tokens > 0:
                     turn["usage"] = result.usage.as_dict()
                 self._append_context(turn)
-                self._write_harness_snapshot(result, triggered_by)
+                self._write_harness_snapshot(result, triggered_by, auto_model_override=auto_model_override)
+
+        # ── Restore original model after auto-model override ──
+        if auto_model_override:
+            self._agent.model = auto_model_override["original_model"]
 
         self._set_model_status("idle", triggered_by)
         return result
@@ -569,7 +596,7 @@ class Session:
 
     # ── Internal ───────────────────────────────────────────────────
 
-    def _write_harness_snapshot(self, result: AgentResult, triggered_by: str) -> None:
+    def _write_harness_snapshot(self, result: AgentResult, triggered_by: str, *, auto_model_override: dict | None = None) -> None:
         """Write a per-turn performance snapshot to core/memory/harness.md.
 
         Gives the agent a compact, always-visible summary of its recent
@@ -600,6 +627,8 @@ class Session:
             f"| history_turns | {history_turns} |",
             f"| model | {self._agent.model} |",
         ]
+        if auto_model_override:
+            lines.append(f"| auto_model_override | {auto_model_override['original_model']} → {auto_model_override['suggested_model']} ({auto_model_override['complexity']}) |")
         harness_path = self.core_dir / "memory" / "harness.md"
         harness_path.parent.mkdir(parents=True, exist_ok=True)
         harness_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

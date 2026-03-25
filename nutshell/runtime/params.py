@@ -8,6 +8,7 @@ DEFAULT_PARAMS: dict = {
     "tool_providers": {"web_search": "brave"},  # web_search: "brave" | "tavily"
     "persistent": False,    # True → tick() fires even when tasks.md is empty
     "default_task": None,   # prompt used when persistent=True and tasks.md is empty
+    "auto_model": False,    # True → auto-select model based on task complexity
 }
 
 

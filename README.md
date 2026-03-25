@@ -1,4 +1,4 @@
-# Nutshell `v1.3.30`
+# Nutshell `v1.3.31`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -168,11 +168,29 @@ _sessions/<id>/               ← system-only (agent never sees this)
   "provider": null,
   "tool_providers": {"web_search": "brave"},
   "persistent": false,
-  "default_task": null
+  "default_task": null,
+  "auto_model": false
 }
 ```
 
 **bash default directory**: agents' bash commands run from `sessions/<id>/` — use short relative paths: `cat core/tasks.md`, `ls playground/`. Pass `workdir=...` to override per call.
+
+### Auto-Model Selection
+
+When `auto_model: true` in `params.json`, the system automatically evaluates task complexity before each heartbeat tick and selects an appropriate model:
+
+| Complexity | Anthropic | OpenAI |
+|------------|-----------|--------|
+| simple | claude-haiku-4-5-20251001 | gpt-4o-mini |
+| medium | claude-sonnet-4-6 | gpt-4o |
+| complex | claude-opus-4-6 | o3 |
+
+**Heuristics** (no LLM call — pure text analysis of `tasks.md`):
+- **complex**: word count > 300, or contains keywords: implement, architect, design, refactor, migrate, debug, analyse/analyze, investigate, build
+- **simple**: word count < 80, or contains keywords: check, list, status, ping, remind, note, log, summary
+- **medium**: everything else
+
+The override is temporary — the original model is restored after each tick. The harness snapshot records `auto_model_override` when active.
 
 ---
 
@@ -398,6 +416,11 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.31
+- **Auto-model selection** — new `auto_model` field in `params.json` (default: `false`). When enabled, `tick()` evaluates `tasks.md` complexity via lightweight text heuristics and temporarily overrides the agent model (haiku for simple, sonnet for medium, opus for complex). Supports Anthropic and OpenAI providers. Original model restored after each tick. Harness snapshot records `auto_model_override` field.
+- New `nutshell/runtime/model_eval.py` — `evaluate_task_complexity()` + `suggest_model()` functions
+- 23 new tests in `test_model_eval.py`; 470 total.
 
 
 ### v1.3.30
