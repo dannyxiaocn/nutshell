@@ -8,42 +8,72 @@ My role: receive tasks dispatched by Claude Code, implement them, run tests, com
 **I do not select tasks myself.** Claude Code reads `track.md`, picks the next task, and sends it to me.
 When I finish, I report the commit ID so Claude Code can mark `[x]` in `track.md`.
 
+## Workspace — IMPORTANT
+
+**I always work inside my own playground, never in the original repo directly.**
+
+```
+My session dir:  sessions/<my-id>/          ← bash default workdir
+My workspace:    playground/nutshell/       ← git clone of the repo, all work here
+```
+
+### Setup (first thing on any new session)
+
+```bash
+# Check if workspace already exists
+ls playground/nutshell 2>/dev/null || git clone /Users/xiaobocheng/agent_core/nutshell playground/nutshell
+cd playground/nutshell
+git status
+```
+
+### After completing work
+
+```bash
+cd playground/nutshell
+git push origin main       # push changes back to origin
+```
+
+Claude Code will see the push and handle any review/merge from there.
+
 ## Project State
 
-- **Current version**: v1.3.4
-- **Repo root**: the directory containing `nutshell/`, `ui/`, `entity/`, `tests/`, `track.md`
-- **Tests**: `pytest tests/ -q` → 184 passing
-- **Main branch**: `main` (all work merges here directly for now)
+- **Current version**: v1.3.7
+- **Origin repo**: `/Users/xiaobocheng/agent_core/nutshell`
+- **My working copy**: `playground/nutshell/` (relative to my session dir)
+- **Tests**: `pytest tests/ -q` → 187 passing
+- **Main branch**: `main`
 
 ## track.md
 
-`track.md` at the repo root is the task board. Rules:
+`track.md` at repo root is the task board. Rules:
 - After completing a task: mark `[x]` + `<!-- COMMIT_ID vX.Y.Z -->`
 - If I discover sub-tasks or missing features mid-work: add new `[ ]` items directly
-- Commit `track.md` changes separately: `git commit -m "track: ..."`
+- Commit `track.md` separately: `git commit -m "track: ..."`
 
 ## Development SOP (summary)
 
-1. Implement feature
-2. `pytest tests/ -q` — must pass
-3. Update `README.md` (section + Changelog)
-4. Bump version in `pyproject.toml` AND `README.md` heading
-5. Commit with message `vX.Y.Z: short summary\n\n- bullets`
-6. Update `track.md`
-7. Report commit ID back
+1. **Setup**: `git clone` if needed, `cd playground/nutshell`, `git pull` to sync
+2. Implement feature
+3. `pytest tests/ -q` — must pass
+4. Update `README.md` (section + Changelog)
+5. Bump version in `pyproject.toml` AND `README.md` heading
+6. Commit: `vX.Y.Z: short summary\n\n- bullets`
+7. Update `track.md`, commit
+8. `git push origin main`
+9. Report commit ID back
 
 ## Key Architecture Facts
 
-- **Bash default workdir** = session directory (`sessions/<id>/`), so use short paths: `cat core/tasks.md`
-- **memory.md** (this file's session copy) is auto-injected into every activation
-- **skills** are loaded from `core/skills/<name>/SKILL.md` — reload with `reload_capabilities`
+- **Bash default workdir** = `sessions/<my-id>/` — use `cd playground/nutshell` before repo work
+- **memory.md** (this file's session copy) is auto-injected every activation
+- **skills** loaded from `core/skills/<name>/SKILL.md` — reload with `reload_capabilities`
 - **Built-in tools**: bash, web_search, send_to_session, spawn_session, propose_entity_update, fetch_url, recall_memory, reload_capabilities
-- Adding a built-in tool: implement → register in registry.py → add JSON schema → **add to entity/agent/agent.yaml** (easy to forget)
+- Adding a built-in tool: implement → register registry.py → add JSON schema → **add to entity/agent/agent.yaml** (easy to forget)
 
 ## Recent Changes (v1.3.x)
 
-- v1.3.4: `nutshell log [SESSION_ID] [-n N]` — show conversation history
-- v1.3.3: `nutshell tasks [SESSION_ID]` — show session task board
-- v1.3.2: TUI removed; CLI is primary interface
-- v1.3.1: Unified `nutshell` CLI (`ui/cli/main.py`)
-- v1.3.0: bash/shell tools default to session workdir
+- v1.3.7: `nutshell chat` default timeout 120s → 300s
+- v1.3.6: entity layered memory seeding (entity/memory/ → session/core/memory/)
+- v1.3.5: entity memory.md seeding on session creation
+- v1.3.4: `nutshell log [SESSION_ID] [-n N]`
+- v1.3.3: `nutshell tasks [SESSION_ID]`

@@ -15,8 +15,21 @@ Current version: **v1.3.4** | Tests: `pytest tests/ -q` (184 passing)
 
 **You are nutshell_dev.** Claude Code dispatches tasks to you; you execute them.
 - Claude Code selects tasks from `track.md`, sends you instructions, reviews your output
-- You implement, test, commit — then report the commit ID back
+- You implement, test, commit, push — then report the commit ID back
 - If you find bugs or missing features mid-task, fix them and add new `[ ]` items to `track.md`
+
+## Workspace
+
+**Always work in your playground, never modify the origin repo directly.**
+
+```bash
+# Session workdir is sessions/<id>/  — do this first:
+ls playground/nutshell 2>/dev/null || git clone /Users/xiaobocheng/agent_core/nutshell playground/nutshell
+cd playground/nutshell
+git pull origin main
+```
+
+After completing work: `git push origin main`
 
 ---
 
@@ -24,13 +37,15 @@ Current version: **v1.3.4** | Tests: `pytest tests/ -q` (184 passing)
 
 ### 1. After Any Code Change
 ```bash
+# Run from playground/nutshell/
 pytest tests/ -q          # must pass before anything else
 ```
 Then:
 1. Update `README.md` — relevant section + new Changelog entry
 2. Bump version in **both** `pyproject.toml` AND `README.md` heading
 3. Commit: `git commit -m "vX.Y.Z: {short summary}\n\n- detail\nCo-Authored-By: ..."`
-4. Report commit ID back to Claude Code
+4. `git push origin main`
+5. Report commit ID back to Claude Code
 
 **Versioning:** Patch (Z): bug fix · Minor (Y): new feature · Major (X): breaking
 
@@ -175,7 +190,8 @@ _sessions/<id>/
 - **`status.py` / `ipc.py`** take `system_dir` (`_sessions/<id>/`)
 - **`params.py`** takes `session_dir` (`sessions/<id>/`)
 - **Prompt caching**: static (system.md + session.md) cached; dynamic (memory + skills) not cached
-- **`session_factory.init_session()`** — copies entity memory.md → core/memory.md on first creation
+- **`session_factory.init_session()`** — copies entity memory.md + memory/*.md → core/ on first creation
+- **Working directory**: always `playground/nutshell/` — never modify origin repo path directly
 
 ---
 
