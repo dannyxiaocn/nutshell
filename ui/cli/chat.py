@@ -152,6 +152,7 @@ def _new_session(
     from nutshell.llm_engine.loader import AgentLoader
     from nutshell.runtime.session import Session
     from nutshell.runtime.ipc import FileIPC
+    from nutshell.runtime.session_factory import init_session
 
     entity_base = Path(__file__).parent.parent.parent / "entity"
     try:
@@ -160,8 +161,22 @@ def _new_session(
         print(f"Error: failed to load entity '{entity_name}': {exc}", file=sys.stderr)
         return 1
 
-    session = Session(agent, base_dir=sessions_base, system_base=system_base)
-    session_id = session._session_id
+    session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Populate core/ with entity files so _load_session_capabilities() finds them
+    try:
+        init_session(
+            session_id=session_id,
+            entity_name=entity_name,
+            sessions_base=sessions_base,
+            system_sessions_base=system_base,
+            entity_base=entity_base,
+        )
+    except Exception as exc:
+        print(f"Error: failed to initialise session: {exc}", file=sys.stderr)
+        return 1
+
+    session = Session(agent, session_id=session_id, base_dir=sessions_base, system_base=system_base)
     ipc = FileIPC(session.system_dir)
 
     # ready_event: set by the daemon once it has recorded input_offset.
