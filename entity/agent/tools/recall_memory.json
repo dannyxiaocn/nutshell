@@ -1,0 +1,14 @@
+{
+  "name": "recall_memory",
+  "description": "Search session memory for entries matching a query. Searches memory.md and all memory/*.md files. Use when you need to check a specific fact from memory without loading all memory into context. Especially useful when memory.md is large.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search term (case-insensitive substring match). Use a specific keyword or phrase."
+      }
+    },
+    "required": ["query"]
+  }
+}
