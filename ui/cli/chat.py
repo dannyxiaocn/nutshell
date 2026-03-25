@@ -18,12 +18,33 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+
+
+def _load_dotenv() -> None:
+    """Load .env from cwd or repo root (best-effort, no hard dependency)."""
+    candidates = [Path.cwd() / ".env", Path(__file__).parent.parent.parent / ".env"]
+    for path in candidates:
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+            break  # stop after first .env found
+
+
+_load_dotenv()
 
 _DEFAULT_SYSTEM_BASE = Path(__file__).parent.parent.parent / "_sessions"
 _DEFAULT_SESSIONS_BASE = Path(__file__).parent.parent.parent / "sessions"
