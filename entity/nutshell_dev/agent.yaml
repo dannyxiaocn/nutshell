@@ -13,4 +13,6 @@ tools:    # inherited from kimi_agent → agent
 
 skills:
   - skills/nutshell
-  - skills/skill-creator
+  - skills/creator-mode
+  - skills/multi-agent
+  - skills/model-selection
