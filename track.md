@@ -39,8 +39,11 @@
 
 ### 待完成（nutshell_dev 驱动）
 - [ ] 让 nutshell_dev 能自主领取 track.md 任务并完成（heartbeat-driven）
-- [ ] nutshell_dev memory 包含 track.md 当前状态快照
+- [x] nutshell_dev memory 包含 track.md 当前状态快照 <!-- be6f2cc v1.3.6 -->
+    - [x] entity layered memory 目录支持（entity/memory/ → session/core/memory/） <!-- be6f2cc v1.3.6 -->
+    - [ ] track.md 未完成任务列表动态注入 memory（目前是静态 track_sop.md，需考虑运行时更新）
 - [ ] nutshell_dev 能自动在完成后标记 track.md + commit
+- [ ] [bug] nutshell chat --entity nutshell_dev 默认 timeout 120s 太短，复杂任务会超时但 agent 仍在工作 → 考虑增大默认 timeout 或支持 --timeout 参数透传
 
 ---
 
