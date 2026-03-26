@@ -1,4 +1,4 @@
-# Nutshell `v1.3.32`
+# Nutshell `v1.3.33`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -420,6 +420,14 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.33
+- **game_player agent entity** — new `entity/game_player/` implementing an elite gaming specialist that speedruns, high-scores, and optimally solves all types of games: text adventures, puzzles, strategy games, code challenges, riddles, and math games
+- Custom system prompt with 4-phase game-playing approach (Recon → Strategize → Execute → Optimize), tool usage guidance, and game-type strategy table
+- New `game-strategy` skill — comprehensive game classification taxonomy (information/players/determinism), universal solving framework (observe-analyze-decide-act-verify), strategy templates for maze/permutation/word-guessing/math/text-adventure/code-golf/riddles/strategy games, `state_diff` tracking patterns, and meta-strategies for when stuck
+- Tools scoped for gameplay: bash, web_search, send_to_session, fetch_url, state_diff, recall_memory, app_notify (no dev tools like git_checkpoint or spawn_session)
+- On-demand entity (`persistent: false`, `heartbeat_interval: 300`)
+- 55 new tests in `test_entity_game_player.py`; 547 total
 
 ### v1.3.32
 - **visit**: `nutshell visit [SESSION_ID]` — agent room view showing entity, status, recent activity (last 3 context entries), task board, and app notifications
