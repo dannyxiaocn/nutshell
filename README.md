@@ -1,4 +1,4 @@
-# Nutshell `v1.3.36`
+# Nutshell `v1.3.37`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -428,6 +428,14 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.37
+- **Agent entity prompt improvements** (v1.1.0) — rewrote `entity/agent/` prompts based on context engineering and agent prompting best practices research
+- `system.md`: added `<core_behaviors>` block with explicit directives (default-to-action, parallel tool use, step-by-step thinking, honesty), structured with XML tags, ~30% fewer tokens
+- `heartbeat.md`: XML-wrapped task injection, priority focus directive, simplified paths, ~40% fewer tokens
+- Added `entity/agent/CHANGELOG.md` for entity-level version tracking
+- Research sources: Anthropic "Building Effective Agents", Anthropic prompting best practices (Claude 4.6), Karpathy/Lutke on context engineering
+
 
 ### v1.3.35
 - **cli_os agent entity** — new `entity/cli_os/` implementing an immersive CLI-OS playground where the agent is root on a virtual Linux-like machine. Can freely explore, code, build projects, and experiment with any tool available in the shell
