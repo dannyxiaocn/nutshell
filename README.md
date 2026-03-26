@@ -1,4 +1,4 @@
-# Nutshell `v1.3.37`
+# Nutshell `v1.3.38`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -92,7 +92,6 @@ nutshell os --new                     # force a fresh session
 nutshell review                       # review pending agent entity-update requests
 nutshell server                       # start the server daemon
 nutshell web                          # start the web UI at http://localhost:8080 (monitoring)
-nutshell tui                          # start the terminal UI (sessions · chat · tasks)
 ```
 
 ---
@@ -102,7 +101,6 @@ nutshell tui                          # start the terminal UI (sessions · chat 
 ```
 nutshell server    ← always-on process: manages all sessions, dispatches heartbeats
 nutshell web       ← optional web UI at http://localhost:8080 for monitoring
-nutshell tui       ← optional terminal UI: sessions list, live chat, tasks panel
 ```
 
 Everything is files. The server and UI communicate only through files on disk — no sockets, no shared memory. You can kill the UI, restart the server, and sessions resume exactly where they left off.
@@ -428,6 +426,11 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.38
+- **TUI removed** — `ui/tui.py` deleted; `nutshell-tui` entry point and `textual` dependency removed from `pyproject.toml`; all references cleaned from `ui/cli/main.py` and `README.md`. Web UI is for humans, CLI is for agents.
+- **`entity/openai_agent/`** — new entity extending `agent`, using `openai` provider + `codex-mini-latest` model; enables default agent to spawn Codex as a sub-agent alongside `kimi_agent`
+- **`multi-agent` skill** — entity selection table updated to include `openai_agent`
 
 ### v1.3.37
 - **Agent entity prompt improvements** (v1.1.0) — rewrote `entity/agent/` prompts based on context engineering and agent prompting best practices research
