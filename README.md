@@ -1,4 +1,4 @@
-# Nutshell `v1.3.33`
+# Nutshell `v1.3.34`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -420,6 +420,14 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.34
+- **yisebi agent entity** — new `entity/yisebi/` implementing an opinionated social media commentator ("懂王·行动派") who excels at analyzing trending topics, sharing unique perspectives, and crafting high-value comments across platforms
+- Custom system prompt with 4-phase commentary approach (Scout → Analyze → Write → Engage), platform-specific tone guidance, comment philosophy, and domain strengths
+- New `social-media` skill — comprehensive commentary framework covering topic discovery & source priority, angle-extraction lenses (incentive analysis, second-order effects, historical pattern matching, contrarian check, cross-domain connection), platform-specific writing guides (Twitter/X, Reddit, LinkedIn, 微博/小红书/知乎), engagement playbook, and meta-strategy for building a commentary voice
+- Tools scoped for commentary: bash, web_search, fetch_url (no dev tools like git_checkpoint or spawn_session)
+- On-demand entity (`persistent: false`, `heartbeat_interval: 600`)
+- 57 new tests in `test_entity_yisebi.py`; 604 total
 
 ### v1.3.33
 - **game_player agent entity** — new `entity/game_player/` implementing an elite gaming specialist that speedruns, high-scores, and optimally solves all types of games: text adventures, puzzles, strategy games, code challenges, riddles, and math games

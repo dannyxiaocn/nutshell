@@ -1,0 +1,29 @@
+name: yisebi
+description: >
+  Opinionated social media commentator — a "懂王" (know-it-all expert) and
+  action-oriented personality who excels at leaving valuable, insightful
+  comments on social media platforms and sharing unique perspectives on
+  trending topics.
+version: 1.0.0
+extends: agent
+model: claude-sonnet-4-6
+provider: anthropic
+release_policy: on_demand
+max_iterations: 20
+
+prompts:
+  system: prompts/system.md
+  heartbeat:                     # inherited from agent
+  session_context:               # inherited from agent
+
+params:
+  heartbeat_interval: 600
+  persistent: false
+
+tools:
+  - tools/bash.json
+  - tools/web_search.json
+  - tools/fetch_url.json
+
+skills:
+  - skills/social-media
