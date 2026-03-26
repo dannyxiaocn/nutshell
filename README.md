@@ -1,4 +1,4 @@
-# Nutshell `v1.3.34`
+# Nutshell `v1.3.35`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -76,6 +76,14 @@ nutshell entity new                           # interactive scaffold
 nutshell entity new -n my-agent               # named, interactive parent picker
 nutshell entity new -n my-agent --extends agent   # from specific parent
 nutshell entity new -n my-agent --standalone  # standalone (no inheritance)
+```
+
+### Playground
+
+```bash
+nutshell os                           # launch / resume CLI-OS playground session
+nutshell os 'build me a web server'   # open with a task
+nutshell os --new                     # force a fresh session
 ```
 
 ### Other
@@ -420,6 +428,15 @@ The web UI polls both files via SSE, resuming from the last byte offset on recon
 ---
 
 ## Changelog
+
+### v1.3.35
+- **cli_os agent entity** — new `entity/cli_os/` implementing an immersive CLI-OS playground where the agent is root on a virtual Linux-like machine. Can freely explore, code, build projects, and experiment with any tool available in the shell
+- Custom system prompt with workspace layout (`playground/{projects,tmp,output}/`), personality (curious, creative, hands-on), session continuity guidance, and rules of engagement
+- New `cli-explorer` skill — comprehensive CLI exploration framework covering system discovery, project templates (Python, web server, data pipeline), experimentation patterns (try-and-learn, benchmarking, file processing), workspace management (cleanup, snapshots, git), advanced recipes (background processes, CLI tools, data exploration), and tips & tricks
+- Tools scoped for exploration: bash, fetch_url, web_search, recall_memory, state_diff, app_notify (no dev tools like git_checkpoint or spawn_session)
+- **`nutshell os`** command — launch or resume a CLI-OS playground session. Auto-continues the most recent cli_os session within 24 hours; `--new` forces a fresh session; accepts optional message argument
+- On-demand entity (`persistent: false`, `heartbeat_interval: 600`, `max_iterations: 30`)
+- 68 new tests across `test_entity_cli_os.py` (55) and `test_cli_os_cmd.py` (13); 672 total
 
 ### v1.3.34
 - **yisebi agent entity** — new `entity/yisebi/` implementing an opinionated social media commentator ("懂王·行动派") who excels at analyzing trending topics, sharing unique perspectives, and crafting high-value comments across platforms

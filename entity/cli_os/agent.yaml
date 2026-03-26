@@ -1,0 +1,31 @@
+name: cli_os
+description: >
+  CLI-OS — an immersive Linux-like playground for agents. The agent is root
+  on a virtual machine and can freely explore, code, build projects, and
+  experiment with any tool available in the shell.
+version: 1.0.0
+extends: agent
+model: claude-sonnet-4-6
+provider: anthropic
+release_policy: on_demand
+max_iterations: 30
+
+prompts:
+  system: prompts/system.md
+  heartbeat:                     # inherited from agent
+  session_context:               # inherited from agent
+
+params:
+  heartbeat_interval: 600
+  persistent: false
+
+tools:
+  - tools/bash.json
+  - tools/fetch_url.json
+  - tools/web_search.json
+  - tools/recall_memory.json
+  - tools/state_diff.json
+  - tools/app_notify.json
+
+skills:
+  - skills/cli-explorer
