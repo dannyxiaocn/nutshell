@@ -6,7 +6,7 @@ Usage:
     nutshell new [SESSION_ID] [options]     Create a new session (no message)
     nutshell stop SESSION_ID                Stop a session's heartbeat
     nutshell start SESSION_ID               Resume a stopped session
-    nutshell log [SESSION_ID] [-n N]        Show recent conversation history
+    nutshell log [SESSION_ID] [-n N] [--since T] [--watch]  Show conversation history
     nutshell tasks [SESSION_ID]             Show a session's task board
     nutshell entity new [options]           Scaffold a new entity directory
     nutshell entity log NAME                Show entity version changelog
@@ -371,6 +371,68 @@ def cmd_start(args) -> int:
 
 # ── Subcommand: log ───────────────────────────────────────────────────────────
 
+
+# ── Helpers for --since / --watch ─────────────────────────────────────────────
+
+def _parse_since(value: str) -> float:
+    """Parse a --since value into a UNIX timestamp (float).
+
+    Accepted formats:
+      - 'now'                         → current time
+      - ISO-8601: '2026-03-25T12:00:00' → that moment (local TZ)
+      - UNIX timestamp string: '1742900400' → that epoch
+    Raises ValueError for anything else.
+    """
+    if value == "now":
+        import time
+        return time.time()
+    # Try ISO-8601
+    from datetime import datetime
+    try:
+        dt = datetime.fromisoformat(value)
+        return dt.timestamp()
+    except (ValueError, TypeError):
+        pass
+    # Try bare UNIX timestamp
+    try:
+        ts = float(value)
+        if ts > 1_000_000_000:  # sanity: after 2001
+            return ts
+    except (ValueError, TypeError):
+        pass
+    raise ValueError(f"Cannot parse --since value: {value!r}. Use 'now', an ISO-8601 datetime, or a UNIX timestamp.")
+
+
+def _turn_ts(turn: dict) -> float | None:
+    """Extract UNIX timestamp from a turn/event dict. Returns None if missing."""
+    raw = turn.get("ts")
+    if raw is None:
+        return None
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(raw).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _load_context(path) -> tuple[dict, list]:
+    """Load context.jsonl → (inputs_by_id, turns)."""
+    import json
+    from pathlib import Path
+    lines = [l for l in Path(path).read_text(encoding="utf-8").splitlines() if l.strip()]
+    inputs_by_id: dict[str, dict] = {}
+    turns: list[dict] = []
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("type") == "user_input":
+            inputs_by_id[ev["id"]] = ev
+        elif ev.get("type") == "turn":
+            turns.append(ev)
+    return inputs_by_id, turns
+
 def _add_log_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "log",
@@ -378,9 +440,12 @@ def _add_log_parser(subparsers) -> None:
         description=(
             "Display the last N conversation turns from a session.\n\n"
             "Examples:\n"
-            "  nutshell log                         Show latest session, last 5 turns\n"
-            "  nutshell log 2026-03-25_10-00-00     Specific session, last 5 turns\n"
-            "  nutshell log --n 20                  Latest session, last 20 turns\n"
+            "  nutshell log                                  Show latest session, last 5 turns\n"
+            "  nutshell log 2026-03-25_10-00-00              Specific session\n"
+            "  nutshell log -n 20                            Last 20 turns\n"
+            "  nutshell log --since now                      Bookmark 'now', future calls show new turns only\n"
+            "  nutshell log --since 2026-03-25T12:00:00      Turns after a specific time\n"
+            "  nutshell log --watch                          Poll every 2s for new turns (Ctrl-C to stop)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -388,6 +453,10 @@ def _add_log_parser(subparsers) -> None:
                    help="Session ID (default: most recently active session)")
     p.add_argument("-n", type=int, default=5, dest="num_turns",
                    metavar="N", help="Number of turns to show (default: 5)")
+    p.add_argument("--since", type=str, default=None, metavar="TIMESTAMP",
+                   help="Only show turns after this time (ISO-8601, UNIX epoch, or 'now')")
+    p.add_argument("--watch", action="store_true", default=False,
+                   help="Poll for new turns every 2 seconds (implies --since now if --since not set)")
     p.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE,
                    help=argparse.SUPPRESS)
     p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE,
@@ -433,41 +502,80 @@ def cmd_log(args) -> int:
         print(f"[{session_id}] No conversation history yet.")
         return 0
 
-    lines = [l for l in context_path.read_text(encoding="utf-8").splitlines() if l.strip()]
-    events = []
-    for line in lines:
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            pass
+    # Parse --since threshold
+    since_ts: float | None = None
+    since_raw = getattr(args, "since", None)
+    watch_mode = getattr(args, "watch", False)
 
-    # Group into (user_input, turn) pairs
-    inputs_by_id: dict[str, dict] = {}
-    turns: list[dict] = []
-    for ev in events:
-        if ev.get("type") == "user_input":
-            inputs_by_id[ev["id"]] = ev
-        elif ev.get("type") == "turn":
-            turns.append(ev)
+    if watch_mode and since_raw is None:
+        since_raw = "now"  # --watch implies --since now
 
-    # Show last N turns
-    turns_to_show = turns[-args.num_turns:]
+    if since_raw is not None:
+        since_ts = _parse_since(since_raw)
+
+    if watch_mode:
+        return _watch_log(args, session_id, context_path, since_ts)
+
+    # Single-shot mode
+    inputs_by_id, turns = _load_context(context_path)
+
+    if since_ts is not None:
+        turns = [t for t in turns if (_turn_ts(t) or 0) > since_ts]
+
+    # Apply -n limit (only when not using --since)
+    if since_ts is None:
+        turns_to_show = turns[-args.num_turns:]
+    else:
+        turns_to_show = turns  # show ALL turns after --since
+
     if not turns_to_show:
-        # Show any unpaired user_inputs
-        recent_inputs = list(inputs_by_id.values())[-args.num_turns:]
-        if recent_inputs:
-            print(f"[{session_id}] — pending (no agent response yet)")
-            print("─" * 60)
-            for inp in recent_inputs:
-                ts = inp.get("ts", "")[:16].replace("T", " ")
-                print(f"  USER  {ts}  {inp.get('content', '')}")
+        if since_ts is not None:
+            print(f"[{session_id}] No new turns since {since_raw}.")
         else:
-            print(f"[{session_id}] No conversation history yet.")
+            # Show any unpaired user_inputs
+            recent_inputs = list(inputs_by_id.values())[-args.num_turns:]
+            if recent_inputs:
+                print(f"[{session_id}] — pending (no agent response yet)")
+                print("─" * 60)
+                for inp in recent_inputs:
+                    ts = inp.get("ts", "")[:16].replace("T", " ")
+                    print(f"  USER  {ts}  {inp.get('content', '')}")
+            else:
+                print(f"[{session_id}] No conversation history yet.")
         return 0
 
-    print(f"[{session_id}] last {len(turns_to_show)} turn(s)")
+    print(f"[{session_id}] {len(turns_to_show)} turn(s)" + (f" since {since_raw}" if since_ts else ""))
     print("─" * 60)
-    for turn in turns_to_show:
+    _print_turns(turns_to_show, inputs_by_id)
+    return 0
+
+
+def _watch_log(args, session_id: str, context_path, since_ts: float) -> int:
+    """Poll context.jsonl for new turns every 2 seconds."""
+    import time
+
+    cursor = since_ts
+    print(f"[{session_id}] watching for new turns (Ctrl-C to stop) …")
+    try:
+        while True:
+            if context_path.exists():
+                inputs_by_id, turns = _load_context(context_path)
+                new_turns = [t for t in turns if (_turn_ts(t) or 0) > cursor]
+                if new_turns:
+                    _print_turns(new_turns, inputs_by_id)
+                    # Advance cursor to latest turn
+                    latest = max((_turn_ts(t) or 0) for t in new_turns)
+                    if latest > cursor:
+                        cursor = latest
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print("\n[watch stopped]")
+        return 0
+
+
+def _print_turns(turns: list[dict], inputs_by_id: dict[str, dict]) -> None:
+    """Print a list of turns with their associated user inputs."""
+    for turn in turns:
         uid = turn.get("user_input_id")
         user_ev = inputs_by_id.get(uid) if uid else None
         ts = (user_ev or turn).get("ts", "")[:16].replace("T", " ")
@@ -500,8 +608,6 @@ def cmd_log(args) -> int:
                 parts.append(f"📦{usage['cache_read']}")
             print(f"         {'  '.join(parts)}")
         print()
-
-    return 0
 
 
 # ── Subcommand: token-report ──────────────────────────────────────────────────
