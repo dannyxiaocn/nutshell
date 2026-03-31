@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +27,21 @@ def _write_if_absent(path: Path, content: str) -> None:
         path.write_text(content, encoding="utf-8")
 
 
+def _create_session_venv(session_dir: Path) -> Path:
+    """Create a Python venv at session_dir/.venv (idempotent).
+
+    Uses --system-site-packages so all globally installed packages are
+    available without re-installing.  Returns the venv path.
+    """
+    venv_path = session_dir / ".venv"
+    if venv_path.exists():
+        return venv_path
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(venv_path)],
+        check=True,
+        capture_output=True,
+    )
+    return venv_path
 
 
 def _load_entity_params(entity_dir: Path) -> dict:
@@ -86,6 +103,9 @@ def init_session(
     events_path = system_dir / "events.jsonl"
     context_path.touch(exist_ok=True)
     events_path.touch(exist_ok=True)
+
+    # Create session-level Python venv (idempotent)
+    _create_session_venv(session_dir)
 
     # Write manifest (always overwritten so entity is current)
     manifest = {

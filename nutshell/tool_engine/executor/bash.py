@@ -28,6 +28,23 @@ from nutshell.tool_engine.sandbox import check_blocked
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mGKHF]")
 _MAX_OUTPUT = 10_000
 
+_REPO_ROOT = Path(__file__).parent.parent.parent.parent
+
+
+def _venv_env() -> dict[str, str] | None:
+    """Build an env dict with session venv activated, or None if no venv."""
+    session_id = os.environ.get("NUTSHELL_SESSION_ID", "")
+    if not session_id:
+        return None
+    venv_path = _REPO_ROOT / "sessions" / session_id / ".venv"
+    if not venv_path.is_dir():
+        return None
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(venv_path)
+    env["PATH"] = str(venv_path / "bin") + ":" + env.get("PATH", "")
+    env.pop("PYTHONHOME", None)
+    return env
+
 
 # ── subprocess mode ────────────────────────────────────────────────────────────
 
@@ -37,11 +54,13 @@ async def _run_subprocess(
     workdir: str | None,
     max_output: int,
 ) -> str:
+    env = _venv_env()
     proc = await asyncio.create_subprocess_shell(
         command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=workdir,
+        env=env,
     )
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -86,6 +105,7 @@ def _run_pty_sync(command: str, timeout: float, workdir: str | None, max_output:
                 break  # EIO after slave closed, or master_fd was force-closed
         read_done.set()
 
+    env = _venv_env()
     try:
         proc = subprocess.Popen(
             ["bash", "-c", command],
@@ -94,6 +114,7 @@ def _run_pty_sync(command: str, timeout: float, workdir: str | None, max_output:
             stderr=slave_fd,
             close_fds=True,
             cwd=workdir,
+            env=env,
         )
         os.close(slave_fd)
 
