@@ -1,7 +1,7 @@
 """Nutshell WeChat Bridge.
 
 Bridges WeChat (via ilink bot API) to a Nutshell session.
-Reads token from ~/.openclaw/state/openclaw-weixin/accounts/ (requires OpenClaw QR login).
+Reads token from ~/.openclaw/openclaw-weixin/accounts/ (requires OpenClaw QR login).
 Runs as an asyncio background task alongside the FastAPI web server.
 
 Supported WeChat commands (send as message text):
@@ -24,8 +24,7 @@ from pathlib import Path
 
 import httpx
 
-_OPENCLAW_STATE_DIR = Path.home() / ".openclaw" / "state"
-_WEIXIN_STATE_DIR = _OPENCLAW_STATE_DIR / "openclaw-weixin"
+_WEIXIN_STATE_DIR = Path.home() / ".openclaw" / "openclaw-weixin"
 _WEIXIN_ACCOUNTS_INDEX = _WEIXIN_STATE_DIR / "accounts.json"
 _WEIXIN_ACCOUNTS_DIR = _WEIXIN_STATE_DIR / "accounts"
 
@@ -379,7 +378,7 @@ class WeixinBridge:
     # ── Main polling loop ────────────────────────────────────────────────────
 
     async def _run(self) -> None:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             while True:
                 try:
                     data = await self._get_updates(client)
