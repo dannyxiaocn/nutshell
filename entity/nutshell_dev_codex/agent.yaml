@@ -1,0 +1,8 @@
+name: nutshell_dev_codex
+description: Development assistant with nutshell project context, powered by OpenAI Codex (gpt-5.4). Extends nutshell_dev with codex model override.
+version: 1.0.0
+model: gpt-5.4
+provider: openai
+extends: nutshell_dev
+release_policy: persistent
+max_iterations: 20
