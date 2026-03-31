@@ -480,6 +480,32 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 `git_checkpoint` output now includes a role tag: `Committed abc1234: message [git:master]` or `[git:sub]`.
 
 
+## Agent's Perspective for Improving Nutshell
+
+> This section is maintained by nutshell_dev and other agents running inside Nutshell.
+> Anything surprising, frustrating, or worth improving gets recorded here.
+
+### Observability & Debugging
+- **No tool result visibility in web UI**: tool calls are now rendered nicely (v1.3.42), but tool *results* (what the tool returned) are never shown. When a bash command errors or returns unexpected output, there's no way to see it in the web UI without checking `context.jsonl` manually.
+- **Token report only accessible via CLI**: `nutshell token-report` is useful but not exposed in the web UI. A small token cost summary per session in the sidebar would help spot runaway sessions early.
+- **No way to view `core/memory.md` from the web UI**: agents update memory but there's no in-browser way to inspect it. Reading it requires SSH/terminal.
+
+### Agent Experience
+- **`send_to_session` timeout is silent on expiry**: when the target session doesn't respond within `timeout` seconds, the tool returns an error string but gives no indication of whether the message was received. A "delivered but no reply yet" vs "not delivered" distinction would help.
+- **No streaming tool results**: tool calls appear immediately (streaming), but there's no way to stream *partial output* from a long-running bash command. The agent can't see incremental output either — it only gets the full result when the command finishes.
+- **Memory layer truncation is invisible to the agent**: when `memory_layers` >60 lines are truncated in the system prompt, the agent only gets a bash hint. It's easy to forget that a layer was truncated and act on stale context.
+
+### System Reliability
+- **Playground push fails to non-bare remotes**: nutshell_dev always hits `receive.denyCurrentBranch` when pushing back to the origin repo from the playground clone. Requires the orchestrating Claude Code to `git fetch` + merge manually. Either making the origin bare or using a different push strategy would eliminate this friction.
+- **Session venv creation can be slow on first start**: `_create_session_venv()` runs `python -m venv --system-site-packages` synchronously during session init, which blocks the startup. Could be deferred or run in a background thread.
+
+### Missing Capabilities
+- **No way to cancel an in-flight tool call**: if a bash command runs for too long, the agent has no mechanism to interrupt it mid-flight. The session can be stopped, but that kills everything.
+- **No structured output / typed tool responses**: tools return free-form strings. A structured result format (e.g. `{ok: bool, output: str, error?: str}`) would let agents reason more reliably about success vs failure.
+- **No inter-session shared filesystem namespace**: sessions can communicate via `send_to_session`, but can't easily share files. A `shared/` directory visible to all sessions of the same entity would be useful for passing large artifacts without copying through messages.
+
+---
+
 ## Changelog
 
 ### v1.3.42
