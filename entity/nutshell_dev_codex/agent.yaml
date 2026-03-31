@@ -1,8 +1,8 @@
 name: nutshell_dev_codex
-description: Development assistant with nutshell project context, powered by OpenAI Codex (gpt-5.4). Extends nutshell_dev with codex model override.
-version: 1.0.0
-model: gpt-5.4
-provider: openai
+description: Development assistant with nutshell project context. Uses kimi-for-coding (fallback from gpt-5.4 due to quota). Extends nutshell_dev.
+version: 1.0.1
+model: kimi-for-coding
+provider: kimi-coding-plan
 extends: nutshell_dev
 release_policy: persistent
 max_iterations: 20
