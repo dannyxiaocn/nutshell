@@ -169,11 +169,17 @@ def init_session(
         if not (core_dir / "params.json").exists():
             from nutshell.llm_engine.registry import provider_name as pname
             entity_provider = pname(agent._provider) or "anthropic"
+            extra: dict = {}
+            if getattr(agent, "fallback_model", ""):
+                extra["fallback_model"] = agent.fallback_model
+            if getattr(agent, "_fallback_provider_str", ""):
+                extra["fallback_provider"] = agent._fallback_provider_str
             write_session_params(
                 session_dir,
                 heartbeat_interval=effective_heartbeat,
                 model=agent.model,
                 provider=entity_provider,
+                **extra,
                 **entity_params,
             )
         else:

@@ -3,9 +3,11 @@
 
 name: agent
 description: A general-purpose assistant with basic capabilities.
-version: 1.1.0
-model: kimi-for-coding
-provider: kimi-coding-plan
+version: 1.1.1
+model: gpt-5.4
+provider: codex-oauth
+fallback_model: kimi-for-coding
+fallback_provider: kimi-coding-plan
 release_policy: persistent
 max_iterations: 20
 

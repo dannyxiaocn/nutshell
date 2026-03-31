@@ -58,6 +58,8 @@ class Agent(BaseAgent):
         max_iterations: int = 20,
         heartbeat_prompt: str = "",
         session_context_template: str = "",
+        fallback_model: str = "",
+        fallback_provider: str = "",
     ) -> None:
         self.system_prompt = system_prompt
         self.tools: list[Tool] = tools or []
@@ -68,6 +70,9 @@ class Agent(BaseAgent):
         self.heartbeat_prompt = heartbeat_prompt
         self.session_context_template = session_context_template
         self._provider = provider
+        self.fallback_model = fallback_model
+        self._fallback_provider_str = fallback_provider
+        self._fallback_provider: Provider | None = None
         self._history: list[Message] = []
         # Runtime-injectable fields — set by Session before each activation.
         # Not constructor params; Session owns the values, Agent owns the rendering.
@@ -86,6 +91,14 @@ class Agent(BaseAgent):
             from nutshell.llm_engine.providers.anthropic import AnthropicProvider
             self._provider = AnthropicProvider()
         return self._provider
+
+    def _get_fallback_provider(self) -> "Provider | None":
+        if not self._fallback_provider_str and not self.fallback_model:
+            return None
+        if self._fallback_provider is None and self._fallback_provider_str:
+            from nutshell.llm_engine.registry import resolve_provider
+            self._fallback_provider = resolve_provider(self._fallback_provider_str)
+        return self._fallback_provider
 
     # Memory layers longer than this many lines are truncated in the prompt.
     # The agent reads the full layer on demand via bash: cat core/memory/<name>.md
@@ -195,18 +208,38 @@ class Agent(BaseAgent):
             self.provider, "_supports_cache_control", False
         )
 
+        active_provider = self.provider
+        active_model = self.model
+
         iterations = 0
         for _ in range(self.max_iterations):
             iterations += 1
-            content, tool_calls, turn_usage = await self.provider.complete(
-                messages=messages,
-                tools=self.tools,
-                system_prompt=system_dynamic,
-                model=self.model,
-                on_text_chunk=on_text_chunk,
-                cache_system_prefix=system_prefix,
-                cache_last_human_turn=_cache_history,
-            )
+            try:
+                content, tool_calls, turn_usage = await active_provider.complete(
+                    messages=messages,
+                    tools=self.tools,
+                    system_prompt=system_dynamic,
+                    model=active_model,
+                    on_text_chunk=on_text_chunk,
+                    cache_system_prefix=system_prefix,
+                    cache_last_human_turn=_cache_history,
+                )
+            except Exception as primary_exc:
+                fb_provider = self._get_fallback_provider()
+                if fb_provider is None or active_provider is fb_provider:
+                    raise
+                print(f"[agent] Primary provider failed ({primary_exc}), switching to fallback")
+                active_provider = fb_provider
+                active_model = self.fallback_model or active_model
+                content, tool_calls, turn_usage = await active_provider.complete(
+                    messages=messages,
+                    tools=self.tools,
+                    system_prompt=system_dynamic,
+                    model=active_model,
+                    on_text_chunk=on_text_chunk,
+                    cache_system_prefix=system_prefix,
+                    cache_last_human_turn=_cache_history,
+                )
             total_usage = total_usage + turn_usage
             # Only stream the first completion; subsequent rounds (tool loops)
             # don't stream since the user only cares about the final text.

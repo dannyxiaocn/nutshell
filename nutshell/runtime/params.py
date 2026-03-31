@@ -5,6 +5,8 @@ DEFAULT_PARAMS: dict = {
     "heartbeat_interval": 600.0,
     "model": None,          # None → use agent.yaml default
     "provider": None,       # None → use Anthropic
+    "fallback_model": None,     # Optional fallback model if primary fails
+    "fallback_provider": None,  # Optional fallback provider if primary fails
     "tool_providers": {"web_search": "brave"},  # web_search: "brave" | "tavily"
     "persistent": False,    # True → tick() fires even when tasks.md is empty
     "default_task": None,   # prompt used when persistent=True and tasks.md is empty

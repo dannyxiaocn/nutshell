@@ -104,6 +104,14 @@ class AgentLoader(BaseLoader[Agent]):
                 pass
         provider_str = provider_str or "anthropic"
 
+        fallback_model = manifest.get("fallback_model", "")
+        fallback_provider = manifest.get("fallback_provider", "")
+        # Inherit fallback from parent if not overridden
+        if not fallback_model and parent is not None:
+            fallback_model = getattr(parent, "fallback_model", "") or ""
+        if not fallback_provider and parent is not None:
+            fallback_provider = getattr(parent, "_fallback_provider_str", "") or ""
+
         agent = Agent(
             system_prompt=system_prompt,
             tools=tools,
@@ -113,6 +121,8 @@ class AgentLoader(BaseLoader[Agent]):
             max_iterations=manifest.get("max_iterations", 20),
             heartbeat_prompt=heartbeat_prompt,
             session_context_template=session_context_template,
+            fallback_model=fallback_model,
+            fallback_provider=fallback_provider,
         )
 
         try:

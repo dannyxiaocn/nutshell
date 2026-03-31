@@ -161,7 +161,14 @@ class SessionWatcher:
                 provider_str = (params.get("provider") or "anthropic").lower()
                 provider = resolve_provider(provider_str)
                 model = params.get("model") or None
-                agent = Agent(provider=provider, **({"model": model} if model else {}))
+                agent_kwargs: dict = {}
+                if model:
+                    agent_kwargs["model"] = model
+                if params.get("fallback_model"):
+                    agent_kwargs["fallback_model"] = params["fallback_model"]
+                if params.get("fallback_provider"):
+                    agent_kwargs["fallback_provider"] = params["fallback_provider"]
+                agent = Agent(provider=provider, **agent_kwargs)
         except Exception as exc:
             print(f"[server] Failed to create agent for {session_id}: {exc}")
             # Mark as stopped so the watcher doesn't retry indefinitely
