@@ -43,13 +43,18 @@ def _append_jsonl(path: Path, event: dict) -> None:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
-def _send_message(ctx_path: Path, content: str) -> str:
-    """Write user_input to context.jsonl, return msg_id."""
+def _send_message(ctx_path: Path, content: str, *, caller: str = "human") -> str:
+    """Write user_input to context.jsonl, return msg_id.
+
+    Args:
+        caller: "human" (interactive terminal) or "agent" (programmatic/pipe).
+    """
     msg_id = str(uuid.uuid4())
     _append_jsonl(ctx_path, {
         "type": "user_input",
         "content": content,
         "id": msg_id,
+        "caller": caller,
         "ts": datetime.now().isoformat(),
     })
     return msg_id
@@ -123,7 +128,8 @@ def _continue_session(
         return 1
 
     ctx_path = system_dir / "context.jsonl"
-    msg_id = _send_message(ctx_path, message)
+    caller = "human" if sys.stdin.isatty() else "agent"
+    msg_id = _send_message(ctx_path, message, caller=caller)
 
     if no_wait:
         return 0
@@ -228,7 +234,8 @@ def _new_session(
         return 1
 
     ctx_path = session.system_dir / "context.jsonl"
-    msg_id = _send_message(ctx_path, message)
+    caller = "human" if sys.stdin.isatty() else "agent"
+    msg_id = _send_message(ctx_path, message, caller=caller)
 
     if no_wait:
         print(f"Session: {session_id}")

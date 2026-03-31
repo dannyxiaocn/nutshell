@@ -254,8 +254,12 @@ class Session:
 
     # ── Activation ────────────────────────────────────────────────
 
-    async def chat(self, message: str, *, user_input_id: str | None = None) -> AgentResult:
-        """Run agent with user message. Holds agent lock — blocks heartbeat tick."""
+    async def chat(self, message: str, *, user_input_id: str | None = None, caller_type: str = "human") -> AgentResult:
+        """Run agent with user message. Holds agent lock — blocks heartbeat tick.
+
+        Args:
+            caller_type: "human" or "agent" — passed to Agent.run() for prompt adaptation.
+        """
         old_len = len(self._agent._history)
         self._set_model_status("running", "user")
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
@@ -267,6 +271,7 @@ class Session:
                     message,
                     on_text_chunk=on_chunk,
                     on_tool_call=tool_call_cb,
+                    caller_type=caller_type,
                 )
         except BaseException:
             self._set_model_status("idle", "user")
@@ -434,8 +439,15 @@ class Session:
         write_session_status(self.system_dir, pid=os.getpid())
 
     def _clear_pid(self) -> None:
-        """Clear PID from status.json when daemon stops."""
+        """Clear PID from status.json when daemon stops. Release git master claims."""
         write_session_status(self.system_dir, pid=None)
+        # Release any git master registrations held by this session
+        try:
+            from nutshell.runtime.git_coordinator import GitCoordinator
+            coordinator = GitCoordinator(system_base=self._system_base)
+            coordinator.release(self._session_id)
+        except Exception:
+            pass  # best-effort cleanup
 
     # ── Server loop ────────────────────────────────────────────────
 
@@ -493,6 +505,7 @@ class Session:
                 for msg in inputs:
                     content = msg.get("content", "")
                     msg_id = msg.get("id")
+                    caller_type = msg.get("caller", "human")
                     # User message wakes a stopped session
                     if self.is_stopped():
                         self.set_status("active")
@@ -501,7 +514,7 @@ class Session:
                     # (e.g., a heartbeat prompt interrupted mid-run)
                     content = self._reshape_history(content)
                     try:
-                        await self.chat(content, user_input_id=msg_id)
+                        await self.chat(content, user_input_id=msg_id, caller_type=caller_type)
                     except Exception as exc:
                         self._append_event({"type": "error", "content": str(exc)})
                     finally:

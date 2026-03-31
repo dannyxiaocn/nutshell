@@ -72,6 +72,7 @@ class Agent(BaseAgent):
         # Runtime-injectable fields — set by Session before each activation.
         # Not constructor params; Session owns the values, Agent owns the rendering.
         self.memory: str = ""
+        self.caller_type: str = "human"  # "human" or "agent" — set per-run
         # Extra named memory layers from core/memory/*.md, sorted by filename.
         # Each entry is (label, content) where label is the .md file stem.
         self.memory_layers: list[tuple[str, str]] = []
@@ -133,6 +134,20 @@ class Agent(BaseAgent):
                 notif_parts.append(f"### {app_name}\n\n{app_content}")
             dynamic_parts.append("\n\n---\n## App Notifications\n\n" + "\n\n".join(notif_parts))
 
+        # Agent-mode structured reply guidance
+        if getattr(self, "caller_type", "human") == "agent":
+            agent_guidance = (
+                "\n\n---\n"
+                "## Agent Collaboration Mode\n\n"
+                "Your caller is another agent (not a human). Structure your final reply using one of these prefixes:\n\n"
+                "- **[DONE]** — task completed successfully. Summarise what was accomplished.\n"
+                "- **[REVIEW]** — work finished but needs human review before proceeding.\n"
+                "- **[BLOCKED]** — cannot proceed; explain what is needed.\n"
+                "- **[ERROR]** — an unrecoverable error occurred; include diagnostics.\n\n"
+                "Always start your final reply with exactly one prefix. Keep the reply concise and machine-parseable."
+            )
+            dynamic_parts.append(agent_guidance)
+
         skills_block = build_skills_block(self.skills)
         if skills_block:
             dynamic_parts.append(skills_block)
@@ -155,15 +170,18 @@ class Agent(BaseAgent):
         clear_history: bool = False,
         on_text_chunk: Callable[[str], None] | None = None,
         on_tool_call: Callable[[str, dict], None] | None = None,
+        caller_type: str = "human",
     ) -> AgentResult:
         """Run the agent with the given input and return an AgentResult.
 
         Args:
             input: The user message to send.
             clear_history: If True, clears conversation history before this run.
+            caller_type: "human" or "agent" — affects system prompt guidance.
         """
         if clear_history:
             self._history = []
+        self.caller_type = caller_type
 
         from nutshell.core.types import TokenUsage as _TokenUsage
         system_prefix, system_dynamic = self._build_system_parts()

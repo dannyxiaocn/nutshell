@@ -1,4 +1,4 @@
-# Nutshell `v1.3.38`
+# Nutshell `v1.3.39`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -426,8 +426,50 @@ All IPC is file-based. Two append-only logs per session in `_sessions/<id>/`:
 The web UI polls both files via SSE, resuming from the last byte offset on reconnect.
 
 ---
+---
+
+## Agent Collaboration Mode
+
+When one agent calls another (via `send_to_session` or piped CLI), the system automatically detects the caller type and adapts behaviour.
+
+### Caller Detection
+
+Every `user_input` event in `context.jsonl` carries a `caller` field:
+
+| Source | `caller` value | How detected |
+|--------|---------------|--------------|
+| Interactive terminal | `"human"` | `sys.stdin.isatty()` in CLI |
+| Piped/scripted CLI | `"agent"` | `sys.stdin.isatty()` returns False |
+| `send_to_session` tool | `"agent"` | Always — agent-to-agent messaging |
+
+When `caller` is `"agent"`, the system prompt is extended with **structured reply guidance** requiring the agent to prefix its final reply with one of:
+
+- **`[DONE]`** — task completed successfully
+- **`[REVIEW]`** — work finished but needs human review
+- **`[BLOCKED]`** — cannot proceed; explains what is needed
+- **`[ERROR]`** — unrecoverable error with diagnostics
+
+This makes agent replies machine-parseable for the calling agent.
+
+### Git Master Node
+
+When multiple agent sessions work on the same git repository, a **master/sub** coordination protocol prevents conflicts:
+
+- **Registry**: `_sessions/git_masters.json` maps each git remote URL to a master session
+- **First session wins**: the first session to `git_checkpoint` a repo becomes master
+- **Stale reclamation**: if the master session's PID is no longer running, a new session can claim master
+- **Auto-release**: when a session daemon stops, it releases all master claims
+
+`git_checkpoint` output now includes a role tag: `Committed abc1234: message [git:master]` or `[git:sub]`.
+
 
 ## Changelog
+
+### v1.3.39
+- **Agent Collaboration Mode** — two-part feature for multi-agent workflows:
+  - **Caller detection**: `user_input` events carry `caller` field (`"human"` or `"agent"`). CLI uses `sys.stdin.isatty()`; `send_to_session` always writes `"agent"`. When caller is an agent, system prompt injects structured reply guidance (`[DONE]`/`[REVIEW]`/`[BLOCKED]`/`[ERROR]` prefixes).
+  - **Git Master Node**: `GitCoordinator` class in `nutshell/runtime/git_coordinator.py` assigns master/sub roles per git remote URL. Registry at `_sessions/git_masters.json`. `git_checkpoint` output includes `[git:master]` or `[git:sub]` tag. Stale masters (dead PID) are auto-reclaimed. Session cleanup releases master claims.
+- 35 new tests (`test_caller_detection.py`, `test_git_coordinator.py`); 732 total.
 
 ### v1.3.38
 - **TUI removed** — `ui/tui.py` deleted; `nutshell-tui` entry point and `textual` dependency removed from `pyproject.toml`; all references cleaned from `ui/cli/main.py` and `README.md`. Web UI is for humans, CLI is for agents.

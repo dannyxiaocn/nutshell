@@ -95,4 +95,14 @@ async def git_checkpoint(
             summary = f"  ({line.strip()})"
             break
 
-    return f"Committed {short_hash}: {message}{summary}"
+    # Git coordinator: determine master/sub role for multi-agent workflows
+    role_tag = ""
+    try:
+        from nutshell.runtime.git_coordinator import GitCoordinator
+        coordinator = GitCoordinator(system_base=_REPO_ROOT / "_sessions")
+        role = coordinator.register(cwd, session_id)
+        role_tag = f" [git:{role}]"
+    except Exception:
+        pass  # coordinator is best-effort; don't break commits
+
+    return f"Committed {short_hash}: {message}{summary}{role_tag}"

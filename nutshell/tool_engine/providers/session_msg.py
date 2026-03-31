@@ -56,6 +56,7 @@ async def send_to_session(
         "type": "user_input",
         "content": message,
         "id": msg_id,
+        "caller": "agent",
         "ts": datetime.now().isoformat(),
     })
 
