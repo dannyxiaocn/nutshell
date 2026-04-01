@@ -34,6 +34,10 @@ _LONG_POLL_TIMEOUT = 38.0   # slightly above server's 35-second timeout
 _REPLY_TIMEOUT = 120.0       # max seconds to wait for agent reply
 
 
+def _is_meta_session_id(session_id: str | None) -> bool:
+    return bool(session_id) and str(session_id).endswith("_meta")
+
+
 def _wechat_uin() -> str:
     """Base64-encoded random uint32 for X-WECHAT-UIN header."""
     return base64.b64encode(struct.pack(">I", int.from_bytes(os.urandom(4), "big"))).decode()
@@ -141,6 +145,8 @@ class WeixinBridge:
         best_ts = ""
         for d in self._sys_dir.iterdir():
             if not d.is_dir() or not (d / "manifest.json").exists():
+                continue
+            if _is_meta_session_id(d.name):
                 continue
             try:
                 st = json.loads((d / "status.json").read_text())
@@ -277,6 +283,8 @@ class WeixinBridge:
         elif cmd == "/switch":
             if not arg:
                 reply = "用法: /switch <session-id>"
+            elif _is_meta_session_id(arg):
+                reply = "⚠️ 微信不能连接到 meta session"
             elif not (self._sys_dir / arg).exists():
                 reply = f"⚠️ Session '{arg}' 不存在"
             else:
@@ -313,6 +321,8 @@ class WeixinBridge:
         result = []
         for d in self._sys_dir.iterdir():
             if not d.is_dir() or not (d / "manifest.json").exists():
+                continue
+            if _is_meta_session_id(d.name):
                 continue
             try:
                 st = json.loads((d / "status.json").read_text())
@@ -351,6 +361,14 @@ class WeixinBridge:
                 "⚠️ 没有活跃 session。\n发送 /new 创建，或 /sessions 查看已有 session。",
                 ctx_token,
             )
+            return
+        if _is_meta_session_id(self._current_session):
+            await self._send_text(
+                client, from_user,
+                "⚠️ 微信不能直接和 meta session 对话。",
+                ctx_token,
+            )
+            self._current_session = None
             return
 
         sys_dir = self._sys_dir / self._current_session

@@ -12,9 +12,20 @@
     --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
     --border: #30363d; --accent: #58a6ff; --green: #3fb950;
     --yellow: #d29922; --red: #f85149; --text: #c9d1d9; --muted: #8b949e;
+    --dimmed: #6e7681;
+    --ui-font: "SF Mono", "Fira Code", ui-monospace, Menlo, monospace;
+    --scroll-track: #11161d;
+    --scroll-thumb: #2d3742;
+    --scroll-thumb-hover: #3b4754;
   }
 
-  body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; height: 100vh; display: flex; flex-direction: column; }
+  body { background: var(--bg); color: var(--text); font-family: var(--ui-font); font-size: 13px; height: 100vh; display: flex; flex-direction: column; }
+  * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) var(--scroll-track); }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: var(--scroll-track); }
+  *::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 999px; border: 2px solid var(--scroll-track); }
+  *::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+  *::-webkit-scrollbar-corner { background: var(--scroll-track); }
 
   /* Header */
   #header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; gap: 12px; }
@@ -25,12 +36,11 @@
   #server-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   #server-indicator.on #server-dot { background: var(--green); }
   #server-indicator.off #server-dot { background: var(--red); }
-  #weixin-indicator { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: var(--muted); cursor: default; }
+  #weixin-indicator { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: var(--muted); cursor: default; }
   #weixin-indicator.running { border-color: rgba(63, 185, 80, 0.45); color: #b8f3c0; background: rgba(63, 185, 80, 0.12); }
   #weixin-indicator.error, #weixin-indicator.no_account { border-color: rgba(248, 81, 73, 0.45); color: #ffb7b1; background: rgba(248, 81, 73, 0.12); }
-  #weixin-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-  #weixin-indicator.running #weixin-dot { background: var(--green); animation: pulse-dot 1.5s ease-in-out infinite; }
-  #weixin-indicator.error #weixin-dot, #weixin-indicator.no_account #weixin-dot { background: var(--red); }
+  #weixin-indicator.stopped { border-color: rgba(210, 153, 34, 0.45); color: #f4d48c; background: rgba(210, 153, 34, 0.12); }
+  #weixin-glyph { font-size: 12px; line-height: 1; opacity: 0.9; }
   #header-meta { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   #session-name { font-size: 11px; color: var(--muted); }
   #session-indicator { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: var(--muted); }
@@ -53,7 +63,7 @@
   #tasks-panel { width: 240px; background: var(--bg2); border-left: 1px solid var(--border); display: flex; flex-direction: column; }
 
   /* Sidebar */
-  .panel-header { padding: 10px 12px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .panel-header { padding: 10px 12px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-family: var(--ui-font); }
   #session-list { flex: 1; overflow-y: auto; }
   .session-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background 0.1s; }
   .session-item:hover { background: var(--bg3); }
@@ -64,6 +74,7 @@
   .dot.running { background: var(--green); animation: pulse-dot 1.5s ease-in-out infinite; }
   .dot.napping { background: var(--yellow); animation: pulse-dot 2.5s ease-in-out infinite; }
   .dot.stopped { background: var(--red); }
+  .dot.meta { background: #a371f7; }
   .dot.idle { background: var(--muted); }
   #new-btn { margin: 10px 10px 0; padding: 6px 10px; background: var(--accent); color: #000; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
   #new-btn:hover { opacity: 0.85; }
@@ -126,7 +137,15 @@
   .msg.agent th, .msg.agent td { border: 1px solid var(--border); padding: 4px 8px; }
   .msg.agent th { background: var(--bg2); }
   .msg.agent a { color: var(--accent); }
-  .msg.user p { margin: 0; }
+  .msg.user p { margin: 0.4em 0; }
+  .msg.user p:first-child { margin-top: 0; }
+  .msg.user p:last-child { margin-bottom: 0; }
+  .msg.user code { background: rgba(0, 0, 0, 0.18); padding: 1px 5px; border-radius: 3px; font-family: inherit; font-size: 12px; }
+  .msg.user pre { background: rgba(0, 0, 0, 0.18); padding: 8px 10px; border-radius: 4px; overflow-x: auto; margin: 6px 0; }
+  .msg.user pre code { padding: 0; background: none; }
+  .msg.user ul, .msg.user ol { margin: 0.4em 0 0.4em 1.4em; }
+  .msg.user li { margin: 0.2em 0; }
+  .msg.user a { color: #9ed0ff; }
 
   /* Input */
   #input-row { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; background: var(--bg2); }
@@ -136,15 +155,30 @@
   #send-btn:hover { opacity: 0.85; }
 
   /* Tasks */
-  #tasks-content { flex: 1; padding: 10px 12px; overflow-y: auto; white-space: pre-wrap; font-size: 12px; color: var(--text); line-height: 1.6; }
-  #tasks-edit { display: none; flex-direction: column; flex: 1; padding: 8px; gap: 6px; }
-  #tasks-textarea { flex: 1; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px; font-family: inherit; font-size: 12px; resize: none; outline: none; }
+  #tasks-panel { width: 320px; background: var(--bg2); border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+  #panel-tabs { display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .panel-tab { padding: 5px 8px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; font-family: var(--ui-font); letter-spacing: 0.01em; }
+  .panel-tab.active { color: var(--text); background: var(--bg3); border-color: var(--accent); }
+  .panel-page { display: none; flex: 1; min-height: 0; }
+  .panel-page.active { display: flex; flex-direction: column; }
+  .panel-view { flex: 1; padding: 14px 16px; overflow-y: auto; white-space: pre-wrap; font-size: 13px; color: var(--text); line-height: 1.7; font-family: var(--ui-font); }
+  .panel-edit { display: none; flex-direction: column; flex: 1; padding: 8px; gap: 6px; }
+  .panel-textarea { flex: 1; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: var(--ui-font); font-size: 12px; resize: none; outline: none; line-height: 1.65; }
+  .panel-actions { display: flex; gap: 6px; }
+  .panel-actions button { padding: 4px 10px; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .panel-actions button:hover { color: var(--text); border-color: var(--muted); }
+  .panel-actions button:first-child { background: var(--green); color: #000; border-color: rgba(63, 185, 80, 0.5); }
   #tasks-save { padding: 4px 10px; background: var(--green); color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
   #tasks-cancel { padding: 4px 10px; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 12px; }
-  .tasks-actions { display: flex; gap: 6px; }
   #tasks-edit-btn { cursor: pointer; font-size: 11px; color: var(--muted); border: none; background: none; }
   #tasks-edit-btn:hover { color: var(--accent); }
   #tasks-footer { padding: 5px 12px; border-top: 1px solid var(--border); text-align: right; font-size: 10px; color: var(--muted); }
+  .config-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 10px; white-space: normal; }
+  .config-key { color: var(--muted); font-family: var(--ui-font); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding-top: 2px; }
+  .config-value { word-break: break-word; }
+  .config-empty { color: var(--muted); font-style: italic; }
+  .danger-btn { color: #ffb7b1; border-color: rgba(248, 81, 73, 0.45); }
+  .danger-btn:hover { color: var(--red); border-color: var(--red); }
 </style>
 </head>
 <body>
@@ -156,7 +190,7 @@
     <span id="server-state">server off</span>
   </div>
   <div id="weixin-indicator" class="idle" title="WeChat bridge status">
-    <span id="weixin-dot"></span>
+    <span id="weixin-glyph">〰</span>
     <span id="weixin-state">微信</span>
   </div>
   <div id="header-meta">
@@ -179,6 +213,7 @@
     <div class="session-controls">
       <button class="ctrl-btn stop" onclick="stopSession()">⏸ Stop</button>
       <button class="ctrl-btn start" onclick="startSession()">▶ Start</button>
+      <button class="ctrl-btn danger-btn" onclick="deleteSession()">✕ Delete</button>
     </div>
   </div>
 
@@ -196,15 +231,42 @@
   <!-- Tasks -->
   <div id="tasks-panel">
     <div class="panel-header">
-      Tasks
+      Session Panel
       <button id="tasks-edit-btn" onclick="toggleTasksEdit()">edit</button>
     </div>
-    <div id="tasks-content">(no session selected)</div>
-    <div id="tasks-edit">
-      <textarea id="tasks-textarea" placeholder="Add tasks here..."></textarea>
-      <div class="tasks-actions">
-        <button id="tasks-save" onclick="saveTasks()">Save</button>
-        <button id="tasks-cancel" onclick="toggleTasksEdit()">Cancel</button>
+    <div id="panel-tabs">
+      <button class="panel-tab active" data-page="task" onclick="setPanelPage('task')">task.md</button>
+      <button class="panel-tab" data-page="default" onclick="setPanelPage('default')">default task</button>
+      <button class="panel-tab" data-page="config" onclick="setPanelPage('config')">config</button>
+    </div>
+    <div id="panel-page-task" class="panel-page active">
+      <div id="tasks-content" class="panel-view">(no session selected)</div>
+      <div id="tasks-edit" class="panel-edit">
+        <textarea id="tasks-textarea" class="panel-textarea" placeholder="Add tasks here..."></textarea>
+        <div class="panel-actions">
+          <button id="tasks-save" onclick="saveTasks()">Save</button>
+          <button id="tasks-cancel" onclick="toggleTasksEdit()">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div id="panel-page-default" class="panel-page">
+      <div id="default-task-content" class="panel-view">(no session selected)</div>
+      <div id="default-task-edit" class="panel-edit">
+        <textarea id="default-task-textarea" class="panel-textarea" placeholder="Default task for persistent heartbeat..."></textarea>
+        <div class="panel-actions">
+          <button id="default-task-save" onclick="saveDefaultTask()">Save</button>
+          <button onclick="toggleTasksEdit()">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div id="panel-page-config" class="panel-page">
+      <div id="config-content" class="panel-view">(no session selected)</div>
+      <div id="config-edit" class="panel-edit">
+        <textarea id="config-textarea" class="panel-textarea" placeholder='{"heartbeat_interval":600}'></textarea>
+        <div class="panel-actions">
+          <button onclick="saveConfig()">Save</button>
+          <button onclick="toggleTasksEdit()">Cancel</button>
+        </div>
       </div>
     </div>
     <div id="tasks-footer"></div>
@@ -216,40 +278,40 @@
   let eventSource = null;
   let sessions = [];
   let modelState = { state: 'idle', source: null };
-  let thinkingEl = null;  // The active "thinking" bubble element
+  let thinkingEl = null;
+  let panelPage = 'task';
+  let weixinStatus = { status: 'idle', session: null };
 
-  // Configure marked for safe rendering
   if (typeof marked !== 'undefined') {
     marked.setOptions({ breaks: true, gfm: true });
   }
 
-  // ── Init ──────────────────────────────────────────────────────────────
-
   async function init() {
     await refreshSessions();
     setInterval(refreshSessions, 3000);
-    setInterval(refreshTasks, 2000);
+    setInterval(refreshPanelData, 2000);
     refreshWeixinStatus();
     setInterval(refreshWeixinStatus, 5000);
   }
-
-  // ── WeChat status ────────────────────────────────────────────────────────
 
   async function refreshWeixinStatus() {
     try {
       const res = await fetch('/api/weixin/status');
       const data = await res.json();
+      weixinStatus = data;
       const el = document.getElementById('weixin-indicator');
       const stateEl = document.getElementById('weixin-state');
+      const glyphEl = document.getElementById('weixin-glyph');
       el.className = data.status;
-      const labels = { running: '微信 ●', no_account: '微信 —', error: '微信 ✕', idle: '微信', stopped: '微信 ○' };
+      const labels = { running: '微信 bridge', no_account: '微信 unavailable', error: '微信 error', idle: '微信 idle', stopped: '微信 paused' };
+      const glyphs = { running: '⇄', no_account: '×', error: '!', idle: '≈', stopped: '∥' };
       const sessionHint = data.session ? ` · ${data.session}` : '';
-      stateEl.textContent = (labels[data.status] || '微信') + (data.status === 'running' ? sessionHint : '');
+      stateEl.textContent = (labels[data.status] || '微信') + sessionHint;
+      glyphEl.textContent = glyphs[data.status] || '≈';
       el.title = data.error ? `WeChat: ${data.error}` : `WeChat bridge: ${data.status}${sessionHint}`;
-    } catch (e) { /* server not reachable */ }
+      renderSessionList();
+    } catch (e) {}
   }
-
-  // ── Sessions ──────────────────────────────────────────────────────────
 
   async function refreshSessions() {
     try {
@@ -274,14 +336,15 @@
     const list = document.getElementById('session-list');
     list.innerHTML = '';
     for (const sess of sessions) {
-      const tone = sessionTone(sess);
+      const tone = isMetaSession(sess) ? 'meta' : sessionTone(sess);
       const div = document.createElement('div');
+      const linked = weixinStatus?.session === sess.id ? '🔗 ' : '';
       div.className = 'session-item' + (sess.id === currentSession ? ' active' : '');
       div.onclick = () => attachSession(sess.id);
       const lastRun = sess.last_run_at ? fmtDate(sess.last_run_at) : (sess.created_at ? fmtDate(sess.created_at) : '');
       div.innerHTML = `
         <div class="session-name">
-          <span class="dot ${tone}"></span>${escHtml(sess.id)}
+          <span class="dot ${tone}"></span>${linked}${escHtml(sess.id)}
         </div>
         <div class="session-meta">${escHtml(sess.entity)}${lastRun ? ' · ' + lastRun : ''}</div>
       `;
@@ -303,8 +366,7 @@
     renderServerIndicator();
     renderSessionIndicator();
 
-    document.getElementById('msg-input').disabled = false;
-    document.getElementById('send-btn').disabled = false;
+    updateChatAvailability();
 
     const histRes = await fetch(`/api/sessions/${id}/history`);
     const { events, context_offset, events_offset } = await histRes.json();
@@ -313,15 +375,13 @@
     renderSessionIndicator();
     if (modelState.state === 'running') showThinking();
 
-    eventSource = new EventSource(
-      `/api/sessions/${id}/events?context_since=${context_offset}&events_since=${events_offset}`
-    );
-    const types = ['agent','user','tool','model_status','partial_text','heartbeat_trigger','heartbeat_finished','status','error'];
+    eventSource = new EventSource(`/api/sessions/${id}/events?context_since=${context_offset}&events_since=${events_offset}`);
+    const types = ['agent', 'user', 'tool', 'model_status', 'partial_text', 'heartbeat_trigger', 'heartbeat_finished', 'status', 'error'];
     for (const t of types) {
       eventSource.addEventListener(t, e => appendEvent(JSON.parse(e.data)));
     }
 
-    refreshTasks();
+    await refreshPanelData();
   }
 
   async function showNewSessionDialog() {
@@ -331,7 +391,7 @@
     if (!entity) return;
     const res = await fetch('/api/sessions', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: id || '', entity }),
     });
     const data = await res.json();
@@ -339,7 +399,20 @@
     attachSession(data.id);
   }
 
-  // ── Thinking bubble ───────────────────────────────────────────────────
+  function thinkingHtml(text) {
+    if (text) {
+      return '<div class="msg-label">agent</div><div class="thinking-text">' + renderMarkdown(text) + '</div>';
+    }
+    return '<div class="msg-label">agent</div><div class="thinking-dots"><span></span><span></span><span></span></div>';
+  }
+
+  function ensureThinkingLast() {
+    const msgs = document.getElementById('messages');
+    if (thinkingEl && thinkingEl.parentElement === msgs && msgs.lastElementChild !== thinkingEl) {
+      msgs.appendChild(thinkingEl);
+    }
+    msgs.scrollTop = msgs.scrollHeight;
+  }
 
   function showThinking(text) {
     const msgs = document.getElementById('messages');
@@ -349,13 +422,8 @@
       thinkingEl.id = 'thinking-bubble';
       msgs.appendChild(thinkingEl);
     }
-    if (text) {
-      const rendered = typeof marked !== 'undefined' ? marked.parse(text) : escHtml(text);
-      thinkingEl.innerHTML = '<div class="msg-label">agent</div><div class="thinking-text">' + rendered + '</div>';
-    } else {
-      thinkingEl.innerHTML = '<div class="msg-label">agent</div><div class="thinking-dots"><span></span><span></span><span></span></div>';
-    }
-    msgs.scrollTop = msgs.scrollHeight;
+    thinkingEl.innerHTML = thinkingHtml(text);
+    ensureThinkingLast();
   }
 
   function hideThinking() {
@@ -364,8 +432,6 @@
       thinkingEl = null;
     }
   }
-
-  // ── Chat ──────────────────────────────────────────────────────────────
 
   function fmtTime(ts) {
     if (!ts) return '';
@@ -393,8 +459,18 @@
     return '<pre style="white-space:pre-wrap">' + escHtml(text || '') + '</pre>';
   }
 
-  function appendEvent(event) {
+  function appendMessageNode(div) {
     const msgs = document.getElementById('messages');
+    if (thinkingEl && msgs.contains(thinkingEl)) {
+      msgs.insertBefore(div, thinkingEl);
+      ensureThinkingLast();
+    } else {
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+  }
+
+  function appendEvent(event) {
     const etype = event.type || 'message';
 
     if (etype === 'model_status') {
@@ -405,7 +481,7 @@
         meta.model_source = modelState.source;
       }
       if (modelState.state === 'running') {
-        if (!thinkingEl) showThinking();
+        showThinking();
       } else {
         hideThinking();
       }
@@ -427,13 +503,12 @@
 
     if (etype === 'agent') {
       hideThinking();
-      label = event.triggered_by === 'heartbeat' ? '⏱ agent' : 'agent';
-      div.className += event.triggered_by === 'heartbeat' ? ' heartbeat-agent' : '';
+      label = event.triggered_by === 'heartbeat' || event.triggered_by === 'heartbeat_default' ? '⏱ agent' : 'agent';
+      div.className += event.triggered_by === 'heartbeat' || event.triggered_by === 'heartbeat_default' ? ' heartbeat-agent' : '';
       html = renderMarkdown(event.content || '');
-      // token usage is appended after main html render below
     } else if (etype === 'user') {
       label = 'you';
-      html = '<p>' + escHtml(event.content || '') + '</p>';
+      html = renderMarkdown(event.content || '');
     } else if (etype === 'tool') {
       html = renderToolCall(event.name, event.input || {});
     } else if (etype === 'heartbeat_trigger') {
@@ -443,9 +518,7 @@
       hideThinking();
       html = '[session finished — all tasks done]';
     } else if (etype === 'status') {
-      html = event.value === 'cancelled' || event.value === 'stopped'
-        ? '[server stopped]'
-        : `[status: ${escHtml(String(event.value || ''))}]`;
+      html = event.value === 'cancelled' || event.value === 'stopped' ? '[server stopped]' : `[status: ${escHtml(String(event.value || ''))}]`;
     } else if (etype === 'error') {
       hideThinking();
       html = `[error] ${escHtml(event.content || '')}`;
@@ -456,7 +529,6 @@
     const ts = fmtTime(event.ts);
     const tsHtml = ts ? `<div class="msg-ts">${ts}</div>` : '';
 
-    // Token usage footer for agent messages
     let footerHtml = '';
     if (etype === 'agent' && event.usage) {
       const u = event.usage;
@@ -464,31 +536,42 @@
       if (u.input || u.output) parts.push(`↑${u.input || 0} ↓${u.output || 0}`);
       if (u.cache_read) parts.push(`📦${u.cache_read}`);
       if (u.cache_write) parts.push(`✏️${u.cache_write}`);
-      if (parts.length) {
-        footerHtml = `<span class="msg-usage">${parts.join(' · ')}</span>`;
-      }
+      if (parts.length) footerHtml = `<span class="msg-usage">${parts.join(' · ')}</span>`;
     }
-    const combinedFooter = (ts || footerHtml)
-      ? `<div class="msg-footer">${ts ? `<span class="msg-ts" style="margin-top:0">${ts}</span>` : ''}${footerHtml}</div>`
-      : '';
+    const combinedFooter = (ts || footerHtml) ? `<div class="msg-footer">${ts ? `<span class="msg-ts" style="margin-top:0">${ts}</span>` : ''}${footerHtml}</div>` : '';
 
     if (etype === 'status') {
       const prefix = ts ? `<span class="msg-inline-ts">${ts}</span> ` : '';
       div.innerHTML = `<div class="msg-inline">${prefix}${html}</div>`;
-    } else if (etype === 'agent') {
-      div.innerHTML = `<div class="msg-label">${label}</div>${html}${combinedFooter}`;
+    } else if (etype === 'agent' || etype === 'user') {
+      div.innerHTML = `<div class="msg-label">${label}</div>${html}${etype === 'agent' ? combinedFooter : tsHtml}`;
     } else if (label) {
       div.innerHTML = `<div class="msg-label">${label}</div>${html}${tsHtml}`;
     } else {
       div.innerHTML = `${html}${tsHtml}`;
     }
 
-    msgs.appendChild(div);
-    msgs.scrollTop = msgs.scrollHeight;
+    appendMessageNode(div);
   }
 
   function currentSessionMeta() {
     return sessions.find(sess => sess.id === currentSession) || null;
+  }
+
+  function isMetaSession(session) {
+    return Boolean(session?.params?.is_meta_session || session?.id?.endsWith('_meta'));
+  }
+
+  function updateChatAvailability() {
+    const input = document.getElementById('msg-input');
+    const sendBtn = document.getElementById('send-btn');
+    const meta = currentSessionMeta();
+    const blocked = !meta || isMetaSession(meta);
+    input.disabled = blocked;
+    sendBtn.disabled = blocked;
+    input.placeholder = blocked
+      ? (meta ? 'Direct chat with meta sessions is disabled.' : 'Type a message...')
+      : 'Type a message...';
   }
 
   function syncModelStateFromMeta() {
@@ -499,11 +582,19 @@
     };
   }
 
+  function isStoppedOld(session) {
+    if (!session || session.status !== 'stopped') return false;
+    const ts = session.stopped_at || session.updated_at;
+    if (!ts) return false;
+    const stoppedAt = new Date(ts);
+    return Number.isFinite(stoppedAt.valueOf()) && (Date.now() - stoppedAt.getTime()) >= 12 * 3600 * 1000;
+  }
+
   function sessionTone(session) {
     if (!session) return 'idle';
     if (session.pid_alive && session.model_state === 'running' && session.status !== 'stopped') return 'running';
     if (session.has_tasks && session.pid_alive && session.status !== 'stopped') return 'napping';
-    if (session.status === 'stopped') return 'stopped';
+    if (session.status === 'stopped') return isStoppedOld(session) ? 'idle' : 'stopped';
     return 'idle';
   }
 
@@ -530,12 +621,13 @@
       tone = 'napping';
       label = 'napping';
     } else if (meta.status === 'stopped') {
-      tone = 'stopped';
+      tone = isStoppedOld(meta) ? 'idle' : 'stopped';
       label = 'stopped';
     }
 
     indicator.className = tone;
     stateEl.textContent = label;
+    updateChatAvailability();
   }
 
   function onInputKey(e) {
@@ -546,6 +638,7 @@
     const input = document.getElementById('msg-input');
     const text = input.value.trim();
     if (!text || !currentSession) return;
+    if (isMetaSession(currentSessionMeta())) return;
     input.value = '';
 
     const meta = currentSessionMeta();
@@ -555,48 +648,116 @@
       modelState = { state: 'running', source: 'user' };
       renderSessionIndicator();
       renderSessionList();
-      if (!thinkingEl) showThinking();
+      showThinking();
     }
 
     await fetch(`/api/sessions/${currentSession}/messages`, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: text }),
     });
   }
 
-  // ── Tasks ─────────────────────────────────────────────────────────────
+  function setPanelPage(page) {
+    panelPage = page;
+    document.querySelectorAll('.panel-tab').forEach(el => {
+      el.classList.toggle('active', el.dataset.page === page);
+    });
+    document.querySelectorAll('.panel-page').forEach(el => {
+      el.classList.toggle('active', el.id === `panel-page-${page}`);
+    });
+    updateEditButton();
+  }
 
-  async function refreshTasks() {
-    if (!currentSession) return;
+  function updateEditButton() {
+    const btn = document.getElementById('tasks-edit-btn');
+    btn.textContent = panelPage === 'config' ? 'edit json' : 'edit';
+  }
+
+  function toggleTasksEdit(force) {
+    const pageMap = {
+      task: ['tasks-content', 'tasks-edit', 'block'],
+      default: ['default-task-content', 'default-task-edit', 'block'],
+      config: ['config-content', 'config-edit', 'block'],
+    };
+    const [viewId, editId, viewDisplay] = pageMap[panelPage];
+    const view = document.getElementById(viewId);
+    const edit = document.getElementById(editId);
+    const shouldEdit = typeof force === 'boolean' ? force : edit.style.display !== 'flex';
+    view.style.display = shouldEdit ? 'none' : viewDisplay;
+    edit.style.display = shouldEdit ? 'flex' : 'none';
+  }
+
+  async function refreshPanelData() {
+    if (!currentSession) {
+      document.getElementById('tasks-content').textContent = '(no session selected)';
+      document.getElementById('default-task-content').textContent = '(no session selected)';
+      document.getElementById('config-content').textContent = '(no session selected)';
+      document.getElementById('tasks-textarea').value = '';
+      document.getElementById('default-task-textarea').value = '';
+      document.getElementById('config-textarea').value = '';
+      toggleTasksEdit(false);
+      document.getElementById('tasks-footer').textContent = '';
+      updateChatAvailability();
+      return;
+    }
     try {
-      const res = await fetch(`/api/sessions/${currentSession}/tasks`);
-      const data = await res.json();
-      const content = data.content?.trim() || '(empty)';
-      document.getElementById('tasks-content').textContent = content;
-      document.getElementById('tasks-textarea').value = data.content || '';
-      const meta = currentSessionMeta();
-      if (meta) meta.has_tasks = Boolean(data.content?.trim());
-      const footer = document.getElementById('tasks-footer');
-      const updatedAt = meta?.tasks_updated_at;
-      const interval = meta?.heartbeat_interval;
-      const intervalStr = interval
-        ? (interval >= 60 ? `every ${Math.round(interval / 60)}m` : `every ${interval}s`)
-        : '';
-      const updatedStr = updatedAt ? `updated ${fmtDate(updatedAt)}` : '';
-      footer.textContent = [updatedStr, intervalStr].filter(Boolean).join(' · ');
+      const [tasksRes, sessionRes] = await Promise.all([
+        fetch(`/api/sessions/${currentSession}/tasks`),
+        fetch(`/api/sessions/${currentSession}`),
+      ]);
+      const taskData = await tasksRes.json();
+      const sessionData = await sessionRes.json();
+      mergeSessionMeta(sessionData);
+      renderTaskPage(taskData.content || '');
+      renderDefaultTaskPage(sessionData.default_task || '');
+      renderConfigPage(sessionData.params || {});
+      renderFooter(sessionData);
       renderServerIndicator();
       renderSessionIndicator();
       renderSessionList();
+      updateChatAvailability();
     } catch (e) {}
   }
 
-  function toggleTasksEdit() {
-    const view = document.getElementById('tasks-content');
-    const edit = document.getElementById('tasks-edit');
-    const isEditing = edit.style.display === 'flex';
-    view.style.display = isEditing ? 'block' : 'none';
-    edit.style.display = isEditing ? 'none' : 'flex';
+  function mergeSessionMeta(data) {
+    const idx = sessions.findIndex(sess => sess.id === data.id);
+    if (idx >= 0) sessions[idx] = { ...sessions[idx], ...data };
+    else sessions.push(data);
+  }
+
+  function renderTaskPage(content) {
+    document.getElementById('tasks-content').textContent = content.trim() || '(empty)';
+    document.getElementById('tasks-textarea').value = content;
+    const meta = currentSessionMeta();
+    if (meta) meta.has_tasks = Boolean(content.trim());
+  }
+
+  function renderDefaultTaskPage(content) {
+    document.getElementById('default-task-content').textContent = content.trim() || '(empty)';
+    document.getElementById('default-task-textarea').value = content;
+  }
+
+  function renderConfigPage(params) {
+    document.getElementById('config-textarea').value = JSON.stringify(params, null, 2);
+    const entries = Object.entries(params || {});
+    const view = document.getElementById('config-content');
+    if (!entries.length) {
+      view.innerHTML = '<div class="config-empty">(empty)</div>';
+      return;
+    }
+    view.innerHTML = '<div class="config-grid">' + entries.map(([key, value]) =>
+      `<div class="config-key">${escHtml(key)}</div><div class="config-value">${escHtml(typeof value === 'string' ? value : JSON.stringify(value))}</div>`
+    ).join('') + '</div>';
+  }
+
+  function renderFooter(meta) {
+    const footer = document.getElementById('tasks-footer');
+    const updatedAt = meta?.tasks_updated_at;
+    const interval = meta?.heartbeat_interval ?? meta?.params?.heartbeat_interval;
+    const intervalStr = interval ? (interval >= 60 ? `every ${Math.round(interval / 60)}m` : `every ${interval}s`) : '';
+    const updatedStr = updatedAt ? `task updated ${fmtDate(updatedAt)}` : '';
+    footer.textContent = [updatedStr, intervalStr].filter(Boolean).join(' · ');
   }
 
   async function saveTasks() {
@@ -604,31 +765,76 @@
     const content = document.getElementById('tasks-textarea').value;
     await fetch(`/api/sessions/${currentSession}/tasks`, {
       method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     });
-    toggleTasksEdit();
-    refreshTasks();
+    toggleTasksEdit(false);
+    refreshPanelData();
   }
 
-  // ── Stop / Start ──────────────────────────────────────────────────────
+  async function saveDefaultTask() {
+    if (!currentSession) return;
+    const params = currentSessionMeta()?.params || {};
+    params.default_task = document.getElementById('default-task-textarea').value;
+    await fetch(`/api/sessions/${currentSession}/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ params }),
+    });
+    toggleTasksEdit(false);
+    refreshPanelData();
+    refreshSessions();
+  }
+
+  async function saveConfig() {
+    if (!currentSession) return;
+    let params;
+    try {
+      params = JSON.parse(document.getElementById('config-textarea').value || '{}');
+    } catch (e) {
+      alert('Config must be valid JSON.');
+      return;
+    }
+    await fetch(`/api/sessions/${currentSession}/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ params }),
+    });
+    toggleTasksEdit(false);
+    refreshPanelData();
+    refreshSessions();
+  }
 
   async function stopSession() {
     if (!currentSession) return;
     await fetch(`/api/sessions/${currentSession}/stop`, { method: 'POST' });
     await refreshSessions();
+    await refreshPanelData();
   }
 
   async function startSession() {
     if (!currentSession) return;
     await fetch(`/api/sessions/${currentSession}/start`, { method: 'POST' });
     await refreshSessions();
+    await refreshPanelData();
   }
 
-  // ── Utils ─────────────────────────────────────────────────────────────
+  async function deleteSession() {
+    if (!currentSession) return;
+    if (!confirm(`Delete session ${currentSession}?`)) return;
+    const deleting = currentSession;
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    hideThinking();
+    await fetch(`/api/sessions/${deleting}`, { method: 'DELETE' });
+    currentSession = null;
+    document.getElementById('messages').innerHTML = '<div class="msg status">Select or create a session to start chatting.</div>';
+    updateChatAvailability();
+    await refreshSessions();
+    await refreshPanelData();
+  }
 
   function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   function truncText(value, max) {
@@ -666,20 +872,9 @@
       return card('', extra, badges.map(badgeHtml).join(''));
     }
 
-    if (name === 'web_search') {
-      return card(`🔍 <span class="quote">&quot;${escHtml(input.query || '')}&quot;</span>`);
-    }
-
-    if (name === 'send_to_session') {
-      const sessionId = escHtml(input.session_id || 'unknown');
-      const message = escHtml(truncText(input.message || '', 80));
-      return card(`→ <span class="mono">${sessionId}</span> ${message}`);
-    }
-
-    if (name === 'fetch_url') {
-      return card(`🌐 <span class="mono">${escHtml(truncText(input.url || '', 120))}</span>`);
-    }
-
+    if (name === 'web_search') return card(`🔍 <span class="quote">&quot;${escHtml(input.query || '')}&quot;</span>`);
+    if (name === 'send_to_session') return card(`→ <span class="mono">${escHtml(input.session_id || 'unknown')}</span> ${escHtml(truncText(input.message || '', 80))}`);
+    if (name === 'fetch_url') return card(`🌐 <span class="mono">${escHtml(truncText(input.url || '', 120))}</span>`);
     if (name === 'propose_entity_update' || name === 'update_meta_memory') {
       const target = input.file_path || input.layer || 'target';
       const reason = truncText(input.reason || '', 60);

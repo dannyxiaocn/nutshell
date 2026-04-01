@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
@@ -21,8 +22,9 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 
+from nutshell.runtime.params import read_session_params, write_session_params
 from nutshell.runtime.status import write_session_status
-from .sessions import _init_session, _read_session_info, _sort_sessions
+from .sessions import _init_session, _is_meta_session_id, _read_session_info, _sort_sessions
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
@@ -72,6 +74,23 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
                 result.append(info)
         return _sort_sessions(result)
 
+    @app.get("/api/sessions/{session_id}")
+    async def get_session(session_id: str):
+        system_dir = system_sessions_dir / session_id
+        session_dir = sessions_dir / session_id
+        if not system_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+        info = _read_session_info(session_dir, system_dir)
+        if info is None:
+            raise HTTPException(404, f"Session not found: {session_id}")
+        params = read_session_params(session_dir)
+        params_view = {**params, "is_meta_session": _is_meta_session_id(session_id)}
+        return {
+            **info,
+            "default_task": params.get("default_task"),
+            "params": params_view,
+        }
+
     @app.post("/api/sessions")
     async def create_session(body: dict):
         session_id = body.get("id") or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -86,6 +105,8 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
         system_dir = system_sessions_dir / session_id
         if not system_dir.exists():
             raise HTTPException(404, f"Session not found: {session_id}")
+        if _is_meta_session_id(session_id):
+            raise HTTPException(403, "Direct chat with meta sessions is disabled.")
         msg_id = FileIPC(system_dir).send_message(body.get("content", ""))
         return {"id": msg_id}
 
@@ -171,6 +192,43 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
         tasks_path = session_dir / "core" / "tasks.md"
         tasks_path.parent.mkdir(parents=True, exist_ok=True)
         tasks_path.write_text(body.get("content", ""), encoding="utf-8")
+        return {"ok": True}
+
+    @app.get("/api/sessions/{session_id}/config")
+    async def get_config(session_id: str):
+        session_dir = sessions_dir / session_id
+        system_dir = system_sessions_dir / session_id
+        if not system_dir.exists() or not session_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+        params = read_session_params(session_dir)
+        return {"params": {**params, "is_meta_session": _is_meta_session_id(session_id)}}
+
+    @app.put("/api/sessions/{session_id}/config")
+    async def set_config(session_id: str, body: dict):
+        session_dir = sessions_dir / session_id
+        system_dir = system_sessions_dir / session_id
+        if not system_dir.exists() or not session_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+        params = body.get("params")
+        if not isinstance(params, dict):
+            raise HTTPException(400, "Body must include a JSON object in 'params'")
+        params = dict(params)
+        params.pop("is_meta_session", None)
+        write_session_params(session_dir, **params)
+        saved = read_session_params(session_dir)
+        return {"ok": True, "params": {**saved, "is_meta_session": _is_meta_session_id(session_id)}}
+
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session(session_id: str):
+        system_dir = system_sessions_dir / session_id
+        session_dir = sessions_dir / session_id
+        if not system_dir.exists() and not session_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+        write_session_status(system_dir, status="stopped", pid=None, stopped_at=datetime.now().isoformat())
+        if session_dir.exists():
+            shutil.rmtree(session_dir)
+        if system_dir.exists():
+            shutil.rmtree(system_dir)
         return {"ok": True}
 
     @app.get("/api/weixin/status")

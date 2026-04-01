@@ -5,7 +5,25 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from nutshell.runtime.params import read_session_params
 from nutshell.runtime.status import read_session_status, pid_alive as _pid_alive
+
+
+def _is_meta_session_id(session_id: str) -> bool:
+    return session_id.endswith("_meta")
+
+
+def _is_stale_stopped(info: dict) -> bool:
+    if info.get("status") != "stopped":
+        return False
+    ts = info.get("stopped_at") or info.get("updated_at")
+    if not ts:
+        return False
+    try:
+        stopped_at = datetime.fromisoformat(ts)
+    except Exception:
+        return False
+    return (datetime.now() - stopped_at).total_seconds() >= 12 * 3600
 
 
 def _read_session_info(session_dir: Path, system_dir: Path) -> dict | None:
@@ -18,6 +36,7 @@ def _read_session_info(session_dir: Path, system_dir: Path) -> dict | None:
     except Exception:
         manifest = {}
     status_payload = read_session_status(system_dir)
+    params = read_session_params(session_dir) if session_dir.exists() else {}
     tasks_path = session_dir / "core" / "tasks.md"
     has_tasks = tasks_path.exists() and bool(tasks_path.read_text(encoding="utf-8").strip())
     tasks_mtime = (
@@ -37,19 +56,25 @@ def _read_session_info(session_dir: Path, system_dir: Path) -> dict | None:
         "model_state": status_payload.get("model_state", "idle"),
         "model_source": status_payload.get("model_source"),
         "last_run_at": status_payload.get("last_run_at"),
+        "updated_at": status_payload.get("updated_at"),
+        "stopped_at": status_payload.get("stopped_at"),
         "tasks_updated_at": tasks_mtime,
         "heartbeat_interval": status_payload.get("heartbeat_interval", 600.0),
+        "default_task": params.get("default_task"),
+        "params": params,
         "alive": pid_alive and status != "stopped",
     }
 
 
 def _session_priority(info: dict) -> int:
-    """Return sort priority: 0=running, 1=napping(tasks queued), 2=stopped, 3=idle."""
+    """Return sort priority: 0=running, 1=napping(tasks queued), 2=fresh stopped, 3=idle/stale stopped."""
     if info.get("model_state") == "running" and info.get("pid_alive") and info.get("status") != "stopped":
         return 0
     if info.get("has_tasks") and info.get("pid_alive") and info.get("status") != "stopped":
         return 1
     if info.get("status") == "stopped":
+        if _is_stale_stopped(info):
+            return 3
         return 2
     return 3
 
