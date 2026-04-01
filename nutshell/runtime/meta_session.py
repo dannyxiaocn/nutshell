@@ -84,6 +84,29 @@ def _entity_rel_from_meta_path(path: str) -> str:
     return path.removeprefix('core/')
 
 
+def _resolve_entity_tools_dir(entity_name: str, entity_base: Path) -> Path | None:
+    """Walk the extends chain to find the first entity that has a non-empty tools/ dir."""
+    seen: set[str] = set()
+    current = entity_name
+    while current and current not in seen:
+        seen.add(current)
+        entity_dir = entity_base / current
+        tools_dir = entity_dir / 'tools'
+        if tools_dir.is_dir() and any(tools_dir.glob('*.json')):
+            return tools_dir
+        # Follow extends
+        yaml_path = entity_dir / 'agent.yaml'
+        if not yaml_path.exists():
+            break
+        try:
+            import yaml
+            manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
+            current = manifest.get('extends') or ''
+        except Exception:
+            break
+    return None
+
+
 def _entity_config_snapshot(entity_name: str, entity_base: Path) -> dict[str, str]:
     entity_dir = entity_base / entity_name
     if not entity_dir.exists():
@@ -111,9 +134,9 @@ def _entity_config_snapshot(entity_name: str, entity_base: Path) -> dict[str, st
             src = entity_dir / src_rel
             snapshot[dst_rel] = src.read_text(encoding='utf-8').strip() if src.exists() else ''
 
-    tools_dir = entity_dir / 'tools'
-    if tools_dir.is_dir():
-        for src in sorted(tools_dir.glob('*.json')):
+    resolved_tools_dir = _resolve_entity_tools_dir(entity_name, entity_base)
+    if resolved_tools_dir is not None:
+        for src in sorted(resolved_tools_dir.glob('*.json')):
             raw = src.read_text(encoding='utf-8')
             try:
                 normalized = json.dumps(json.loads(raw), sort_keys=True, ensure_ascii=False, indent=2)
@@ -182,8 +205,8 @@ def populate_meta_from_entity(entity_name: str, entity_base: Path | None = None,
     _clear_dir_contents(tools_dir)
     _clear_dir_contents(skills_dir)
 
-    src_tools = entity_dir / 'tools'
-    if src_tools.is_dir():
+    src_tools = _resolve_entity_tools_dir(entity_name, entity_root)
+    if src_tools is not None:
         for src in sorted(src_tools.glob('*.json')):
             shutil.copy2(src, tools_dir / src.name)
 
