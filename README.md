@@ -1,4 +1,4 @@
-# Nutshell `v1.3.43`
+# Nutshell `v1.3.44`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -789,6 +789,13 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 
 
 ## Changelog
+
+### v1.3.44
+- **gene feature**: `gene:` field in `agent.yaml` — list of shell commands executed once in meta session playground on first init
+- meta session gets own `.venv` (isolated Python env with `--system-site-packages`)
+- `nutshell meta ENTITY --init` to force re-run gene commands
+- `_load_gene_commands()` walks `extends` chain to inherit gene from parent entities
+- fix: `_resolve_entity_tools_dir()` walks extends chain so inherited entities get correct tools in meta session
 
 ### v1.3.43
 - meta-session strict alignment with entity config

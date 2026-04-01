@@ -18,6 +18,7 @@ from nutshell.runtime.status import ensure_session_status, write_session_status
 from nutshell.runtime.meta_session import (
     _meta_is_synced,
     check_meta_alignment,
+    ensure_gene_initialized,
     ensure_meta_session,
     populate_meta_from_entity,
     sync_from_entity,
@@ -137,6 +138,7 @@ def init_session(
             populate_meta_from_entity(entity_name, ent_base, s_base)
         else:
             check_meta_alignment(entity_name, ent_base, s_base)
+        ensure_gene_initialized(entity_name, ent_base, s_base)
 
     meta_core_dir = meta_dir / "core"
     for fname in ("system.md", "heartbeat.md", "session.md"):

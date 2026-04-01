@@ -3,6 +3,8 @@ from __future__ import annotations
 import difflib
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -47,6 +49,24 @@ def get_meta_dir(entity_name: str, s_base: Path | None = None) -> Path:
     return (s_base or _SESSIONS_DIR) / get_meta_session_id(entity_name)
 
 
+
+def _create_meta_venv(meta_dir: Path) -> Path:
+    """Create a Python venv at meta_dir/.venv (idempotent).
+
+    Uses --system-site-packages so globally installed packages are available.
+    Returns the venv path.
+    """
+    venv_path = meta_dir / '.venv'
+    if venv_path.exists():
+        return venv_path
+    subprocess.run(
+        [sys.executable, '-m', 'venv', '--system-site-packages', str(venv_path)],
+        check=True,
+        capture_output=True,
+    )
+    return venv_path
+
+
 def ensure_meta_session(entity_name: str, s_base: Path | None = None) -> Path:
     """Create sessions/<entity>_meta/ directory structure (idempotent)."""
     session_dir = get_meta_dir(entity_name, s_base=s_base)
@@ -59,6 +79,7 @@ def ensure_meta_session(entity_name: str, s_base: Path | None = None) -> Path:
     (session_dir / 'playground').mkdir(exist_ok=True)
     for fname in ('system.md', 'heartbeat.md', 'session.md', 'memory.md', 'tasks.md'):
         (core_dir / fname).touch(exist_ok=True)
+    _create_meta_venv(session_dir)
     return session_dir
 
 
@@ -327,3 +348,95 @@ def sync_from_entity(entity_name: str, entity_base: Path | None = None) -> None:
             dst_file = meta_memory_dir / src_file.name
             if not dst_file.exists():
                 shutil.copy2(src_file, dst_file)
+
+
+def _load_gene_commands(entity_name: str, entity_base: Path | None = None) -> list[str]:
+    """Read the ``gene`` list from agent.yaml, walking the extends chain."""
+    entity_root = entity_base or (_REPO_ROOT / 'entity')
+    seen: set[str] = set()
+    current = entity_name
+    while current and current not in seen:
+        seen.add(current)
+        entity_dir = entity_root / current
+        yaml_path = entity_dir / 'agent.yaml'
+        if not yaml_path.exists():
+            break
+        try:
+            import yaml
+            manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
+        except Exception:
+            break
+        gene = manifest.get('gene')
+        if gene and isinstance(gene, list):
+            return [str(cmd) for cmd in gene]
+        current = manifest.get('extends') or ''
+    return []
+
+
+def run_gene_commands(
+    entity_name: str,
+    entity_base: Path | None = None,
+    s_base: Path | None = None,
+) -> None:
+    """Execute the ``gene`` shell commands from agent.yaml in the meta playground.
+
+    Each command runs with ``shell=True`` in the meta playground directory,
+    with the meta-session venv activated via environment variables.
+    Failures are printed but do not raise.
+    After all commands finish, writes ``core/.gene_initialized`` marker.
+    """
+    commands = _load_gene_commands(entity_name, entity_base)
+    if not commands:
+        return
+
+    meta_dir = ensure_meta_session(entity_name, s_base=s_base)
+    playground_dir = meta_dir / 'playground'
+    playground_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build env with venv activated
+    import os
+    venv_path = _create_meta_venv(meta_dir)
+    env = os.environ.copy()
+    env['VIRTUAL_ENV'] = str(venv_path)
+    venv_bin = venv_path / 'bin'
+    env['PATH'] = f"{venv_bin}{os.pathsep}{env.get('PATH', '')}"
+    env.pop('PYTHONHOME', None)
+
+    for cmd in commands:
+        print(f"[gene] Running: {cmd}")
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=str(playground_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            if result.stdout:
+                print(result.stdout, end='')
+            if result.returncode != 0:
+                print(f"[gene] Command failed (exit {result.returncode}): {cmd}")
+                if result.stderr:
+                    print(result.stderr, end='')
+        except Exception as exc:
+            print(f"[gene] Error running '{cmd}': {exc}")
+
+    # Write marker
+    marker = meta_dir / 'core' / '.gene_initialized'
+    marker.write_text(entity_name, encoding='utf-8')
+    print(f"[gene] Initialized for entity '{entity_name}'")
+
+
+def ensure_gene_initialized(
+    entity_name: str,
+    entity_base: Path | None = None,
+    s_base: Path | None = None,
+) -> None:
+    """Run gene commands only if ``core/.gene_initialized`` marker is absent."""
+    meta_dir = get_meta_dir(entity_name, s_base=s_base)
+    marker = meta_dir / 'core' / '.gene_initialized'
+    if marker.exists():
+        return
+    run_gene_commands(entity_name, entity_base=entity_base, s_base=s_base)
+

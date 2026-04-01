@@ -1387,6 +1387,7 @@ def _add_meta_parser(subparsers) -> None:
     p.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON")
     p.add_argument("--check", action="store_true", help="Show alignment diff for a specific entity")
     p.add_argument("--sync", choices=["entity-wins", "meta-wins"], help="Resolve alignment conflict")
+    p.add_argument("--init", action="store_true", help="Re-run gene commands (delete marker and re-execute)")
     p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE, help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_meta)
 
@@ -1396,6 +1397,7 @@ def cmd_meta(args) -> int:
         MetaAlignmentError,
         check_meta_alignment,
         compute_meta_diffs,
+        run_gene_commands,
         sync_entity_to_meta,
         sync_meta_to_entity,
     )
@@ -1403,6 +1405,18 @@ def cmd_meta(args) -> int:
     base = args.sessions_base
     if not base.exists():
         print("No meta sessions found.")
+        return 0
+
+    if args.init:
+        if not args.entity:
+            print("Error: ENTITY is required for --init.", file=sys.stderr)
+            return 2
+        meta_dir = base / f"{args.entity}_meta"
+        marker = meta_dir / "core" / ".gene_initialized"
+        if marker.exists():
+            marker.unlink()
+            print(f"Removed gene marker for {args.entity}")
+        run_gene_commands(args.entity, s_base=base)
         return 0
 
     if args.check or args.sync:
