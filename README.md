@@ -1,4 +1,4 @@
-# Nutshell `v1.3.45`
+# Nutshell `v1.3.46`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -789,6 +789,15 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 
 
 ## Changelog
+
+### v1.3.46
+- **meta session as real agent**: `start_meta_agent()` creates `_sessions/<entity>_meta/` so watcher starts it as a persistent agent
+- meta agent has built-in system + heartbeat prompts for dream cycle (24h interval, review all child sessions)
+- `nutshell dream ENTITY` sends wake-up message to meta session (no more rule-based code)
+- Removed `dream.py` — dream logic is now entirely agent-driven
+- fix: `compute_meta_diffs` only flags diffs where entity has content (meta built-in prompts don't create false conflicts)
+- fix: session memory dir only created when there are actual seed files (not just empty meta memory dir)
+- fix: watcher indentation error in `_start_session`; removed `_maybe_auto_dream`
 
 ### v1.3.45
 - **dream mechanism**: meta session periodically reviews all entity sessions, integrates memory, manages storage

@@ -18,9 +18,7 @@ Usage:
     nutshell server                         Start the Nutshell server
     nutshell web                            Start the web UI (monitoring)
     nutshell os [MESSAGE]                    CLI-OS playground session
-    nutshell dream [ENTITY]                  Dream: review & clean entity sessions
-    nutshell dream ENTITY --dry-run          Show plan, no changes
-    nutshell dream ENTITY --force            Skip cooldown check
+    nutshell dream ENTITY                    Trigger meta session dream cycle
 
 All session-management commands (sessions, new, stop, start, tasks) work without
 a running server — they read/write the _sessions/ directory directly.
@@ -1368,95 +1366,32 @@ def cmd_os(args) -> int:
 def _add_dream_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "dream",
-        help="Review and clean sessions for an entity.",
-        description="Dream: review all sessions, classify, clean up old ones, update meta memory.",
+        help="Trigger the meta agent to run its dream cycle.",
+        description="Sends a wake-up message to the entity's meta session, prompting it to review all child sessions.",
     )
-    p.add_argument("entity", nargs="?", default=None, help="Entity name (omit to dream all entities)")
-    p.add_argument("--dry-run", action="store_true", help="Show plan without making changes")
-    p.add_argument("--force", action="store_true", help="Skip cooldown check")
-    p.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON")
+    p.add_argument("entity", help="Entity name")
+    p.add_argument("--message", default="看任务来执行", help="Message to send (default: '看任务来执行')")
     p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE, help=argparse.SUPPRESS)
     p.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE, help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_dream)
 
 
-def _format_dream_report(report) -> str:
-    """Format a DreamReport as human-readable text (git status style)."""
-    lines = []
-    mode = "(dry run) " if not report.timestamp else ""
-    lines.append(f"Dream: {report.entity} {mode}— {report.timestamp}")
-    lines.append(f"Reviewed {report.sessions_reviewed} sessions")
-    lines.append("")
-
-    if report.kept:
-        lines.append(f"  Kept ({len(report.kept)}):")
-        for sid in report.kept:
-            lines.append(f"    ✓ {sid}")
-        lines.append("")
-
-    if report.archived:
-        lines.append(f"  Archived ({len(report.archived)}):")
-        for sid in report.archived:
-            lines.append(f"    📦 {sid}")
-        lines.append("")
-
-    if report.deleted:
-        lines.append(f"  Deleted ({len(report.deleted)}):")
-        for sid in report.deleted:
-            lines.append(f"    🗑  {sid}")
-        lines.append("")
-
-    lines.append(f"Freed: {report.freed_mb} MB")
-    lines.append(f"Meta playground: {report.meta_playground_mb} MB")
-    lines.append(f"Total sessions storage: {report.total_sessions_mb} MB")
-
-    if report.warnings:
-        lines.append("")
-        for w in report.warnings:
-            lines.append(f"⚠️  {w}")
-
-    return "\n".join(lines)
-
-
 def cmd_dream(args) -> int:
-    from nutshell.runtime.dream import run_dream, dream_all
-    import dataclasses
+    """Send a wake-up message to the entity's meta session to trigger the dream cycle."""
+    from nutshell.runtime.meta_session import get_meta_session_id
+    from nutshell.runtime.ipc import FileIPC
 
-    entity_base = Path(__file__).parent.parent.parent / "entity"
+    meta_id = get_meta_session_id(args.entity)
+    sys_dir = args.system_base / meta_id
 
-    if args.entity:
-        report = run_dream(
-            args.entity,
-            dry_run=args.dry_run,
-            entity_base=entity_base,
-            s_base=args.sessions_base,
-            sys_base=args.system_base,
-            force=args.force,
-        )
-        reports = [report]
-    else:
-        reports = dream_all(
-            dry_run=args.dry_run,
-            entity_base=entity_base,
-            s_base=args.sessions_base,
-            sys_base=args.system_base,
-            force=args.force,
-        )
+    if not sys_dir.exists():
+        print(f"Meta session for '{args.entity}' not found at {sys_dir}")
+        print(f"Hint: create a session for entity '{args.entity}' to initialise its meta session.")
+        return 1
 
-    if not reports:
-        print("No entities found with sessions.")
-        return 0
-
-    if args.as_json:
-        data = [dataclasses.asdict(r) for r in reports]
-        print(json.dumps(data if len(data) > 1 else data[0], indent=2, ensure_ascii=False))
-        return 0
-
-    for idx, report in enumerate(reports):
-        print(_format_dream_report(report))
-        if idx < len(reports) - 1:
-            print("---")
-
+    ipc = FileIPC(sys_dir)
+    msg_id = ipc.send_message(args.message)
+    print(f"Sent to {meta_id}: '{args.message}' (id={msg_id})")
     return 0
 
 
@@ -1609,9 +1544,8 @@ def main() -> None:
             "  nutshell repo-dev PATH               Create dev agent for repo\n"
             "  nutshell repo-dev PATH -m MSG         … with initial task\n\n"
             "Dream (session cleanup):\n"
-            "  nutshell dream [ENTITY]               Dream: review & clean sessions\n"
-            "  nutshell dream ENTITY --dry-run        Show plan, no changes\n"
-            "  nutshell dream ENTITY --force          Skip cooldown check\n\n"
+            "  nutshell dream ENTITY                 Trigger meta session dream cycle\n"
+            "\n"
             "Playground:\n"
             "  nutshell os [MESSAGE]               CLI-OS playground session\n\n"
             "Other:\n"

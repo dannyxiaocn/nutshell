@@ -269,8 +269,12 @@ def compute_meta_diffs(entity_name: str, entity_base: Path | None = None, s_base
     meta_snapshot = _meta_config_snapshot(meta_dir)
     diffs: list[dict] = []
     for path in sorted(set(entity_snapshot) | set(meta_snapshot)):
-        if entity_snapshot.get(path, '') != meta_snapshot.get(path, ''):
-            diffs.append({'path': path, 'entity': entity_snapshot.get(path, ''), 'meta': meta_snapshot.get(path, '')})
+        entity_val = entity_snapshot.get(path, '')
+        meta_val = meta_snapshot.get(path, '')
+        if entity_val != meta_val and entity_val:
+            # Only flag when entity has content that differs — empty entity means
+            # meta is free to use its own built-in defaults (e.g. meta-agent prompts).
+            diffs.append({'path': path, 'entity': entity_val, 'meta': meta_val})
     return diffs
 
 
@@ -440,3 +444,124 @@ def ensure_gene_initialized(
         return
     run_gene_commands(entity_name, entity_base=entity_base, s_base=s_base)
 
+
+
+# ── Meta Agent ────────────────────────────────────────────────────────────────
+# The meta session can run as a real agent session managed by the watcher.
+# start_meta_agent() creates the _sessions/<entity>_meta/ system directory
+# (manifest.json, status.json, etc.) so the watcher picks it up.
+
+_META_SYSTEM_PROMPT = """You are the meta-agent for entity '{entity}'. Your role is to manage all agent sessions spawned by this entity.
+
+Responsibilities:
+- Periodically review all child sessions (the "dream" cycle)
+- Extract key learnings and decisions into meta memory
+- Track important ongoing work with explicit session references
+- Clean up old, empty, or completed sessions
+- Keep the entity's meta memory accurate and concise
+
+You have access to bash to inspect sessions, read their content, and delete them when appropriate.
+Use update_meta_memory to record what you learn.
+"""
+
+_META_HEARTBEAT_PROMPT = """Dream cycle: Review all child sessions for this entity.
+
+Steps:
+1. List sessions: bash `nutshell sessions --json` (filter by entity from manifest.json in _sessions/)
+2. For each session: check status, tasks.md content, last activity
+3. Decide for each:
+   - Still active or has pending tasks → keep, track in memory
+   - Completed/stopped with valuable context → extract learnings to meta memory, then delete
+   - Old, empty, or trivial → delete directly
+4. Update meta memory with:
+   - Tracked sessions list (session_id + purpose + path)
+   - Key learnings extracted from archived sessions
+5. Clean up: `rm -rf sessions/<id> _sessions/<id>` for sessions you're deleting
+   Safety rule: NEVER delete sessions that are currently running or were active < 2 hours ago
+
+Be intelligent — don't just follow rules mechanically. Consider context, task importance, and what's worth remembering.
+"""
+
+_META_AGENT_DEFAULTS = {
+    "persistent": True,
+    "heartbeat_interval": 21600,
+    "default_task": "Dream: review and process all child sessions for this entity",
+}
+
+
+def start_meta_agent(
+    entity_name: str,
+    entity_base: Path | None = None,
+    s_base: Path | None = None,
+    sys_base: Path | None = None,
+) -> Path:
+    """Ensure meta session has a _sessions/ system dir so the watcher starts it as an agent.
+
+    Creates _sessions/<entity>_meta/ with manifest.json, status.json, context.jsonl,
+    events.jsonl. Writes built-in meta system.md and heartbeat.md to the meta
+    session's core/ (only if those files are empty — entity prompts take precedence).
+    Sets params for persistent agent with dream heartbeat.
+
+    Idempotent — safe to call multiple times.
+    Returns the system dir path (_sessions/<entity>_meta/).
+    """
+    from datetime import datetime
+    from nutshell.runtime.status import ensure_session_status
+    from nutshell.runtime.params import read_session_params, write_session_params
+
+    sessions_base = s_base or _SESSIONS_DIR
+    system_base = sys_base or (_REPO_ROOT / '_sessions')
+
+    meta_id = get_meta_session_id(entity_name)
+    meta_dir = ensure_meta_session(entity_name, s_base=sessions_base)
+    system_dir = system_base / meta_id
+
+    # ── 1. System directory (_sessions/<entity>_meta/) ──
+    system_dir.mkdir(parents=True, exist_ok=True)
+
+    # manifest.json (always overwrite to keep entity current)
+    manifest = {
+        "session_id": meta_id,
+        "entity": entity_name,
+        "created_at": datetime.now().isoformat(),
+    }
+    manifest_path = system_dir / "manifest.json"
+    if not manifest_path.exists():
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    # context.jsonl + events.jsonl (idempotent)
+    (system_dir / "context.jsonl").touch(exist_ok=True)
+    (system_dir / "events.jsonl").touch(exist_ok=True)
+
+    # status.json
+    ensure_session_status(system_dir)
+
+    # ── 2. Fallback prompts (only if empty) ──
+    core_dir = meta_dir / "core"
+
+    system_md = core_dir / "system.md"
+    if not system_md.read_text(encoding="utf-8").strip():
+        system_md.write_text(
+            _META_SYSTEM_PROMPT.format(entity=entity_name).strip() + "\n",
+            encoding="utf-8",
+        )
+
+    heartbeat_md = core_dir / "heartbeat.md"
+    if not heartbeat_md.read_text(encoding="utf-8").strip():
+        heartbeat_md.write_text(
+            _META_HEARTBEAT_PROMPT.strip() + "\n",
+            encoding="utf-8",
+        )
+
+    # ── 3. Params: merge meta-agent defaults without overwriting existing model/provider ──
+    current_params = read_session_params(meta_dir)
+    updates: dict = {}
+    for key, default_val in _META_AGENT_DEFAULTS.items():
+        if current_params.get(key) in (None, False, 0, ""):
+            updates[key] = default_val
+    if updates:
+        write_session_params(meta_dir, **updates)
+
+    return system_dir

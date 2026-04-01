@@ -21,6 +21,7 @@ from nutshell.runtime.meta_session import (
     ensure_gene_initialized,
     ensure_meta_session,
     populate_meta_from_entity,
+    start_meta_agent,
     sync_from_entity,
 )
 
@@ -139,6 +140,7 @@ def init_session(
         else:
             check_meta_alignment(entity_name, ent_base, s_base)
         ensure_gene_initialized(entity_name, ent_base, s_base)
+        start_meta_agent(entity_name, entity_base=ent_base, s_base=s_base, sys_base=sys_base)
 
     meta_core_dir = meta_dir / "core"
     for fname in ("system.md", "heartbeat.md", "session.md"):
@@ -195,14 +197,14 @@ def init_session(
 
     # Seed layered memory from <entity>_meta/core/memory/ first, then entity/<entity>/memory/.
     memory_seed_dirs = [src_dir for src_dir in (meta_dir / "core" / "memory", ent_base / entity_name / "memory") if src_dir.is_dir()]
-    if memory_seed_dirs:
+    seed_files = [f for src_dir in memory_seed_dirs for f in sorted(src_dir.glob("*.md"))]
+    if seed_files:
         session_memory_dir = core_dir / "memory"
         session_memory_dir.mkdir(exist_ok=True)
-        for src_dir in memory_seed_dirs:
-            for src_file in sorted(src_dir.glob("*.md")):
-                dst_file = session_memory_dir / src_file.name
-                if not dst_file.exists():
-                    shutil.copy2(src_file, dst_file)
+        for src_file in seed_files:
+            dst_file = session_memory_dir / src_file.name
+            if not dst_file.exists():
+                shutil.copy2(src_file, dst_file)
 
     # Seed shared playground files from meta-session without overwriting session-local files.
     meta_playground_dir = meta_dir / "playground"
