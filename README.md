@@ -1,4 +1,4 @@
-# Nutshell `v1.3.44`
+# Nutshell `v1.3.45`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
@@ -789,6 +789,15 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 
 
 ## Changelog
+
+### v1.3.45
+- **dream mechanism**: meta session periodically reviews all entity sessions, integrates memory, manages storage
+- `nutshell/runtime/dream.py`: `run_dream()`, `DreamReport`, session classification (keep_active/keep_tracked/archive/delete)
+- `nutshell dream [ENTITY] [--dry-run] [--force]` CLI command
+- watcher auto-triggers dream when session count exceeds `dream_threshold` (default 30)
+- agent.yaml fields: `dream_threshold`, `dream_interval`, `max_sessions`, `max_playground_mb`
+- dream writes `sessions/<entity>_meta/core/memory/dream_sessions.md` + `dream_log.md`
+- 27 new tests in `tests/runtime/test_dream.py`
 
 ### v1.3.44
 - **gene feature**: `gene:` field in `agent.yaml` — list of shell commands executed once in meta session playground on first init

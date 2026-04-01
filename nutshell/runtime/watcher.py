@@ -28,6 +28,7 @@ class SessionWatcher:
         self._agent_factory = agent_factory
         self._active: dict[str, asyncio.Task] = {}  # session_id → task
         self._finished: set[str] = set()  # session_ids that have completed
+        self._entity_counts: dict[str, int] = {}  # entity → session count (updated per scan)
 
     async def run(self, stop_event: asyncio.Event) -> None:
         """Main watcher loop. Runs until stop_event is set."""
@@ -137,9 +138,57 @@ class SessionWatcher:
             )
             self._active[session_id] = task
 
+        # Auto-dream: check if any entity has too many sessions
+        self._maybe_auto_dream()
+
         return discovered
 
-    async def _start_session(
+    def _maybe_auto_dream(self) -> None:
+        """Check all entities and trigger dream if session count exceeds threshold."""
+        try:
+            from nutshell.runtime.dream import should_dream, run_dream
+
+            # Count sessions per entity
+            entity_counts: dict[str, int] = {}
+            if self.system_sessions_dir.exists():
+                for system_dir in self.system_sessions_dir.iterdir():
+                    if not system_dir.is_dir():
+                        continue
+                    manifest_path = system_dir / "manifest.json"
+                    if not manifest_path.exists():
+                        continue
+                    try:
+                        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                        entity = manifest.get("entity", "")
+                        if entity:
+                            entity_counts[entity] = entity_counts.get(entity, 0) + 1
+                    except (json.JSONDecodeError, OSError):
+                        continue
+
+            for entity_name, count in entity_counts.items():
+                if should_dream(
+                    entity_name,
+                    s_base=self.sessions_dir,
+                    sys_base=self.system_sessions_dir,
+                ):
+                    print(f"[server] Auto-dream triggered for entity '{entity_name}' ({count} sessions)")
+                    try:
+                        report = run_dream(
+                            entity_name,
+                            s_base=self.sessions_dir,
+                            sys_base=self.system_sessions_dir,
+                        )
+                        print(
+                            f"[server] Dream complete: {entity_name} — "
+                            f"kept={len(report.kept)}, archived={len(report.archived)}, "
+                            f"deleted={len(report.deleted)}, freed={report.freed_mb}MB"
+                        )
+                    except Exception as exc:
+                        print(f"[server] Dream failed for {entity_name}: {exc}")
+        except Exception:
+            pass  # Dream is best-effort, never crash the watcher
+
+        async def _start_session(
         self, session_id: str, system_dir: Path, manifest: dict
     ) -> None:
         """Create a minimal agent from params and run server loop."""
