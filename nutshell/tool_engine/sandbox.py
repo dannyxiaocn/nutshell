@@ -95,3 +95,34 @@ def check_blocked(
                 continue
 
     return None
+
+
+
+class ToolSandbox:
+    async def check(self, tool_name: str, args: dict) -> str | None:
+        return None  # None = pass, str = rejection message shown to agent
+
+    async def filter_result(self, tool_name: str, result: str) -> str:
+        return result
+
+
+class BashSandbox(ToolSandbox):
+    def __init__(self, blocked_patterns: list[str] | None = None):
+        self._extra = blocked_patterns or []
+
+    async def check(self, tool_name: str, args: dict) -> str | None:
+        cmd = args.get('command', '')
+        reason = check_blocked(cmd, self._extra)  # 复用现有函数
+        if reason:
+            return f'[sandbox] command blocked: {reason}'
+        return None
+
+
+class FSSandbox(ToolSandbox):
+    def __init__(self, max_chars: int = 50000):
+        self._max = max_chars
+
+    async def filter_result(self, tool_name: str, result: str) -> str:
+        if len(result) > self._max:
+            return result[:self._max] + f'\n... [truncated: {len(result)} chars total]'
+        return result

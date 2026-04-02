@@ -23,7 +23,7 @@ from typing import Any, Optional, Sequence
 
 from nutshell.core.tool import Tool
 from nutshell.tool_engine.executor.base import BaseExecutor
-from nutshell.tool_engine.sandbox import check_blocked
+from nutshell.tool_engine.sandbox import BashSandbox, check_blocked
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mGKHF]")
 _MAX_OUTPUT = 10_000
@@ -172,11 +172,13 @@ class BashExecutor(BaseExecutor):
         workdir: str | None = None,
         max_output: int = _MAX_OUTPUT,
         blocked_patterns: Sequence[str] | None = None,
+        sandbox: BashSandbox | None = None,
     ) -> None:
         self._timeout = timeout
         self._workdir = workdir
         self._max_output = max_output
         self._blocked_patterns = list(blocked_patterns) if blocked_patterns else []
+        self._sandbox = sandbox
 
     @classmethod
     def can_handle(cls, tool_name: str, tool_path: Path | None) -> bool:
@@ -186,9 +188,14 @@ class BashExecutor(BaseExecutor):
         command: str = kwargs["command"]
 
         # Sandbox check — reject dangerous commands before execution
-        violation = check_blocked(command, self._blocked_patterns or None)
-        if violation is not None:
-            return f"[SANDBOX] {violation}\nCommand was NOT executed."
+        if self._sandbox is not None:
+            violation = await self._sandbox.check("bash", kwargs)
+            if violation is not None:
+                return violation
+        else:
+            violation = check_blocked(command, self._blocked_patterns or None)
+            if violation is not None:
+                return f"[SANDBOX] {violation}\nCommand was NOT executed."
 
         timeout = float(kwargs.get("timeout") or self._timeout)
         workdir = kwargs.get("workdir") or self._workdir

@@ -13,6 +13,7 @@ DEFAULT_PARAMS: dict = {
     "auto_model": False,    # True → auto-select model based on task complexity
     "thinking": False,      # True → enable extended thinking for this session
     "thinking_budget": 8000,  # budget_tokens for extended thinking
+    "sandbox_max_fetch_chars": 50000,
 }
 
 

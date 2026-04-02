@@ -643,7 +643,7 @@ class Session:
     def _write_harness_snapshot(self, result: AgentResult, triggered_by: str, *, auto_model_override: dict | None = None) -> None:
         """Write both agent-visible and audit harness outputs for a turn."""
         self._write_sys_harness(result, triggered_by, auto_model_override=auto_model_override)
-        self._write_audit_entry(result, triggered_by)
+        self._write_audit_entry(result, triggered_by, auto_model_override=auto_model_override)
 
     def _write_sys_harness(self, result: AgentResult, triggered_by: str, *, auto_model_override: dict | None = None) -> None:
         """Write a per-turn performance snapshot to core/memory/harness.md.
@@ -688,10 +688,11 @@ class Session:
         harness_path.parent.mkdir(parents=True, exist_ok=True)
         harness_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def _write_audit_entry(self, result: AgentResult, triggered_by: str) -> None:
+    def _write_audit_entry(self, result: AgentResult, triggered_by: str, *, auto_model_override: dict | None = None) -> None:
         """Append a machine-readable harness audit record to core/audit.jsonl."""
         tool_names = sorted({tc.name for tc in result.tool_calls}) if result.tool_calls else []
         usage = result.usage
+        configured_model = auto_model_override["original_model"] if auto_model_override else self._agent.model
         entry = {
             "ts": datetime.now().isoformat(),
             "session_id": self._session_id,
@@ -701,7 +702,9 @@ class Session:
             "tool_calls": len(result.tool_calls),
             "tools_used": tool_names,
             "total_tokens": usage.total_tokens,
-            "model": self._agent.model,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "model": configured_model,
             "provider": provider_name(self._agent._provider) or "unknown",
         }
         audit_path = self.core_dir / "audit.jsonl"
