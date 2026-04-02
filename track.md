@@ -66,7 +66,7 @@
   - 新设计：每个 tool 有独立 sandbox policy（pre-check + post-filter），agent 不可见 sandbox 逻辑，只看 tool 返回  
   - 跳出 playground 修改系统文件：在 bash tool sandbox 里加 path scope 限制  
   - 设计 `nutshell/tool_engine/sandbox.py`：`ToolSandbox` 基类，`BashSandbox` / `WebSandbox` / `FSSandbox` 实现
-- [ ] **WebSandbox 未实现**：sandbox.py 里只有 `ToolSandbox` / `BashSandbox` / `FSSandbox`，`WebSandbox`（限制 web_search/fetch_url 的域名、响应大小等）完全缺失。
+- [x] **WebSandbox 实现** (commit: ec90b69, 2d49425)：sandbox.py 新增 WebSandbox（域名黑名单 + 响应截断）；接入 fetch_url 和 web_search；session.py 从 params 读取 blocked_domains + sandbox_max_web_chars；804 tests passed，v1.3.63。
 
 ---
 
