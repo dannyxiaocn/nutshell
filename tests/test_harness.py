@@ -6,9 +6,11 @@ Covers:
   - Session._write_harness_snapshot() (session.py)
 """
 
-import pytest
+import json
 from unittest.mock import AsyncMock
 from pathlib import Path
+
+import pytest
 
 from nutshell.core.agent import Agent
 from nutshell.core.provider import Provider
@@ -131,7 +133,9 @@ async def test_write_harness_snapshot_creates_file(tmp_path):
     result = await session.chat("hello")
 
     harness_path = session.core_dir / "memory" / "harness.md"
+    audit_path = session.core_dir / "audit.jsonl"
     assert harness_path.exists(), "harness.md should be created"
+    assert audit_path.exists(), "audit.jsonl should be created"
 
     content = harness_path.read_text()
     assert "triggered_by | user" in content
@@ -141,6 +145,19 @@ async def test_write_harness_snapshot_creates_file(tmp_path):
     assert "output_tokens | 80" in content
     assert "total_tokens | 280" in content
     assert "history_turns | 2" in content  # user + assistant
+    audit_lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(audit_lines) == 1
+    audit_entry = json.loads(audit_lines[0])
+    assert audit_entry["session_id"] == "test-harness"
+    assert audit_entry["triggered_by"] == "user"
+    assert audit_entry["iterations"] == 1
+    assert audit_entry["tool_calls"] == 0
+    assert audit_entry["tools_used"] == []
+    assert audit_entry["total_tokens"] == 280
+    assert "model" in audit_entry
+    assert "provider" in audit_entry
+    assert "ts" in audit_entry
+    assert "entity" in audit_entry
 
 
 @pytest.mark.asyncio
@@ -265,3 +282,51 @@ async def test_harness_injected_as_memory_layer(tmp_path):
     # Check that agent has a harness memory layer
     layer_names = [name for name, _ in agent.memory_layers]
     assert "harness" in layer_names, f"Expected 'harness' in memory layers, got: {layer_names}"
+
+
+@pytest.mark.asyncio
+async def test_audit_harness_appends_jsonl_entries(tmp_path):
+    """audit.jsonl appends one record per turn with required fields."""
+    from nutshell.runtime.session import Session
+
+    provider = MockProvider([
+        ("first", [], TokenUsage(input_tokens=10, output_tokens=5)),
+        ("second", [], TokenUsage(input_tokens=20, output_tokens=7)),
+    ])
+    agent = Agent(provider=provider)
+
+    session = Session(
+        agent,
+        session_id="test-audit-jsonl",
+        base_dir=tmp_path / "sessions",
+        system_base=tmp_path / "_sessions",
+    )
+
+    await session.chat("one")
+    await session.chat("two")
+
+    audit_path = session.core_dir / "audit.jsonl"
+    lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+
+    required_fields = {
+        "ts",
+        "session_id",
+        "entity",
+        "triggered_by",
+        "iterations",
+        "tool_calls",
+        "tools_used",
+        "total_tokens",
+        "model",
+        "provider",
+    }
+    entries = [json.loads(line) for line in lines]
+    for entry in entries:
+        assert required_fields <= entry.keys()
+        assert entry["session_id"] == "test-audit-jsonl"
+        assert entry["triggered_by"] == "user"
+        assert isinstance(entry["tools_used"], list)
+
+    assert entries[0]["total_tokens"] == 15
+    assert entries[1]["total_tokens"] == 27
