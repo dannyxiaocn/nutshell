@@ -17,6 +17,7 @@ class KimiForCodingProvider(AnthropicProvider):
 
     # Kimi's API does not support Anthropic cache_control blocks.
     _supports_cache_control: ClassVar[bool] = False
+    _supports_thinking: ClassVar[bool] = False
 
     def __init__(
         self,

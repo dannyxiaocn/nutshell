@@ -113,6 +113,8 @@ class Session:
             self._agent._provider = resolve_provider(desired_provider)
 
         self._agent.model = params.get("model") or self._agent.model
+        self._agent.thinking = bool(params.get("thinking", self._agent.thinking))
+        self._agent.thinking_budget = int(params.get("thinking_budget", self._agent.thinking_budget))
 
         write_session_status(self.system_dir, heartbeat_interval=params["heartbeat_interval"])
 

@@ -23,6 +23,8 @@ class Provider(ABC):
         on_text_chunk: Callable[[str], None] | None = None,
         cache_system_prefix: str = "",
         cache_last_human_turn: bool = False,
+        thinking: bool = False,
+        thinking_budget: int = 8000,
     ) -> "tuple[str, list[ToolCall], TokenUsage]":
         """Send messages to the LLM and return (content, tool_calls, usage).
 

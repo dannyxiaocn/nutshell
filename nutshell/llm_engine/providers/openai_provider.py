@@ -60,6 +60,8 @@ class OpenAIProvider(Provider):
         on_text_chunk: Callable[[str], None] | None = None,
         cache_system_prefix: str = "",
         cache_last_human_turn: bool = False,
+        thinking: bool = False,
+        thinking_budget: int = 8000,
     ) -> tuple[str, list[ToolCall], TokenUsage]:
         api_messages = _build_messages(system_prompt, messages, cache_system_prefix)
         api_tools = [_tool_to_openai(t) for t in tools] if tools else []

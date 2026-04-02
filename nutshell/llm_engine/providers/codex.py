@@ -53,6 +53,8 @@ class CodexProvider(Provider):
         on_text_chunk: Callable[[str], None] | None = None,
         cache_system_prefix: str = "",
         cache_last_human_turn: bool = False,
+        thinking: bool = False,
+        thinking_budget: int = 8000,
     ) -> tuple[str, list[ToolCall], TokenUsage]:
         access_token, account_id = self._get_auth()
         headers = _build_headers(access_token, account_id)

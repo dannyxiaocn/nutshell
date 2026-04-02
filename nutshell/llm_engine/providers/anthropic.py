@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 
 class AnthropicProvider(Provider):
+    _supports_thinking = True
     """LLM provider backed by Anthropic Claude."""
 
     _supports_cache_control: ClassVar[bool] = True
@@ -43,6 +44,8 @@ class AnthropicProvider(Provider):
         on_text_chunk: Callable[[str], None] | None = None,
         cache_system_prefix: str = "",
         cache_last_human_turn: bool = False,
+        thinking: bool = False,
+        thinking_budget: int = 8000,
     ) -> tuple[str, list[ToolCall], TokenUsage]:
         cache_idx = _find_cache_breakpoint(messages) if (
             cache_last_human_turn and self._supports_cache_control
@@ -56,6 +59,10 @@ class AnthropicProvider(Provider):
             "system": _build_system_param(cache_system_prefix, system_prompt, self._supports_cache_control),
             "messages": api_messages,
         }
+        if thinking and self._supports_thinking:
+            kwargs["betas"] = ["interleaved-thinking-2025-05-14"]
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            kwargs["max_tokens"] = max(self.max_tokens, thinking_budget + 1000)
         if api_tools:
             kwargs["tools"] = api_tools
 

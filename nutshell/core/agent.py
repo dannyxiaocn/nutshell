@@ -84,6 +84,8 @@ class Agent(BaseAgent):
         # App notifications from core/apps/*.md, injected as system-prompt block.
         self.app_notifications: list[tuple[str, str]] = []
         self.session_context: str = ""
+        self.thinking: bool = False
+        self.thinking_budget: int = 8000
 
     @property
     def provider(self) -> Provider:
@@ -223,6 +225,8 @@ class Agent(BaseAgent):
                     on_text_chunk=on_text_chunk,
                     cache_system_prefix=system_prefix,
                     cache_last_human_turn=_cache_history,
+                    thinking=self.thinking,
+                    thinking_budget=self.thinking_budget,
                 )
             except Exception as primary_exc:
                 fb_provider = self._get_fallback_provider()
@@ -239,6 +243,8 @@ class Agent(BaseAgent):
                     on_text_chunk=on_text_chunk,
                     cache_system_prefix=system_prefix,
                     cache_last_human_turn=_cache_history,
+                    thinking=self.thinking,
+                    thinking_budget=self.thinking_budget,
                 )
             total_usage = total_usage + turn_usage
             # Only stream the first completion; subsequent rounds (tool loops)
