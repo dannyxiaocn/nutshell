@@ -406,9 +406,9 @@ nutshell/              ← Python library
 ui/                    ← UI applications
 ├── cli/
 │   ├── main.py        # nutshell — unified CLI entry point
-│   ├── chat.py        # nutshell-chat (legacy alias)
+│   ├── chat.py        # chat helpers used by `nutshell chat`
 │   ├── new_agent.py   # entity scaffolding
-│   └── review_updates.py  # nutshell-review-updates
+│   └── review_updates.py  # review helpers used by `nutshell review`
 └── web/               # nutshell-web — monitoring UI (FastAPI + SSE)
     ├── app.py
     ├── sessions.py
@@ -712,7 +712,7 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 - 8 new tests in `test_cli_main.py`; 195 total.
 
 ### v1.3.7
-- **Chat timeout default increased** — `nutshell chat` and `nutshell-chat` default `--timeout` raised from 120s to 300s. Complex agent tasks (especially with `--entity`) no longer time out prematurely while the agent is still working.
+- **Chat timeout default increased** — `nutshell chat` default `--timeout` raised from 120s to 300s. Complex agent tasks (especially with `--entity`) no longer time out prematurely while the agent is still working.
 
 ### v1.3.6
 - **Entity layered memory seeding** — `session_factory.init_session()` now copies all `.md` files from `entity/<name>/memory/` into `session/core/memory/` on first creation (idempotent). Entities can pre-seed layered memory layers alongside the flat `memory.md`.
@@ -770,13 +770,13 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 - **`spawn_session` tool** — agents create sub-sessions dynamically. Shared `session_factory.init_session()`.
 
 ### v1.2.1
-- **`propose_entity_update` tool + `nutshell-review-updates` CLI** — agents submit entity change requests for human review.
+- **`propose_entity_update` tool + `nutshell review` CLI** — agents submit entity change requests for human review.
 
 ### v1.2.0
 - **Anthropic prompt caching** — static prefix (system.md + session.md) cached; dynamic suffix (memory + skills) not cached.
 
 ### v1.1.9
-- **`nutshell-chat` CLI** — single-shot agent interaction. `send_to_session` system tool. `user_input_id` in turns for multi-agent polling.
+- **`nutshell chat` CLI** — single-shot agent interaction. `send_to_session` system tool. `user_input_id` in turns for multi-agent polling.
 
 ### v1.1.7 — v1.1.8
 - **Anthropic thinking block support**. **Layered session memory** (`core/memory/*.md`). **`as_tool(clear_history=True)`**. **`reload_capabilities` summary**.

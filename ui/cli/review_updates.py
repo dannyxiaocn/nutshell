@@ -1,16 +1,6 @@
-"""nutshell-review-updates — interactive CLI to review entity update requests.
-
-Usage:
-    nutshell-review-updates          # list pending updates and review each one
-    nutshell-review-updates --list   # list only, don't prompt
-
-Exit codes:
-    0  — completed (some updates may have been applied or rejected)
-    1  — error
-"""
+"""Review pending entity update requests for the unified `nutshell review` CLI."""
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -31,50 +21,24 @@ def _show_record(record, idx: int, total: int) -> None:
     print(bar)
 
 
-def main() -> None:
+def review_updates(*, list_only: bool = False, updates_dir: Path | None = None, repo_root: Path | None = None) -> int:
     from nutshell.runtime.env import load_dotenv
+    from nutshell.runtime.entity_updates import apply_update, list_pending_updates, reject_update
+
     load_dotenv()
-
-    parser = argparse.ArgumentParser(
-        prog="nutshell-review-updates",
-        description="Review entity update requests submitted by agents.",
-    )
-    parser.add_argument(
-        "--list", action="store_true",
-        help="List pending updates without prompting to approve/reject",
-    )
-    parser.add_argument(
-        "--updates-dir", type=Path, default=None,
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--repo-root", type=Path, default=None,
-        help=argparse.SUPPRESS,
-    )
-    args = parser.parse_args()
-
-    from nutshell.runtime.entity_updates import (
-        list_pending_updates,
-        apply_update,
-        reject_update,
-    )
-
-    updates_base = args.updates_dir
-    repo_root = args.repo_root
-
-    pending = list_pending_updates(updates_base)
+    pending = list_pending_updates(updates_dir)
 
     if not pending:
         print("No pending entity update requests.")
-        return
+        return 0
 
     print(f"\n{len(pending)} pending update request(s).")
 
-    if args.list:
+    if list_only:
         for i, record in enumerate(pending, 1):
             print(f"\n  {i}. [{record.ts}] {record.file_path}  (session: {record.session_id})")
             print(f"     Reason: {record.reason[:80]}")
-        return
+        return 0
 
     applied = 0
     rejected = 0
@@ -86,34 +50,33 @@ def main() -> None:
                 choice = input("\n  [a]pply / [r]eject / [s]kip / [q]uit: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 print("\nAborted.")
-                break
+                return 0
             if choice in ("a", "apply"):
                 try:
-                    apply_update(record.id, updates_base=updates_base, entity_base=repo_root)
+                    apply_update(record.id, updates_base=updates_dir, entity_base=repo_root)
                     print(f"  ✓ Applied — {record.file_path} updated.")
                     applied += 1
                 except Exception as exc:
                     print(f"  ✗ Error applying: {exc}", file=sys.stderr)
                 break
-            elif choice in ("r", "reject"):
+            if choice in ("r", "reject"):
                 try:
-                    reject_update(record.id, updates_base=updates_base)
-                    print(f"  ✗ Rejected.")
+                    reject_update(record.id, updates_base=updates_dir)
+                    print("  ✗ Rejected.")
                     rejected += 1
                 except Exception as exc:
                     print(f"  ✗ Error rejecting: {exc}", file=sys.stderr)
                 break
-            elif choice in ("s", "skip"):
+            if choice in ("s", "skip"):
                 print("  Skipped.")
                 break
-            elif choice in ("q", "quit"):
+            if choice in ("q", "quit"):
                 print(f"\nDone. Applied: {applied}, Rejected: {rejected}, Remaining: {len(pending) - i}")
-                return
-            else:
-                print("  Please enter 'a', 'r', 's', or 'q'.")
+                return 0
+            print("  Please enter 'a', 'r', 's', or 'q'.")
 
     print(f"\nDone. Applied: {applied}, Rejected: {rejected}.")
+    return 0
 
 
-if __name__ == "__main__":
-    main()
+__all__ = ["review_updates"]

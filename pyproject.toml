@@ -20,11 +20,6 @@ dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0"]
 
 [project.scripts]
 nutshell                = "ui.cli.main:main"
-nutshell-server         = "nutshell.runtime.server:main"
-nutshell-web            = "ui.web:main"
-nutshell-new-agent      = "ui.cli.new_agent:main"
-nutshell-chat           = "ui.cli.chat:main"
-nutshell-review-updates = "ui.cli.review_updates:main"
 qjbq-server             = "qjbq.cli:main"
 
 [tool.hatch.build.targets.wheel]

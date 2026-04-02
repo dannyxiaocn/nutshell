@@ -1034,14 +1034,8 @@ def _add_review_parser(subparsers) -> None:
 
 
 def cmd_review(args) -> int:
-    from ui.cli.review_updates import main as review_main
-    # Inject --list flag if requested
-    if args.list:
-        sys.argv = ["nutshell-review-updates", "--list"]
-    else:
-        sys.argv = ["nutshell-review-updates"]
-    review_main()
-    return 0
+    from ui.cli.review_updates import review_updates
+    return review_updates(list_only=args.list)
 
 
 # ── Subcommands: server / web ─────────────────────────────────────────────────
