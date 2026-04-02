@@ -13,7 +13,7 @@ from nutshell.runtime.params import ensure_session_params, read_session_params
 from nutshell.runtime.model_eval import evaluate_task_complexity, suggest_model
 from nutshell.llm_engine.registry import provider_name, resolve_provider
 from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
-from nutshell.tool_engine.sandbox import BashSandbox
+from nutshell.tool_engine.sandbox import BashSandbox, WebSandbox
 from nutshell.tool_engine.executor.bash import BashExecutor
 
 if TYPE_CHECKING:
@@ -171,6 +171,10 @@ class Session:
                 blocked_patterns=blocked_patterns,
             ).load_dir(self.core_dir / "tools")
             bash_sandbox = BashSandbox(blocked_patterns)
+            web_sandbox = WebSandbox(
+                blocked_domains=params.get("blocked_domains") or [],
+                max_response_chars=int(params.get("sandbox_max_web_chars", 50000)),
+            )
             for i, t in enumerate(tools):
                 if t.name == "bash":
                     executor = BashExecutor(workdir=str(self.session_dir), sandbox=bash_sandbox)
@@ -179,7 +183,13 @@ class Session:
                         return await executor.execute(**kwargs)
 
                     tools[i] = Tool(name=t.name, description=t.description, func=_bash_impl, schema=t.schema)
-                    break
+                elif t.name == "fetch_url":
+                    from functools import partial
+                    from nutshell.tool_engine.registry import _make_fetch_url
+                    tools[i] = Tool(name=t.name, description=t.description, func=_make_fetch_url(web_sandbox), schema=t.schema)
+                elif t.name == "web_search":
+                    from nutshell.tool_engine.registry import _make_web_search
+                    tools[i] = Tool(name=t.name, description=t.description, func=_make_web_search(web_sandbox), schema=t.schema)
         except (FileNotFoundError, PermissionError):
             tools = []
         except Exception as e:
@@ -191,7 +201,14 @@ class Session:
             from nutshell.tool_engine.registry import resolve_tool_impl
             for i, t in enumerate(tools):
                 if t.name in tool_providers:
-                    impl = resolve_tool_impl(t.name, tool_providers[t.name])
+                    provider_name = tool_providers[t.name]
+                    if t.name in {"web_search", "fetch_url"}:
+                        try:
+                            impl = resolve_tool_impl(t.name, provider_name, sandbox=web_sandbox)
+                        except TypeError:
+                            impl = resolve_tool_impl(t.name, provider_name)
+                    else:
+                        impl = resolve_tool_impl(t.name, provider_name)
                     if impl:
                         tools[i] = Tool(name=t.name, description=t.description, func=impl, schema=t.schema)
 

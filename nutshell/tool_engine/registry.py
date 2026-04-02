@@ -11,7 +11,10 @@ Provider swap (was runtime/tool_provider_factory.py):
 from __future__ import annotations
 
 import importlib
+from functools import partial
 from typing import Callable
+
+from nutshell.tool_engine.sandbox import WebSandbox
 
 
 # ── Built-in factories ────────────────────────────────────────────────────────
@@ -21,9 +24,9 @@ def _make_bash() -> Callable:
     return create_bash_tool()._func
 
 
-def _make_web_search() -> Callable:
+def _make_web_search(sandbox: WebSandbox | None = None) -> Callable:
     from nutshell.tool_engine.providers.web_search.brave import _brave_search
-    return _brave_search
+    return partial(_brave_search, sandbox=sandbox) if sandbox is not None else _brave_search
 
 
 def _make_send_to_session() -> Callable:
@@ -47,9 +50,9 @@ def _make_spawn_session() -> Callable:
     return spawn_session
 
 
-def _make_fetch_url() -> Callable:
+def _make_fetch_url(sandbox: WebSandbox | None = None) -> Callable:
     from nutshell.tool_engine.providers.fetch_url import fetch_url
-    return fetch_url
+    return partial(fetch_url, sandbox=sandbox) if sandbox is not None else fetch_url
 
 
 def _make_recall_memory() -> Callable:
@@ -132,7 +135,7 @@ _PROVIDER_REGISTRY: dict[str, dict[str, tuple[str, str]]] = {
 }
 
 
-def resolve_tool_impl(tool_name: str, provider_name: str) -> Callable | None:
+def resolve_tool_impl(tool_name: str, provider_name: str, sandbox: WebSandbox | None = None) -> Callable | None:
     """Return the async impl callable for (tool_name, provider_name), or None if unknown."""
     providers = _PROVIDER_REGISTRY.get(tool_name, {})
     entry = providers.get(provider_name)
@@ -141,7 +144,8 @@ def resolve_tool_impl(tool_name: str, provider_name: str) -> Callable | None:
     module_path, func_name = entry
     try:
         module = importlib.import_module(module_path)
-        return getattr(module, func_name)
+        impl = getattr(module, func_name)
+        return partial(impl, sandbox=sandbox) if sandbox is not None else impl
     except (ImportError, AttributeError):
         return None
 

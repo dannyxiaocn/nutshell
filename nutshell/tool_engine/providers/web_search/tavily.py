@@ -13,6 +13,8 @@ import urllib.request
 from typing import Optional
 
 from nutshell.core.tool import Tool
+from nutshell.tool_engine.sandbox import WebSandbox
+from nutshell.tool_engine.sandbox import WebSandbox
 
 
 def _tavily_search_sync(
@@ -23,10 +25,10 @@ def _tavily_search_sync(
     freshness: Optional[str],
     date_after: Optional[str],
     date_before: Optional[str],
-) -> str:
+) -> tuple[str, str]:
     api_key = os.environ.get("TAVILY_API_KEY", "").strip()
     if not api_key:
-        return "Error: TAVILY_API_KEY environment variable is not set."
+        return "https://api.tavily.com/search", "Error: TAVILY_API_KEY environment variable is not set."
 
     payload: dict = {
         "api_key": api_key,
@@ -55,13 +57,13 @@ def _tavily_search_sync(
             response = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
-        return f"Error: Tavily API returned HTTP {e.code}: {body[:500]}"
+        return url, f"Error: Tavily API returned HTTP {e.code}: {body[:500]}"
     except Exception as e:
-        return f"Error: {e}"
+        return url, f"Error: {e}"
 
     results = response.get("results") or []
     if not results:
-        return "No results found."
+        return url, "No results found."
 
     lines: list[str] = []
     for i, r in enumerate(results[:count], 1):
@@ -86,13 +88,22 @@ async def _tavily_search(
     freshness: Optional[str] = None,
     date_after: Optional[str] = None,
     date_before: Optional[str] = None,
+    sandbox: WebSandbox | None = None,
 ) -> str:
+    if sandbox is not None:
+        violation = await sandbox.check("web_search", {"url": "https://api.tavily.com"})
+        if violation is not None:
+            return violation
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
+    result = await loop.run_in_executor(
         None,
         _tavily_search_sync,
         query, count, country, language, freshness, date_after, date_before,
     )
+    if sandbox is not None:
+        result = await sandbox.filter_result('web_search', result)
+    return result
+    return await sandbox.filter_result("web_search", result) if sandbox is not None else result
 
 
 _SCHEMA = {

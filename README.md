@@ -199,7 +199,9 @@ _sessions/<id>/               ← system-only (agent never sees this)
   "tool_providers": {"web_search": "brave"},
   "persistent": false,
   "default_task": null,
-  "auto_model": false
+  "auto_model": false,
+  "blocked_domains": [],
+  "sandbox_max_web_chars": 50000
 }
 ```
 
@@ -264,6 +266,8 @@ Continue working on your tasks. When all tasks are done, respond with: SESSION_F
 | `reload_capabilities` | Hot-reload tools + skills from core/ |
 
 **`web_search`**: default provider Brave (`BRAVE_API_KEY`). Switch to Tavily: `"tool_providers": {"web_search": "tavily"}` in `params.json`.
+
+**Web sandbox**: set `blocked_domains` in `params.json` to deny `fetch_url` and `web_search` requests by hostname, and `sandbox_max_web_chars` to truncate large web responses.
 
 **Agent-created tools** (`.json` schema + `.sh` implementation). The script receives all kwargs as JSON on stdin, writes result to stdout:
 
@@ -509,6 +513,12 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 
 ## Changelog
 
+### v1.3.63
+- **WebSandbox**: added domain blocking and response truncation for `fetch_url` and `web_search`
+- New session params: `blocked_domains` and `sandbox_max_web_chars`
+- Session capability loader now injects web sandboxing into built-in fetch/search executors and provider overrides
+- Added tests in `tests/tool_engine/test_web_sandbox.py`
+
 ### v1.3.42
 - **Web UI rich tool call rendering** — `ui/web/index.html` now renders tool calls as structured cards instead of raw JSON.
 - `bash` calls show a yellow tool badge header, timeout/pty badges, and a monospace command block with collapsible long commands (`▼ show more`).
@@ -650,6 +660,7 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 - **Sandbox**: bash executor now checks commands against `DANGEROUS_DEFAULTS` before execution
 - Blocks destructive ops (`rm -rf /`, `mkfs`, `dd of=/dev/`), system cmds (`shutdown`, `reboot`), fork bombs, credential access
 - `params.json` supports `blocked_patterns` list for session-level custom regex blocking
+- `params.json` also supports `blocked_domains` and `sandbox_max_web_chars` for `fetch_url` / `web_search` web sandboxing
 - `ToolLoader` passes `blocked_patterns` through to `BashExecutor` automatically
 - 24 new tests in `test_sandbox.py`
 
@@ -789,6 +800,12 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 
 
 ## Changelog
+
+### v1.3.63
+- **WebSandbox**: added domain blocking and response truncation for `fetch_url` and `web_search`
+- New session params: `blocked_domains` and `sandbox_max_web_chars`
+- Session capability loader now injects web sandboxing into built-in fetch/search executors and provider overrides
+- Added tests in `tests/tool_engine/test_web_sandbox.py`
 
 ### v1.3.47
 - **bridge layer** (`nutshell/runtime/bridge.py`): unified client-side session abstraction inspired by claude-code's replBridge patterns
