@@ -30,7 +30,7 @@
 
 - [x] **整理现有 entity** (commit: bc2cc6f)：新增 `entity/README.md` 作为内建 entity catalog，并为 10 个活跃 entity 补齐 `README.md`，明确用途、状态与保留原因；新增 `tests/test_entity_catalog.py` 防止再次出现用途不明的 entity。
 - [x] **meta session 作为 entity 实例化单位** (commit: 9472524)：`sync_from_entity()` 现同时为 `sessions/<entity>_meta/` 引导 memory 与 playground，`session_factory` 明确从 meta session 实例化子 session；补充 README 与相关 `agent.yaml` 的 `meta_session` 说明字段，并新增 playground 继承测试。
-- [ ] **给 meta session 配工具：子 session 管理**：  
+- [x] **给 meta session 配工具：子 session 管理** (commit: 6a1c5c4)：  
   - `list_child_sessions(entity)` — 列出 entity 所有子 session + status  
   - `get_session_info(session_id)` — 获取 session manifest + 最近 turns + tasks  
   - `archive_session(session_id)` — 将 session 移到 `_archived/` 而非删除  
