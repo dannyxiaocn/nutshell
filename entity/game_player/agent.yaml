@@ -1,8 +1,5 @@
 name: game_player
-description: >
-  Game player agent — a gaming specialist that excels at speedrunning,
-  high-scoring, and optimally solving all types of games: text adventures,
-  puzzles, strategy games, code challenges, riddles, and math games.
+description: '精英游戏专家。专注游戏策略分析、战术规划与实时决策，覆盖所有游戏类型。'
 version: 1.0.0
 extends: agent
 model: claude-sonnet-4-6

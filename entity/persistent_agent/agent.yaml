@@ -3,9 +3,7 @@
 
 name: persistent_agent
 extends: agent
-description: >-
-  A persistent, always-on agent that wakes periodically to check incoming
-  messages, review its state, and act on anything that needs attention.
+description: '持续在线的通用 agent，定期检查消息和任务，无任务时也保持心跳。'
 version: 1.0.0
 
 params:

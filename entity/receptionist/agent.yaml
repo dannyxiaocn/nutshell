@@ -1,8 +1,5 @@
 name: receptionist
-description: >
-  Receptionist agent — friendly front-desk assistant that communicates with users
-  and delegates complex work to a dedicated worker (core) agent. Keeps responses
-  concise, manages expectations, and monitors worker progress.
+description: '用户对外接口 agent。接收用户请求，分析意图，派发任务给合适的专业 agent。'
 version: 1.0.0
 extends: agent
 model: claude-sonnet-4-6

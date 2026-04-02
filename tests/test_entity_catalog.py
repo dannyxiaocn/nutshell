@@ -13,7 +13,6 @@ ACTIVE_ENTITIES = [
     "kimi_agent",
     "nutshell_dev",
     "nutshell_dev_codex",
-    "openai_agent",
     "persistent_agent",
     "receptionist",
     "yisebi",

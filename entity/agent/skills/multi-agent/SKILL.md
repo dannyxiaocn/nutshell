@@ -133,7 +133,6 @@ cat _sessions/2026-03-25_10-00-00/status.json
 |--------|----------|
 | `agent` | General-purpose tasks, coding, research, writing |
 | `kimi_agent` | Long-context tasks (Kimi's 128k context), document analysis |
-| `openai_agent` | OpenAI Codex — code generation, requires OPENAI_API_KEY |
 
 To see all available entities: `ls entity/`
 
