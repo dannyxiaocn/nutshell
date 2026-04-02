@@ -126,3 +126,23 @@ class FSSandbox(ToolSandbox):
         if len(result) > self._max:
             return result[:self._max] + f'\n... [truncated: {len(result)} chars total]'
         return result
+
+
+from urllib.parse import urlparse
+
+
+class WebSandbox(ToolSandbox):
+    def __init__(self, blocked_domains: list[str] | None = None, max_response_chars: int = 50000):
+        self._blocked = {d.lower() for d in (blocked_domains or []) if d}
+        self._max = max_response_chars
+
+    async def check(self, tool_name: str, args: dict) -> str | None:
+        hostname = (urlparse(args.get('url', '')).hostname or '').lower()
+        if hostname in self._blocked:
+            return f'[sandbox] blocked domain: {hostname}'
+        return None
+
+    async def filter_result(self, tool_name: str, result: str) -> str:
+        if len(result) > self._max:
+            return result[:self._max] + f'\n... [truncated: {len(result)} chars total]'
+        return result
