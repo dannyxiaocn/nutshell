@@ -827,3 +827,6 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 - meta-session strict alignment with entity config
 - new `alignment_blocked` session status and watcher-side blocking
 - `nutshell meta --check/--sync` for resolving entity/meta drift
+
+- **New built-in tool: `update_meta_memory`** — agents can persist cross-session mutable memory directly to their entity's meta-session without human approval.
+- **QJBQ is now the canonical inter-session messaging path** — `send_to_session` relays via QJBQ `POST /api/session-message`, which writes inbound `user_input` events into the target `_sessions/<id>/context.jsonl`; direct file mutation remains only as a compatibility fallback when the relay is unavailable.

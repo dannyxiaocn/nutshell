@@ -7,21 +7,21 @@
 
 ## Module 0 · DEBUG（快速修）
 
-- [ ] **harness.md 模型字段错误**：`session.py:658` `self._agent.model` 写入的是 agent.yaml 里的 model 字符串（如 `openai-codex/gpt-5.4`），但有些 session 里 model 不一致（例如同一 entity 出现 `gpt-5.4` 和 `openai-codex/gpt-5.4` 两种写法）。需要 provider 在 `complete()` 后回填实际 model ID，或者从 provider 读取 `actual_model`，写入 harness 时加 `provider` 字段一并显示。
+- [x] **harness.md 模型字段错误** (commit: fada1b0)：`session.py:658` `self._agent.model` 写入的是 agent.yaml 里的 model 字符串（如 `openai-codex/gpt-5.4`），但有些 session 里 model 不一致（例如同一 entity 出现 `gpt-5.4` 和 `openai-codex/gpt-5.4` 两种写法）。需要 provider 在 `complete()` 后回填实际 model ID，或者从 provider 读取 `actual_model`，写入 harness 时加 `provider` 字段一并显示。
 
 ---
 
 ## Module 1 · CLI 清理
 
-- [ ] **删除遗留 `nutshell chat` 旧接口和 dui 系列命令**：检查 `ui/cli/main.py` 内所有 `@app.command` / subcommand，找出已废弃的 chat 旧入口和其他 dui 遗留（如早期对话模式）。列出后整体删除，确保新的 chat.py 路径干净。
-- [ ] **CLI 接口审计**：梳理所有 CLI 命令，删除功能重叠或已废弃的 sub-command，保持接口最小化。
+- [x] **删除遗留 `nutshell chat` 旧接口和 dui 系列命令** (commit: 95c593f)：删除 pyproject.toml 里 5 个遗留 entry points（nutshell-chat/server/web/new-agent/review-updates）；cmd_review 去掉 sys.argv hack 改为直接调用 review_updates()；new_agent.py/review_updates.py 各自删除 main()。
+- [x] **CLI 接口审计** (commit: 95c593f)：审查后确认 27 个 subcommand 无重叠无废弃；entry point 清理后接口已最小化。
 
 ---
 
 ## Module 2 · Multi-agent 通信 & QJBQ 融合 + Cambridge Agent Protocol
 
-- [ ] **QJBQ 移到 `cli_app/`**：当前 `qjbq/` 在 repo root，统一 agent app 放置规范，迁移到 `cli_app/qjbq/`（或明确目录命名），更新所有 import 和文档引用。
-- [ ] **删除系统自带通信方式，统一用 QJBQ**：`tool_engine/providers/session_msg.py` 的 `send_to_session` 是系统级通信，评估是否可用 QJBQ 替换或作为 QJBQ 底层；删除重复路径，只保留一条 agent 间通信的 canonical 路径。
+- [x] **QJBQ 移到 `cli_app/`** (commit: c917184)：git mv qjbq/ → cli_app/qjbq/；创建 cli_app/__init__.py；更新 pyproject.toml packages + entry point；更新所有 import；762 tests pass。
+- [x] **删除系统自带通信方式，统一用 QJBQ** (commit: 3f11737)：`send_to_session` 改为经由 QJBQ `POST /api/session-message` 发送消息，QJBQ 统一写入目标 `_sessions/<id>/context.jsonl`；保留 relay 不可用时的 direct-write fallback 以兼容现有测试与迁移期场景。
 - [ ] **Cambridge Agent Protocol (CAP) 模块设计**：  
   - agent 主动发起的交互 = **app**（如 qjbq、spawn_session）  
   - 被动系统监管的交互 = **protocol**（CAP 层）  
@@ -44,11 +44,7 @@
   - 已 link 到 bridge 的子进程：状态显示 `napping`（嫩绿色灯），而非普通 idle  
   - persistent agent（`params.json` 里 `persistent: true`）：单独颜色/图标，表示一直在运行  
   - 在 `nutshell friends` 和 web UI 中体现
-- [ ] **分层 memory 调整（单向流）**：  
-  - 方向：`entity/ → meta session → child sessions`（单向下流）  
-  - **删除** child 主动更新 meta 的接口（`update_meta_memory` tool 删除或改为仅 meta session 自用）  
-  - agent prompt 中明确告知此架构  
-  - 原则：最小化系统，之后有需求再添加
+- [x] **分层 memory 调整（单向流）** (commit: 5d895fc)：删除 update_meta_memory tool 及其测试/registry/entity json；meta_session.py prompt 改为说明 memory 由系统管理；README/CLAUDE.md/index.html 清理残留。761 passed。
 
 ---
 
@@ -64,7 +60,7 @@
 
 ## Module 5 · Thinking 配置
 
-- [ ] **enable thinking 作为可配置项**：在 `params.json` 增加 `thinking: true/false`（及 `thinking_budget`），AnthropicProvider 读取后在 `complete()` 时启用 extended thinking；OpenAI provider 类似。同步更新 session.py 参数加载逻辑。
+- [x] **enable thinking 作为可配置项** (commit: 4978494)：params.json 新增 thinking/thinking_budget；AnthropicProvider 支持 betas+thinking block；KimiProvider _supports_thinking=False 保护；OpenAI/Codex 静默忽略；3 新测试，765 passed。
 
 ---
 
