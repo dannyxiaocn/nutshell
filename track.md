@@ -61,7 +61,7 @@
 
 ## Module 6 · 安全审查 / Sandbox 重设计
 
-- [ ] **Tool-level sandbox 重设计**（参考 claude code tool sandbox）：  
+- [x] **Tool-level sandbox 重设计** (commit: 4a48ad3)：  
   - 当前 sandbox 是 bash 命令级别（`BashExecutor` 过滤危险命令）  
   - 新设计：每个 tool 有独立 sandbox policy（pre-check + post-filter），agent 不可见 sandbox 逻辑，只看 tool 返回  
   - 跳出 playground 修改系统文件：在 bash tool sandbox 里加 path scope 限制  
