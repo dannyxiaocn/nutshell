@@ -49,7 +49,7 @@
   - meta session 展开后完全看不到继承关系（扁平化），对 agent 透明  
   - entity 定义里保留标识：`link`（指向 parent）、`own`（自己独有）、`append`（在 parent 基础上追加）  
   - meta session 的「自己部分」完全独立，entity 更新只更新继承的部分  
-- [ ] **entity 可更新 parent entity 内容**：设计 `propose_parent_update` 接口（已有 `propose_entity_update`），支持更新 parent entity 的继承内容，走 review 流程
+- [x] **entity 可更新 parent entity 内容** (commit: 6bf957d)：设计 `propose_parent_update` 接口（已有 `propose_entity_update`），支持更新 parent entity 的继承内容，走 review 流程
 
 ---
 
