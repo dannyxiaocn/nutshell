@@ -524,6 +524,7 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
   - **Caller detection**: `user_input` events carry `caller` field (`"human"` or `"agent"`). CLI uses `sys.stdin.isatty()`; `send_to_session` always writes `"agent"`. When caller is an agent, system prompt injects structured reply guidance (`[DONE]`/`[REVIEW]`/`[BLOCKED]`/`[ERROR]` prefixes).
   - **Git Master Node**: `GitCoordinator` class in `nutshell/runtime/git_coordinator.py` assigns master/sub roles per git remote URL. Registry at `_sessions/git_masters.json`. `git_checkpoint` output includes `[git:master]` or `[git:sub]` tag. Stale masters (dead PID) are auto-reclaimed. Session cleanup releases master claims.
 - 35 new tests (`test_caller_detection.py`, `test_git_coordinator.py`); 732 total.
+- **CAP (Cambridge Agent Protocol)**: `nutshell/runtime/cap.py` defines protocol primitives for supervised coordination (`handshake`, `lock`, `broadcast`, `heartbeat-sync`) and exposes `git_coordinator` as the first CAP protocol adapter.
 
 ### v1.3.38
 - **TUI removed** — `ui/tui.py` deleted; `nutshell-tui` entry point and `textual` dependency removed from `pyproject.toml`; all references cleaned from `ui/cli/main.py` and `README.md`. Web UI is for humans, CLI is for agents.
