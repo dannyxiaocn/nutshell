@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from nutshell.core.loader import BaseLoader
+from nutshell.core.loader import AgentConfig, BaseLoader
 from nutshell.core.agent import Agent
 from nutshell.skill_engine.loader import SkillLoader
 from nutshell.tool_engine.loader import ToolLoader
@@ -23,20 +23,12 @@ class AgentLoader(BaseLoader[Agent]):
 
     def load(self, path: Path) -> Agent:
         """Load agent from a directory containing agent.yaml."""
-        try:
-            import yaml
-        except ImportError:
-            raise ImportError("Install pyyaml to use AgentLoader: pip install pyyaml")
-
         path = Path(path)
-        manifest_path = path / "agent.yaml"
-        if not manifest_path.exists():
-            raise FileNotFoundError(f"agent.yaml not found in: {path}")
-
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        config = AgentConfig.from_path(path)
+        manifest = config.manifest
 
         parent: Agent | None = None
-        extends = manifest.get("extends")
+        extends = config.extends
         if extends:
             candidate = path.parent / extends
             if not (candidate / "agent.yaml").exists():
@@ -144,20 +136,15 @@ class AgentLoader(BaseLoader[Agent]):
 
     def _ancestor_dirs(self, path: Path) -> list[Path]:
         """Return [path, parent, grandparent, ...] by walking the extends chain."""
-        try:
-            import yaml
-        except ImportError:
-            return [path]
-
         dirs: list[Path] = []
         current = path
         while True:
             dirs.append(current)
-            mpath = current / "agent.yaml"
-            if not mpath.exists():
+            try:
+                config = AgentConfig.from_path(current)
+            except Exception:
                 break
-            manifest = yaml.safe_load(mpath.read_text(encoding="utf-8")) or {}
-            extends = manifest.get("extends")
+            extends = config.extends
             if not extends:
                 break
             parent = current.parent / extends

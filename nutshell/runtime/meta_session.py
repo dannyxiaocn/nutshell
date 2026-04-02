@@ -105,6 +105,72 @@ def _entity_rel_from_meta_path(path: str) -> str:
     return path.removeprefix('core/')
 
 
+def _load_agent_config(entity_name: str, entity_base: Path):
+    from nutshell.core.loader import AgentConfig
+
+    entity_dir = entity_base / entity_name
+    if not entity_dir.exists():
+        return None
+    try:
+        return AgentConfig.from_path(entity_dir)
+    except Exception:
+        return None
+
+
+def _inheritance_fields(entity_name: str, entity_base: Path) -> tuple[set[str], set[str]]:
+    config = _load_agent_config(entity_name, entity_base)
+    if config is None:
+        return set(), set()
+    own_fields = set(config.inheritance.own)
+    inherited_fields = set(config.inheritance.link) | set(config.inheritance.append)
+    return own_fields, inherited_fields
+
+
+def _parent_entity_name(entity_name: str, entity_base: Path) -> str | None:
+    config = _load_agent_config(entity_name, entity_base)
+    return config.extends if config is not None else None
+
+
+def _copy_missing_files(src_dir: Path, dst_dir: Path) -> None:
+    if not src_dir.is_dir():
+        return
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    for src in sorted(src_dir.rglob('*')):
+        if src.is_dir():
+            continue
+        rel = src.relative_to(src_dir)
+        dst = dst_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not dst.exists():
+            shutil.copy2(src, dst)
+
+
+def _sync_inherited_memory(entity_name: str, entity_base: Path, core_dir: Path) -> None:
+    own_fields, _ = _inheritance_fields(entity_name, entity_base)
+    if 'memory' in own_fields or 'memory.md' in own_fields:
+        return
+    parent_name = _parent_entity_name(entity_name, entity_base)
+    if not parent_name:
+        return
+    parent_dir = entity_base / parent_name
+    parent_memory = parent_dir / 'memory.md'
+    meta_memory = core_dir / 'memory.md'
+    if parent_memory.exists() and not meta_memory.read_text(encoding='utf-8').strip():
+        meta_memory.write_text(parent_memory.read_text(encoding='utf-8'), encoding='utf-8')
+    _copy_missing_files(parent_dir / 'memory', core_dir / 'memory')
+
+
+def _sync_inherited_playground(entity_name: str, entity_base: Path, meta_dir: Path) -> None:
+    own_fields, _ = _inheritance_fields(entity_name, entity_base)
+    if 'playground' in own_fields:
+        return
+    parent_name = _parent_entity_name(entity_name, entity_base)
+    if not parent_name:
+        return
+    parent_dir = entity_base / parent_name
+    _copy_missing_files(parent_dir / 'playground', meta_dir / 'playground')
+
+
 def _resolve_entity_tools_dir(entity_name: str, entity_base: Path) -> Path | None:
     """Walk the extends chain to find the first entity that has a non-empty tools/ dir."""
     seen: set[str] = set()
@@ -356,6 +422,7 @@ def sync_from_entity(entity_name: str, entity_base: Path | None = None, s_base: 
             dst_file = meta_memory_dir / src_file.name
             if not dst_file.exists():
                 shutil.copy2(src_file, dst_file)
+    _sync_inherited_memory(entity_name, entity_root, core_dir)
 
     entity_playground_dir = entity_dir / 'playground'
     if entity_playground_dir.is_dir():
@@ -369,6 +436,7 @@ def sync_from_entity(entity_name: str, entity_base: Path | None = None, s_base: 
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             if not dst_path.exists():
                 shutil.copy2(src_path, dst_path)
+    _sync_inherited_playground(entity_name, entity_root, meta_dir)
 
 
 def _load_gene_commands(entity_name: str, entity_base: Path | None = None) -> list[str]:

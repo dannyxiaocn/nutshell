@@ -4,6 +4,23 @@ version: 1.0.0
 extends: kimi_agent
 release_policy: persistent
 max_iterations: 20
+link:
+  - model
+  - provider
+  - fallback_model
+  - fallback_provider
+append:
+  - skills
+own:
+  - name
+  - description
+  - version
+  - release_policy
+  - max_iterations
+  - prompts
+  - meta_session
+  - memory
+  - playground
 
 prompts:
   system:                        # inherited from kimi_agent → agent

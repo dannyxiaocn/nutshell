@@ -113,3 +113,54 @@ def test_sync_from_entity_does_not_overwrite_meta_playground(tmp_path, monkeypat
     (meta_dir / 'playground' / 'config.txt').write_text('meta version', encoding='utf-8')
     sync_from_entity('demo', entity_base)
     assert (meta_dir / 'playground' / 'config.txt').read_text(encoding='utf-8') == 'meta version'
+
+
+def test_sync_from_entity_preserves_own_memory_when_parent_changes(tmp_path, monkeypatch):
+    entity_base = tmp_path / 'entity'
+    parent = entity_base / 'parent'
+    (parent / 'memory').mkdir(parents=True)
+    (parent / 'memory.md').write_text('parent-v1', encoding='utf-8')
+    (parent / 'agent.yaml').write_text('name: parent\n', encoding='utf-8')
+    child = entity_base / 'child'
+    child.mkdir(parents=True)
+    (child / 'agent.yaml').write_text(
+        """name: child
+extends: parent
+own:
+  - memory
+""",
+        encoding='utf-8',
+    )
+    monkeypatch.setattr('nutshell.runtime.meta_session._SESSIONS_DIR', tmp_path / 'sessions')
+    sync_from_entity('child', entity_base)
+    meta_dir = get_meta_dir('child')
+    (meta_dir / 'core' / 'memory.md').write_text('child-own', encoding='utf-8')
+    (parent / 'memory.md').write_text('parent-v2', encoding='utf-8')
+    sync_from_entity('child', entity_base)
+    assert (meta_dir / 'core' / 'memory.md').read_text(encoding='utf-8') == 'child-own'
+
+
+def test_sync_from_entity_updates_inherited_playground_without_touching_own(tmp_path, monkeypatch):
+    entity_base = tmp_path / 'entity'
+    parent = entity_base / 'parent'
+    (parent / 'playground').mkdir(parents=True)
+    (parent / 'playground' / 'shared.txt').write_text('parent-shared', encoding='utf-8')
+    (parent / 'agent.yaml').write_text('name: parent\n', encoding='utf-8')
+    child = entity_base / 'child'
+    (child / 'playground').mkdir(parents=True)
+    (child / 'playground' / 'own.txt').write_text('child-own', encoding='utf-8')
+    (child / 'agent.yaml').write_text(
+        """name: child
+extends: parent
+link:
+  - playground
+own:
+  - memory
+""",
+        encoding='utf-8',
+    )
+    monkeypatch.setattr('nutshell.runtime.meta_session._SESSIONS_DIR', tmp_path / 'sessions')
+    sync_from_entity('child', entity_base)
+    meta_dir = get_meta_dir('child')
+    assert (meta_dir / 'playground' / 'own.txt').read_text(encoding='utf-8') == 'child-own'
+    assert (meta_dir / 'playground' / 'shared.txt').read_text(encoding='utf-8') == 'parent-shared'
