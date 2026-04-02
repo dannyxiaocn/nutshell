@@ -22,12 +22,7 @@
 
 - [x] **QJBQ 移到 `cli_app/`** (commit: c917184)：git mv qjbq/ → cli_app/qjbq/；创建 cli_app/__init__.py；更新 pyproject.toml packages + entry point；更新所有 import；762 tests pass。
 - [x] **删除系统自带通信方式，统一用 QJBQ** (commit: 9c015a9)：`send_to_session` 改为经由 QJBQ `POST /api/session-message` 发送消息，QJBQ 统一写入目标 `_sessions/<id>/context.jsonl`；保留 relay 不可用时的 direct-write fallback 以兼容现有测试与迁移期场景。
-- [ ] **Cambridge Agent Protocol (CAP) 模块设计**：  
-  - agent 主动发起的交互 = **app**（如 qjbq、spawn_session）  
-  - 被动系统监管的交互 = **protocol**（CAP 层）  
-  - `git_coordinator` 归入 CAP —— 这是 multi-agent protocol 隔离层，类似 Python 的 GIL  
-  - 设计 CAP 接口（`nutshell/runtime/cap.py`）：定义 agent 可参与的协议原语（handshake、lock、broadcast、heartbeat-sync）  
-  - git_coordinator 作为 CAP 的第一个 protocol 实现
+- [x] **Cambridge Agent Protocol (CAP) 模块设计** (commit: b36eb75)：新增 `nutshell/runtime/cap.py`，定义 `handshake`、`lock`、`broadcast`、`heartbeat-sync` 四类协议原语，并将 `git_coordinator` 暴露为首个 CAP protocol adapter；新增 `tests/test_cap.py` 覆盖原语语义与 git adapter。
 
 ---
 

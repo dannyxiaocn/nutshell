@@ -830,3 +830,5 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 
 - **New built-in tool: `update_meta_memory`** — agents can persist cross-session mutable memory directly to their entity's meta-session without human approval.
 - **QJBQ is now the canonical inter-session messaging path** — `send_to_session` relays via QJBQ `POST /api/session-message`, which writes inbound `user_input` events into the target `_sessions/<id>/context.jsonl`; direct file mutation remains only as a compatibility fallback when the relay is unavailable.
+
+- **CAP (Cambridge Agent Protocol)**: `nutshell/runtime/cap.py` defines protocol primitives for supervised coordination (`handshake`, `lock`, `broadcast`, `heartbeat-sync`) and exposes `git_coordinator` as the first CAP protocol adapter.
