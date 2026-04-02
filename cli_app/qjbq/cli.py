@@ -40,7 +40,7 @@ def main() -> None:
 
     import uvicorn
     uvicorn.run(
-        "qjbq.server:app",
+        "cli_app.qjbq.server:app",
         host=args.host,
         port=args.port,
         log_level="info",

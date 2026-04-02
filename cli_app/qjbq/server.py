@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
-from qjbq import __version__
+from cli_app.qjbq import __version__
 
 # ── Sessions directory ───────────────────────────────────────────────
 # Default: <repo_root>/sessions/  — overridable via QJBQ_SESSIONS_DIR

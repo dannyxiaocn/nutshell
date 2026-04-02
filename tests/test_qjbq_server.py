@@ -17,7 +17,7 @@ def client(tmp_path: Path):
     """Create a TestClient with a temp sessions dir."""
     os.environ["QJBQ_SESSIONS_DIR"] = str(tmp_path)
     # Re-import to pick up the env var change
-    from qjbq.server import app
+    from cli_app.qjbq.server import app
     with TestClient(app) as c:
         yield c
     os.environ.pop("QJBQ_SESSIONS_DIR", None)
