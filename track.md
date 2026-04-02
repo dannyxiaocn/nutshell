@@ -75,7 +75,7 @@
   - `harness`（保留）= agent 自我感知组件的总称  
   - 拆分为：`sys_harness`（系统基础，每 turn 自动写）+ `audit_harness`（工具/skill 使用审计，跨 session 聚合）  
   - 读读 harness 相关 blog，明确定义边界
-- [ ] **Token 计算器 tool**：`count_tokens(text, model)` built-in tool，调用 tokenizer 精确计算 token 数，供 agent 在操作前评估 cost。
+- [x] **Token 计算器 tool** (commit: cb43c19)：count_tokens(text, model) built-in tool；Claude 用 anthropic tokenizer，OpenAI 用 tiktoken（fallback chars/4），Kimi 按 chars/3.5；788 passed。
 - [ ] **Tool manager persistent agent**：专职维护 tool stats，定期聚合 harness 数据，输出 tool 使用热力图 + 效率报告到 `_sessions/tool_stats/`。
 - [ ] **Nutshell 专职 persistent agent 体系**：  
   - `dev_maintainer` — 保证无 bug + 最精简化每个功能（基于 nutshell_dev）  
