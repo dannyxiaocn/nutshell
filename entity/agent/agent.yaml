@@ -30,6 +30,7 @@ tools:
   - tools/list_child_sessions.json
   - tools/get_session_info.json
   - tools/archive_session.json
+  - tools/count_tokens.json
 
 skills:
   - skills/creator-mode

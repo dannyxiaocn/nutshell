@@ -1,0 +1,19 @@
+{
+  "name": "count_tokens",
+  "description": "Count the number of tokens in a text string for a given model",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "Text to count tokens for"
+      },
+      "model": {
+        "type": "string",
+        "description": "Model name used for token counting (default: claude-sonnet-4-6)",
+        "default": "claude-sonnet-4-6"
+      }
+    },
+    "required": ["text"]
+  }
+}

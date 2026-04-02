@@ -82,6 +82,16 @@ def _make_archive_session() -> Callable:
     from nutshell.tool_engine.providers.archive_session import archive_session
     return archive_session
 
+
+def _make_count_tokens() -> Callable:
+    from nutshell.tool_engine.providers.count_tokens import count_tokens
+    return count_tokens
+
+
+def _make_count_tokens() -> Callable:
+    from nutshell.tool_engine.providers.count_tokens import count_tokens
+    return count_tokens
+
 _BUILTIN_FACTORIES: dict[str, Callable[[], Callable]] = {
     "bash":                   _make_bash,
     "web_search":             _make_web_search,
@@ -96,6 +106,7 @@ _BUILTIN_FACTORIES: dict[str, Callable[[], Callable]] = {
     "list_child_sessions":    _make_list_child_sessions,
     "get_session_info":       _make_get_session_info,
     "archive_session":        _make_archive_session,
+    "count_tokens":           _make_count_tokens,
 }
 
 
