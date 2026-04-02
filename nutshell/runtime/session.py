@@ -14,6 +14,7 @@ from nutshell.runtime.model_eval import evaluate_task_complexity, suggest_model
 from nutshell.llm_engine.registry import provider_name, resolve_provider
 from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
 from nutshell.tool_engine.sandbox import BashSandbox
+from nutshell.tool_engine.executor.bash import BashExecutor
 
 if TYPE_CHECKING:
     from nutshell.runtime.ipc import FileIPC
@@ -640,6 +641,11 @@ class Session:
     # ── Internal ───────────────────────────────────────────────────
 
     def _write_harness_snapshot(self, result: AgentResult, triggered_by: str, *, auto_model_override: dict | None = None) -> None:
+        """Write both agent-visible and audit harness outputs for a turn."""
+        self._write_sys_harness(result, triggered_by, auto_model_override=auto_model_override)
+        self._write_audit_entry(result, triggered_by)
+
+    def _write_sys_harness(self, result: AgentResult, triggered_by: str, *, auto_model_override: dict | None = None) -> None:
         """Write a per-turn performance snapshot to core/memory/harness.md.
 
         Gives the agent a compact, always-visible summary of its recent
@@ -681,6 +687,27 @@ class Session:
         harness_path = self.core_dir / "memory" / "harness.md"
         harness_path.parent.mkdir(parents=True, exist_ok=True)
         harness_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _write_audit_entry(self, result: AgentResult, triggered_by: str) -> None:
+        """Append a machine-readable harness audit record to core/audit.jsonl."""
+        tool_names = sorted({tc.name for tc in result.tool_calls}) if result.tool_calls else []
+        usage = result.usage
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "session_id": self._session_id,
+            "entity": self.system_dir.name,
+            "triggered_by": triggered_by,
+            "iterations": result.iterations,
+            "tool_calls": len(result.tool_calls),
+            "tools_used": tool_names,
+            "total_tokens": usage.total_tokens,
+            "model": self._agent.model,
+            "provider": provider_name(self._agent._provider) or "unknown",
+        }
+        audit_path = self.core_dir / "audit.jsonl"
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with audit_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def _append_context(self, event: dict) -> None:
         """Append a conversation event (user_input or turn) to context.jsonl."""
