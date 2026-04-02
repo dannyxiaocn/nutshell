@@ -79,6 +79,8 @@ _STATUS_DOT = {
     "offline": "○",
 }
 
+_PERSISTENT_BADGE = "\033[92m[P]\033[0m"
+
 
 def _parse_ts(s: str | None) -> float:
     """Parse ISO timestamp to epoch float; return 0 on failure."""
@@ -127,7 +129,9 @@ def format_friends_table(friends: list[dict[str, Any]]) -> str:
         sid = f.get("id", "?")
         status = f["friend_status"]
         last = f["last_ago"]
-        lines.append(f"{dot} {entity:<16} ({sid})  {status:<8} last: {last}")
+        persistent = f.get("persistent", False)
+        p_badge = "\033[92m[P]\033[0m " if persistent else ""
+        lines.append(f"{dot} {entity:<16} ({sid})  {p_badge}{status:<8} last: {last}")
     return "\n".join(lines)
 
 
@@ -142,5 +146,7 @@ def format_friends_json(friends: list[dict[str, Any]]) -> str:
             "last_ago": f["last_ago"],
             "last_run_at": f.get("last_run_at"),
             "model_state": f.get("model_state"),
+            "persistent": bool(f.get("persistent", False)),
+            "persistent": bool(f.get("persistent", False)),
         })
     return json.dumps(compact, ensure_ascii=False, indent=2)

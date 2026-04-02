@@ -73,6 +73,8 @@
   .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
   .dot.running { background: var(--green); animation: pulse-dot 1.5s ease-in-out infinite; }
   .dot.napping { background: var(--yellow); animation: pulse-dot 2.5s ease-in-out infinite; }
+  .dot.persistent { background: #7df09a; }
+  .dot.persistent { background: #7df09a; }
   .dot.stopped { background: var(--red); }
   .dot.meta { background: #a371f7; }
   .dot.idle { background: var(--muted); }
@@ -336,7 +338,7 @@
     const list = document.getElementById('session-list');
     list.innerHTML = '';
     for (const sess of sessions) {
-      const tone = isMetaSession(sess) ? 'meta' : sessionTone(sess);
+      const tone = isMetaSession(sess) ? 'meta' : (sess.persistent ? 'persistent' : sessionTone(sess));
       const div = document.createElement('div');
       const linked = weixinStatus?.session === sess.id ? '🔗 ' : '';
       div.className = 'session-item' + (sess.id === currentSession ? ' active' : '');
@@ -594,6 +596,7 @@
     if (!session) return 'idle';
     if (session.pid_alive && session.model_state === 'running' && session.status !== 'stopped') return 'running';
     if (session.has_tasks && session.pid_alive && session.status !== 'stopped') return 'napping';
+    if (session.persistent) return 'persistent';
     if (session.status === 'stopped') return isStoppedOld(session) ? 'idle' : 'stopped';
     return 'idle';
   }
