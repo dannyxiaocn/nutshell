@@ -640,12 +640,19 @@ class Session:
         history_turns = len(self._agent._history)
         tool_names = sorted({tc.name for tc in result.tool_calls}) if result.tool_calls else []
 
+        # When auto_model is active, self._agent.model is the override; report the
+        # configured model instead so the snapshot reflects the session's actual setting.
+        configured_model = auto_model_override["original_model"] if auto_model_override else self._agent.model
+        provider_key = provider_name(self._agent._provider) or "unknown"
+
         lines = [
             "# Harness — Last Turn Performance",
             "",
             f"| Metric | Value |",
             f"|--------|-------|",
             f"| triggered_by | {triggered_by} |",
+            f"| provider | {provider_key} |",
+            f"| model | {configured_model} |",
             f"| iterations | {result.iterations} |",
             f"| tool_calls | {len(result.tool_calls)} |",
             f"| tools_used | {', '.join(tool_names) if tool_names else '(none)'} |",
@@ -655,10 +662,9 @@ class Session:
             f"| cache_read | {usage.cache_read_tokens:,} |",
             f"| cache_write | {usage.cache_write_tokens:,} |",
             f"| history_turns | {history_turns} |",
-            f"| model | {self._agent.model} |",
         ]
         if auto_model_override:
-            lines.append(f"| auto_model_override | {auto_model_override['original_model']} → {auto_model_override['suggested_model']} ({auto_model_override['complexity']}) |")
+            lines.append(f"| auto_model_used | {auto_model_override['suggested_model']} (complexity={auto_model_override['complexity']}) |")
         harness_path = self.core_dir / "memory" / "harness.md"
         harness_path.parent.mkdir(parents=True, exist_ok=True)
         harness_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

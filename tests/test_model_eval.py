@@ -203,7 +203,7 @@ async def test_tick_auto_model_overrides_to_opus(tmp_path):
 
     # Harness should record the override
     harness = (session.core_dir / "memory" / "harness.md").read_text()
-    assert "auto_model_override" in harness
+    assert "auto_model_used" in harness
     assert "claude-opus-4-6" in harness
 
 
@@ -233,7 +233,7 @@ async def test_tick_auto_model_overrides_to_haiku(tmp_path):
 
     # Harness records override to haiku
     harness = (session.core_dir / "memory" / "harness.md").read_text()
-    assert "auto_model_override" in harness
+    assert "auto_model_used" in harness
     assert "claude-haiku-4-5-20251001" in harness
 
 
@@ -263,7 +263,7 @@ async def test_tick_auto_model_no_override_when_same(tmp_path):
 
     # Harness should NOT have auto_model_override
     harness = (session.core_dir / "memory" / "harness.md").read_text()
-    assert "auto_model_override" not in harness
+    assert "auto_model_used" not in harness
 
 
 @pytest.mark.asyncio
@@ -289,7 +289,7 @@ async def test_tick_auto_model_disabled_by_default(tmp_path):
     assert agent.model == "claude-sonnet-4-6"
 
     harness = (session.core_dir / "memory" / "harness.md").read_text()
-    assert "auto_model_override" not in harness
+    assert "auto_model_used" not in harness
 
 
 @pytest.mark.asyncio
