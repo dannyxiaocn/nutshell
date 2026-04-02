@@ -832,3 +832,5 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 - **CAP (Cambridge Agent Protocol)**: `nutshell/runtime/cap.py` defines protocol primitives for supervised coordination (`handshake`, `lock`, `broadcast`, `heartbeat-sync`) and exposes `git_coordinator` as the first CAP protocol adapter.
 
 - **Entity catalog curated**: `entity/README.md` now lists all maintained built-in entities, and each active entity has a local `README.md` describing purpose, status, and retention rationale.
+
+- **Meta session as entity instance layer**: `sessions/<entity>_meta/` is the concrete runtime instantiation of an entity, seeding child sessions with flattened inherited config plus mutable memory and shared playground state.
