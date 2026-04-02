@@ -1,8 +1,9 @@
-# Nutshell `v1.3.61`
+# Nutshell `v1.3.62`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
 New in v1.3.61: entity manifests can document inheritance with `link`, `own`, and `append` markers, and meta-session sync preserves entity-owned memory/playground state.
+New in v1.3.62: child entities can submit review-gated `propose_parent_update` requests for inherited parent files.
 
 ---
 

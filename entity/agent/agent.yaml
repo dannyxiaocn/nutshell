@@ -36,6 +36,7 @@ tools:
   - tools/send_to_session.json
   - tools/spawn_session.json
   - tools/propose_entity_update.json
+  - tools/propose_parent_update.json
   - tools/fetch_url.json
   - tools/recall_memory.json
   - tools/state_diff.json
