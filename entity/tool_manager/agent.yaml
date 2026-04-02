@@ -9,5 +9,7 @@ params:
   persistent: true
   heartbeat_interval: 43200  # 12h
   default_task: >-
-    扫描所有 session 的 core/audit.jsonl，统计各 tool 的调用频率和 token 消耗。
-    输出摘要到 playground/tool_stats_report.md，并记录到 memory.md。
+    扫描 _sessions/*/core/audit.jsonl，并在缺失时回退扫描 sessions/*/core/audit.jsonl。
+    统计每个 tool 的调用次数、总 input tokens、总 output tokens、平均 tokens/call。
+    将按调用次数降序排列的 markdown 表格报告写入 _sessions/tool_stats/report.md（必要时创建目录）。
+    把本次统计摘要也写入自己的 memory.md。
