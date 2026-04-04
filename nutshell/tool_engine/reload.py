@@ -19,6 +19,15 @@ class _ReloadTarget(Protocol):
     def _load_session_capabilities(self) -> None: ...
 
 
+def _summarize_names(names: list[str], limit: int = 6) -> str:
+    if not names:
+        return "none"
+    if len(names) <= limit:
+        return ", ".join(names)
+    shown = ", ".join(names[:limit])
+    return f"{shown}, ..."
+
+
 def create_reload_tool(session: _ReloadTarget) -> Tool:
     """Return a Tool that triggers capability hot-reload for *session*."""
 
@@ -43,12 +52,3 @@ def create_reload_tool(session: _ReloadTarget) -> Tool:
         func=_reload,
         schema={"type": "object", "properties": {}, "required": []},
     )
-
-
-def _summarize_names(names: list[str], limit: int = 6) -> str:
-    if not names:
-        return "none"
-    if len(names) <= limit:
-        return ", ".join(names)
-    shown = ", ".join(names[:limit])
-    return f"{shown}, ..."
