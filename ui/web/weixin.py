@@ -74,6 +74,25 @@ class WeixinBridge:
         self.status: str = "idle"
         self.error: str | None = None
 
+    def _most_recent_session(self) -> str | None:
+        if not self._sys_dir.exists():
+            return None
+        best: str | None = None
+        best_ts = ""
+        for d in self._sys_dir.iterdir():
+            if not d.is_dir() or not (d / "manifest.json").exists():
+                continue
+            if _is_meta_session_id(d.name):
+                continue
+            try:
+                st = json.loads((d / "status.json").read_text())
+                ts = st.get("last_run_at", "")
+                if ts > best_ts:
+                    best_ts, best = ts, d.name
+            except Exception:
+                pass
+        return best
+
     # ── Account loading ──────────────────────────────────────────────────────
 
     def load_account(self) -> bool:
@@ -138,25 +157,6 @@ class WeixinBridge:
         self._current_session = self._most_recent_session()
         return True
 
-    def _most_recent_session(self) -> str | None:
-        if not self._sys_dir.exists():
-            return None
-        best: str | None = None
-        best_ts = ""
-        for d in self._sys_dir.iterdir():
-            if not d.is_dir() or not (d / "manifest.json").exists():
-                continue
-            if _is_meta_session_id(d.name):
-                continue
-            try:
-                st = json.loads((d / "status.json").read_text())
-                ts = st.get("last_run_at", "")
-                if ts > best_ts:
-                    best_ts, best = ts, d.name
-            except Exception:
-                pass
-        return best
-
     # ── Persistence ──────────────────────────────────────────────────────────
 
     def _save_sync_cursor(self) -> None:
@@ -213,6 +213,23 @@ class WeixinBridge:
             headers=_api_headers(self._token),
             timeout=10.0,
         )
+
+    def _list_sessions_summary(self) -> list[dict]:
+        if not self._sys_dir.exists():
+            return []
+        result = []
+        for d in self._sys_dir.iterdir():
+            if not d.is_dir() or not (d / "manifest.json").exists():
+                continue
+            if _is_meta_session_id(d.name):
+                continue
+            try:
+                st = json.loads((d / "status.json").read_text())
+                status = st.get("status", "active")
+            except Exception:
+                status = "?"
+            result.append({"id": d.name, "status": status})
+        return sorted(result, key=lambda s: s["id"])
 
     # ── Agent reply waiting ───────────────────────────────────────────────────
     # Delegated to BridgeSession.async_wait_for_reply() which uses
@@ -305,23 +322,6 @@ class WeixinBridge:
             )
 
         await self._send_text(client, from_user, reply, ctx_token)
-
-    def _list_sessions_summary(self) -> list[dict]:
-        if not self._sys_dir.exists():
-            return []
-        result = []
-        for d in self._sys_dir.iterdir():
-            if not d.is_dir() or not (d / "manifest.json").exists():
-                continue
-            if _is_meta_session_id(d.name):
-                continue
-            try:
-                st = json.loads((d / "status.json").read_text())
-                status = st.get("status", "active")
-            except Exception:
-                status = "?"
-            result.append({"id": d.name, "status": status})
-        return sorted(result, key=lambda s: s["id"])
 
     # ── Message processing ────────────────────────────────────────────────────
 
