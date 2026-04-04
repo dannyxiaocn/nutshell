@@ -10,89 +10,6 @@ if TYPE_CHECKING:
     from nutshell.core.tool import Tool
 
 
-class AnthropicProvider(Provider):
-    _supports_thinking = True
-    """LLM provider backed by Anthropic Claude."""
-
-    _supports_cache_control: ClassVar[bool] = True
-
-    def __init__(
-        self,
-        api_key: str | None = None,
-        max_tokens: int = 8096,
-        base_url: str | None = None,
-    ) -> None:
-        try:
-            import anthropic as _anthropic
-            import httpx
-        except ImportError:
-            raise ImportError("Install anthropic: pip install anthropic") from None
-        http_client = _build_http_client(httpx)
-        client_kwargs: dict[str, Any] = {"api_key": api_key, "base_url": base_url}
-        if http_client is not None:
-            client_kwargs["http_client"] = http_client
-        self._client = _anthropic.AsyncAnthropic(**client_kwargs)
-        self.max_tokens = max_tokens
-
-    async def complete(
-        self,
-        messages: list[Message],
-        tools: list["Tool"],
-        system_prompt: str,
-        model: str,
-        *,
-        on_text_chunk: Callable[[str], None] | None = None,
-        cache_system_prefix: str = "",
-        cache_last_human_turn: bool = False,
-        thinking: bool = False,
-        thinking_budget: int = 8000,
-    ) -> tuple[str, list[ToolCall], TokenUsage]:
-        cache_idx = _find_cache_breakpoint(messages) if (
-            cache_last_human_turn and self._supports_cache_control
-        ) else None
-        api_messages = _to_api_messages(messages, cache_breakpoint_index=cache_idx)
-        api_tools = [t.to_api_dict() for t in tools] if tools else []
-
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "max_tokens": self.max_tokens,
-            "system": _build_system_param(cache_system_prefix, system_prompt, self._supports_cache_control),
-            "messages": api_messages,
-        }
-        if thinking and self._supports_thinking:
-            kwargs["betas"] = ["interleaved-thinking-2025-05-14"]
-            kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
-            kwargs["max_tokens"] = max(self.max_tokens, thinking_budget + 1000)
-        if api_tools:
-            kwargs["tools"] = api_tools
-
-        saw_streamed_thinking = False
-        if on_text_chunk is not None:
-            async with self._client.messages.stream(**kwargs) as stream:
-                async for event in stream:
-                    if _forward_stream_event(event, on_text_chunk):
-                        saw_streamed_thinking = True
-                response = await stream.get_final_message()
-        else:
-            response = await self._client.messages.create(**kwargs)
-
-        content_text = ""
-        tool_calls: list[ToolCall] = []
-
-        for block in response.content:
-            if block.type == "text":
-                content_text += block.text
-            elif block.type == "thinking":
-                thinking_text = _extract_thinking_text(block)
-                if thinking_text and on_text_chunk is not None and not saw_streamed_thinking:
-                    on_text_chunk(thinking_text)
-            elif block.type == "tool_use":
-                tool_calls.append(ToolCall(id=block.id, name=block.name, input=block.input))
-
-        usage = _extract_usage(response)
-        return content_text, tool_calls, usage
-
-
 def _forward_stream_event(event: Any, on_text_chunk: Callable[[str], None]) -> bool:
     if getattr(event, "type", None) != "content_block_delta":
         return False
@@ -110,6 +27,16 @@ def _forward_stream_event(event: Any, on_text_chunk: Callable[[str], None]) -> b
             on_text_chunk(thinking)
             return True
     return False
+
+
+def _is_socks_proxy(proxy_url: str | None) -> bool:
+    if not proxy_url:
+        return False
+    return proxy_url.lower().startswith(("socks4://", "socks4a://", "socks5://", "socks5h://"))
+
+
+def _has_socks_support() -> bool:
+    return importlib.util.find_spec("socksio") is not None
 
 
 def _build_http_client(httpx_module: Any) -> Any | None:
@@ -131,16 +58,6 @@ def _build_http_client(httpx_module: Any) -> Any | None:
     if _is_socks_proxy(all_proxy) and not _has_socks_support():
         return httpx_module.AsyncClient(proxy=explicit_proxy, trust_env=False)
     return None
-
-
-def _is_socks_proxy(proxy_url: str | None) -> bool:
-    if not proxy_url:
-        return False
-    return proxy_url.lower().startswith(("socks4://", "socks4a://", "socks5://", "socks5h://"))
-
-
-def _has_socks_support() -> bool:
-    return importlib.util.find_spec("socksio") is not None
 
 
 def _extract_usage(response: Any) -> TokenUsage:
@@ -227,3 +144,86 @@ def _to_api_messages(
 
         result.append({"role": role, "content": content})
     return result
+
+
+class AnthropicProvider(Provider):
+    _supports_thinking = True
+
+    _supports_cache_control: ClassVar[bool] = True
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        max_tokens: int = 8096,
+        base_url: str | None = None,
+    ) -> None:
+        try:
+            import anthropic as _anthropic
+            import httpx
+        except ImportError:
+            raise ImportError("Install anthropic: pip install anthropic") from None
+        http_client = _build_http_client(httpx)
+        client_kwargs: dict[str, Any] = {"api_key": api_key, "base_url": base_url}
+        if http_client is not None:
+            client_kwargs["http_client"] = http_client
+        self._client = _anthropic.AsyncAnthropic(**client_kwargs)
+        self.max_tokens = max_tokens
+    """LLM provider backed by Anthropic Claude."""
+
+    async def complete(
+        self,
+        messages: list[Message],
+        tools: list["Tool"],
+        system_prompt: str,
+        model: str,
+        *,
+        on_text_chunk: Callable[[str], None] | None = None,
+        cache_system_prefix: str = "",
+        cache_last_human_turn: bool = False,
+        thinking: bool = False,
+        thinking_budget: int = 8000,
+    ) -> tuple[str, list[ToolCall], TokenUsage]:
+        cache_idx = _find_cache_breakpoint(messages) if (
+            cache_last_human_turn and self._supports_cache_control
+        ) else None
+        api_messages = _to_api_messages(messages, cache_breakpoint_index=cache_idx)
+        api_tools = [t.to_api_dict() for t in tools] if tools else []
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": self.max_tokens,
+            "system": _build_system_param(cache_system_prefix, system_prompt, self._supports_cache_control),
+            "messages": api_messages,
+        }
+        if thinking and self._supports_thinking:
+            kwargs["betas"] = ["interleaved-thinking-2025-05-14"]
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            kwargs["max_tokens"] = max(self.max_tokens, thinking_budget + 1000)
+        if api_tools:
+            kwargs["tools"] = api_tools
+
+        saw_streamed_thinking = False
+        if on_text_chunk is not None:
+            async with self._client.messages.stream(**kwargs) as stream:
+                async for event in stream:
+                    if _forward_stream_event(event, on_text_chunk):
+                        saw_streamed_thinking = True
+                response = await stream.get_final_message()
+        else:
+            response = await self._client.messages.create(**kwargs)
+
+        content_text = ""
+        tool_calls: list[ToolCall] = []
+
+        for block in response.content:
+            if block.type == "text":
+                content_text += block.text
+            elif block.type == "thinking":
+                thinking_text = _extract_thinking_text(block)
+                if thinking_text and on_text_chunk is not None and not saw_streamed_thinking:
+                    on_text_chunk(thinking_text)
+            elif block.type == "tool_use":
+                tool_calls.append(ToolCall(id=block.id, name=block.name, input=block.input))
+
+        usage = _extract_usage(response)
+        return content_text, tool_calls, usage
