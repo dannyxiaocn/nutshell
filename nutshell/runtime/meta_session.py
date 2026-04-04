@@ -11,6 +11,24 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _SESSIONS_DIR = _REPO_ROOT / 'sessions'
 
 
+def get_meta_session_id(entity_name: str) -> str:
+    return f"{entity_name}_meta"
+
+
+def _entity_rel_from_meta_path(path: str) -> str:
+    if path == 'core/system.md':
+        return 'prompts/system.md'
+    if path == 'core/heartbeat.md':
+        return 'prompts/heartbeat.md'
+    if path == 'core/session.md':
+        return 'prompts/session.md'
+    if path.startswith('core/tools/'):
+        return 'tools/' + path.removeprefix('core/tools/')
+    if path.startswith('core/skills/'):
+        return 'skills/' + path.removeprefix('core/skills/')
+    return path.removeprefix('core/')
+
+
 class MetaAlignmentError(Exception):
     """meta session config 与 entity 不一致时抛出。"""
 
@@ -39,10 +57,6 @@ class MetaAlignmentError(Exception):
             if idx != len(self.diffs) - 1:
                 lines.append("")
         return "\n".join(lines)
-
-
-def get_meta_session_id(entity_name: str) -> str:
-    return f"{entity_name}_meta"
 
 
 def get_meta_dir(entity_name: str, s_base: Path | None = None) -> Path:
@@ -89,20 +103,6 @@ def _meta_is_synced(meta_dir: Path) -> bool:
 
 def _mark_meta_synced(meta_dir: Path, entity_name: str) -> None:
     (meta_dir / 'core' / '.entity_synced').write_text(entity_name, encoding='utf-8')
-
-
-def _entity_rel_from_meta_path(path: str) -> str:
-    if path == 'core/system.md':
-        return 'prompts/system.md'
-    if path == 'core/heartbeat.md':
-        return 'prompts/heartbeat.md'
-    if path == 'core/session.md':
-        return 'prompts/session.md'
-    if path.startswith('core/tools/'):
-        return 'tools/' + path.removeprefix('core/tools/')
-    if path.startswith('core/skills/'):
-        return 'skills/' + path.removeprefix('core/skills/')
-    return path.removeprefix('core/')
 
 
 def _load_agent_config(entity_name: str, entity_base: Path):
