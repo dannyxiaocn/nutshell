@@ -24,6 +24,14 @@ class AgentConfigInheritance:
     append: list[str] = field(default_factory=list)
 
 
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if item is not None]
+    return [str(value)]
+
+
 @dataclass(frozen=True)
 class AgentConfig:
     path: Path
@@ -54,14 +62,6 @@ class AgentConfig:
             append=_string_list(manifest.get("append")),
         )
         return cls(path=manifest_path.parent, manifest=manifest, inheritance=inheritance)
-
-
-def _string_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if item is not None]
-    return [str(value)]
 
 
 __all__ = ["BaseLoader", "AgentConfig", "AgentConfigInheritance"]
