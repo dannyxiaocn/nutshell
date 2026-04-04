@@ -45,6 +45,24 @@ class CAP:
     def primitives(self) -> tuple[CapPrimitive, ...]:
         return ("handshake", "lock", "broadcast", "heartbeat-sync")
 
+    @staticmethod
+    def _handshake_key(protocol: str, source_session: str, target_session: str) -> str:
+        return f"{protocol}:{source_session}->{target_session}"
+
+    def _save_json(self, path: Path, data: Any) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+
+    def _load_json(self, path: Path, default: Any) -> Any:
+        if not path.exists():
+            return default
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return default
+
     def handshake(self, protocol: str, source_session: str, target_session: str, *, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         registry = self._load_json(self._handshakes_path, default={})
         key = self._handshake_key(protocol, source_session, target_session)
@@ -62,6 +80,10 @@ class CAP:
     def get_handshake(self, protocol: str, source_session: str, target_session: str) -> dict[str, Any] | None:
         registry = self._load_json(self._handshakes_path, default={})
         return registry.get(self._handshake_key(protocol, source_session, target_session))
+
+    @staticmethod
+    def _safe_name(value: str) -> str:
+        return "".join(c for c in value if c.isalnum() or c in "-_:") or "default"
 
     def acquire_lock(self, name: str, owner_session: str, *, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         path = self._locks_dir / f"{self._safe_name(name)}.json"
@@ -111,6 +133,11 @@ class CAP:
             return {"name": name, "state": "free", "owner_session": None}
         return entry
 
+    def _append_jsonl(self, path: Path, event: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
     def broadcast(self, channel: str, sender_session: str, content: str, *, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         event = {
             "channel": channel,
@@ -121,6 +148,22 @@ class CAP:
         }
         self._append_jsonl(self._broadcast_path, event)
         return event
+
+    def _load_jsonl(self, path: Path) -> list[dict[str, Any]]:
+        if not path.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                out.append(obj)
+        return out
 
     def list_broadcasts(self, channel: str | None = None) -> list[dict[str, Any]]:
         events = self._load_jsonl(self._broadcast_path)
@@ -143,46 +186,3 @@ class CAP:
     def git_protocol(self) -> GitCoordinator:
         """Expose git coordination as the first CAP protocol adapter."""
         return GitCoordinator(system_base=self._system_base)
-
-    @staticmethod
-    def _safe_name(value: str) -> str:
-        return "".join(c for c in value if c.isalnum() or c in "-_:") or "default"
-
-    @staticmethod
-    def _handshake_key(protocol: str, source_session: str, target_session: str) -> str:
-        return f"{protocol}:{source_session}->{target_session}"
-
-    def _save_json(self, path: Path, data: Any) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
-
-    def _load_json(self, path: Path, default: Any) -> Any:
-        if not path.exists():
-            return default
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return default
-
-    def _append_jsonl(self, path: Path, event: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False) + "\n")
-
-    def _load_jsonl(self, path: Path) -> list[dict[str, Any]]:
-        if not path.exists():
-            return []
-        out: list[dict[str, Any]] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict):
-                out.append(obj)
-        return out
