@@ -72,6 +72,22 @@ class GitCoordinator:
             pass
         return None
 
+    def _is_session_alive(self, session_id: str) -> bool:
+        """Check if a session is still running (has a PID in status.json)."""
+        status_path = self._system_base / session_id / "status.json"
+        if not status_path.exists():
+            return False
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            pid = status.get("pid")
+            if pid is None:
+                return False
+            # Check if PID is actually running
+            os.kill(pid, 0)
+            return True
+        except (json.JSONDecodeError, OSError, ProcessLookupError, PermissionError):
+            return False
+
     def register(self, repo_path: Path, session_id: str | None = None) -> Role:
         """Register a session for a git repo and return its role.
 
@@ -168,19 +184,3 @@ class GitCoordinator:
         if entry:
             return entry.get("session_id")
         return None
-
-    def _is_session_alive(self, session_id: str) -> bool:
-        """Check if a session is still running (has a PID in status.json)."""
-        status_path = self._system_base / session_id / "status.json"
-        if not status_path.exists():
-            return False
-        try:
-            status = json.loads(status_path.read_text(encoding="utf-8"))
-            pid = status.get("pid")
-            if pid is None:
-                return False
-            # Check if PID is actually running
-            os.kill(pid, 0)
-            return True
-        except (json.JSONDecodeError, OSError, ProcessLookupError, PermissionError):
-            return False
