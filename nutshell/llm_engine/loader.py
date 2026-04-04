@@ -109,7 +109,6 @@ class AgentLoader(BaseLoader[Agent]):
             tools=tools,
             skills=skills,
             model=model,
-            release_policy=manifest.get("release_policy", "persistent"),
             max_iterations=manifest.get("max_iterations", 20),
             heartbeat_prompt=heartbeat_prompt,
             session_context_template=session_context_template,

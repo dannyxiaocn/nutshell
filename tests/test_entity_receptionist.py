@@ -53,9 +53,6 @@ class TestAgentYaml:
         skills = manifest.get("skills", [])
         assert "skills/multi-agent" in skills
 
-    def test_release_policy(self, manifest):
-        assert manifest.get("release_policy") == "persistent"
-
     def test_max_iterations(self, manifest):
         assert manifest.get("max_iterations", 20) == 20
 

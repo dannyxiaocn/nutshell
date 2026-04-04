@@ -4,7 +4,6 @@ version: 1.0.2
 model: openai-codex/gpt-5.4
 provider: codex-oauth
 extends: nutshell_dev
-release_policy: persistent
 max_iterations: 20
 
 meta_session: >-

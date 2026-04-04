@@ -117,6 +117,11 @@ class Session:
         self._agent.model = params.get("model") or self._agent.model
         self._agent.thinking = bool(params.get("thinking", self._agent.thinking))
         self._agent.thinking_budget = int(params.get("thinking_budget", self._agent.thinking_budget))
+        if params.get("fallback_model"):
+            self._agent.fallback_model = params["fallback_model"]
+        if params.get("fallback_provider"):
+            self._agent._fallback_provider_str = params["fallback_provider"]
+            self._agent._fallback_provider = None  # reset so it re-resolves on next use
 
         write_session_status(self.system_dir, heartbeat_interval=params["heartbeat_interval"])
 

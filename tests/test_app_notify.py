@@ -207,7 +207,7 @@ def test_agent_app_notifications_empty():
     """No app notifications → no App Notifications block in prompt."""
     agent = Agent(system_prompt="Hello")
     agent.app_notifications = []
-    prompt = agent._build_system_prompt()
+    prompt = "\n".join(p for p in agent._build_system_parts() if p)
     assert "App Notifications" not in prompt
 
 
@@ -218,7 +218,7 @@ def test_agent_app_notifications_rendered():
         ("weather", "Sunny 25°C"),
         ("alerts", "Server CPU > 90%"),
     ]
-    prompt = agent._build_system_prompt()
+    prompt = "\n".join(p for p in agent._build_system_parts() if p)
     assert "## App Notifications" in prompt
     assert "### weather" in prompt
     assert "Sunny 25°C" in prompt
@@ -234,7 +234,7 @@ def test_agent_app_notifications_order():
     # Add a minimal skill to check ordering
     from nutshell.core.skill import Skill
     agent.skills = [Skill(name="dummy", description="d", body="skill body")]
-    prompt = agent._build_system_prompt()
+    prompt = "\n".join(p for p in agent._build_system_parts() if p)
 
     mem_pos = prompt.index("Session Memory")
     notif_pos = prompt.index("App Notifications")

@@ -3,7 +3,6 @@ description: '代码质量卫士。保证 nutshell 代码无 bug、功能最精�
 extends: nutshell_dev_codex
 model: openai-codex/gpt-5.4
 provider: codex-oauth
-release_policy: persistent
 max_iterations: 20
 params:
   persistent: true

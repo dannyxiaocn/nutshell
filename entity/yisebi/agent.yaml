@@ -4,7 +4,6 @@ version: 1.0.0
 extends: agent
 model: claude-sonnet-4-6
 provider: anthropic
-release_policy: on_demand
 max_iterations: 20
 prompts:
   system: prompts/system.md

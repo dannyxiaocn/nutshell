@@ -179,7 +179,7 @@ class TestAgentModeSystemPrompt:
     def test_guidance_appears_in_full_prompt(self):
         agent = Agent(system_prompt="You are a dev agent.")
         agent.caller_type = "agent"
-        full_prompt = agent._build_system_prompt()
+        full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
         assert "Agent Collaboration Mode" in full_prompt
         assert "[DONE]" in full_prompt
         assert "You are a dev agent." in full_prompt
@@ -187,7 +187,7 @@ class TestAgentModeSystemPrompt:
     def test_guidance_absent_for_human(self):
         agent = Agent(system_prompt="You are a dev agent.")
         agent.caller_type = "human"
-        full_prompt = agent._build_system_prompt()
+        full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
         assert "Agent Collaboration Mode" not in full_prompt
 
     def test_guidance_is_in_dynamic_part(self):

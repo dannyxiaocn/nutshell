@@ -3,7 +3,6 @@ description: 'Tool & skill 匠人。定期聚合各 session 的 audit.jsonl，�
 extends: agent
 model: claude-sonnet-4-6
 provider: anthropic
-release_policy: persistent
 max_iterations: 20
 params:
   persistent: true

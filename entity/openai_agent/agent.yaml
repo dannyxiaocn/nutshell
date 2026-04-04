@@ -4,7 +4,6 @@ version: 1.0.0
 model: gpt-5.4
 provider: openai
 extends: agent
-release_policy: persistent
 max_iterations: 20
 
 prompts:

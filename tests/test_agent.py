@@ -45,18 +45,10 @@ async def test_history_preserved():
 @pytest.mark.asyncio
 async def test_history_cleared_on_close():
     provider = MockProvider([("ok", [])])
-    agent = Agent(provider=provider, release_policy="manual")
+    agent = Agent(provider=provider)
     await agent.run("hello")
     assert len(agent._history) > 0
     agent.close()
-    assert agent._history == []
-
-
-@pytest.mark.asyncio
-async def test_auto_release_policy():
-    provider = MockProvider([("ok", [])])
-    agent = Agent(provider=provider, release_policy="auto")
-    await agent.run("hello")
     assert agent._history == []
 
 
@@ -138,51 +130,6 @@ async def test_file_skill_uses_catalog_in_system_prompt(tmp_path):
     assert str(skill_md) in sp
     # Body NOT injected inline
     assert "You are a math genius." not in sp
-
-
-@pytest.mark.asyncio
-async def test_as_tool():
-    provider = MockProvider([("Summary of topic X.", [])])
-    sub_agent = Agent(provider=provider, release_policy="auto")
-    sub_tool = sub_agent.as_tool("summarize", "Summarize a topic")
-
-    result = await sub_tool.execute(input="topic X")
-    assert result == "Summary of topic X."
-
-
-@pytest.mark.asyncio
-async def test_as_tool_clear_history_resets_persistent_subagent_each_call():
-    provider = MockProvider([
-        ("First", []),
-        ("Second", []),
-    ])
-    sub_agent = Agent(provider=provider, release_policy="persistent")
-    sub_tool = sub_agent.as_tool("summarize", "Summarize a topic", clear_history=True)
-
-    await sub_tool.execute(input="topic X")
-    assert len(sub_agent._history) == 2
-    assert sub_agent._history[0].content == "topic X"
-
-    await sub_tool.execute(input="topic Y")
-    assert len(sub_agent._history) == 2
-    assert sub_agent._history[0].content == "topic Y"
-
-
-@pytest.mark.asyncio
-async def test_as_tool_preserves_history_by_default_for_persistent_subagent():
-    provider = MockProvider([
-        ("First", []),
-        ("Second", []),
-    ])
-    sub_agent = Agent(provider=provider, release_policy="persistent")
-    sub_tool = sub_agent.as_tool("summarize", "Summarize a topic")
-
-    await sub_tool.execute(input="topic X")
-    await sub_tool.execute(input="topic Y")
-
-    assert len(sub_agent._history) == 4
-    assert sub_agent._history[0].content == "topic X"
-    assert sub_agent._history[2].content == "topic Y"
 
 
 @pytest.mark.asyncio

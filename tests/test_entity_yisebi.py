@@ -31,9 +31,6 @@ class TestAgentYaml:
     def test_model_is_sonnet(self, manifest):
         assert manifest["model"] == "claude-sonnet-4-6"
 
-    def test_release_policy_on_demand(self, manifest):
-        assert manifest["release_policy"] == "on_demand"
-
     def test_has_system_prompt_path(self, manifest):
         prompts = manifest.get("prompts", {})
         assert prompts.get("system") == "prompts/system.md"

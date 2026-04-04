@@ -3,7 +3,6 @@ description: Tool/skill 质量打磨专员，不断迭代优化工具与技能�
 extends: nutshell_dev_codex
 model: openai-codex/gpt-5.4
 provider: codex-oauth
-release_policy: persistent
 max_iterations: 20
 params:
   persistent: true

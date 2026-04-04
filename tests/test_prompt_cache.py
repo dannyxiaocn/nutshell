@@ -208,19 +208,6 @@ def test_agent_build_system_parts_memory_layers_in_suffix():
     assert "project content" not in prefix
 
 
-def test_agent_build_system_prompt_still_returns_full_string():
-    """_build_system_prompt() must stay backward-compatible."""
-    agent = _make_agent(
-        system_prompt="sys",
-        session_context="ctx",
-        memory="mem",
-    )
-    full = agent._build_system_prompt()
-    assert "sys" in full
-    assert "ctx" in full
-    assert "mem" in full
-
-
 # ── History caching ────────────────────────────────────────────────────────────
 
 from nutshell.llm_engine.providers.anthropic import (

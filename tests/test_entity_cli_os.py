@@ -34,9 +34,6 @@ class TestManifest:
     def test_provider_is_anthropic(self, manifest):
         assert manifest["provider"] == "anthropic"
 
-    def test_release_policy_on_demand(self, manifest):
-        assert manifest["release_policy"] == "on_demand"
-
     def test_max_iterations_30(self, manifest):
         assert manifest["max_iterations"] == 30
 

@@ -86,6 +86,29 @@
 
 ---
 
+## Module 8 · Codebase Pruning & Architecture Alignment
+
+> 背景：对整个 nutshell 进行 function 级别梳理，删除无实际调用的代码，使各层职责更清晰。
+
+- [x] **`release_policy` 清除**：`Agent.__init__` 和 `Agent.run()` 里的 `release_policy` 字段在 runtime 中是 dead code（session 始终从 context.jsonl 重建 history，不依赖该字段）。删除 agent.py 参数 + llm_engine/loader.py 读取 + 所有 entity yaml 字段 + 相关测试。796 passed。
+
+- [ ] **`core/hook.py` 接入 session_engine**：hook.py 已定义 5 种 hook 类型并接入 Agent.run()，但 session_engine/session.py 的 `chat()` 和 `tick()` 还在用旧的 `on_text_chunk`/`on_tool_call` 直接参数。将其统一为 hook 传递；同时接入 `on_loop_start`/`on_loop_end`/`on_tool_done` 以完整利用扩展点。
+
+- [ ] **`runtime/` 重命名为 `session_engine/`**：命名与 llm_engine/tool_engine/skill_engine 对齐，明确其职责是 agent loop 的调度与持久化。更新所有 import（约 30 处）。
+
+- [ ] **`loader.py` 移至 `session_engine/`**：`AgentConfig.from_path()` 是文件 IO，不属于 core 的 loop 抽象。移动后 core/ 变为零 IO 依赖的纯计算层。
+
+- [ ] **`session_type` 三态替换 `persistent` bool**：将 `params.json` 里的 `persistent: bool` + `default_task` 重构为更清晰的 `session_type: "ephemeral" | "default" | "persistent"`。需要：
+  1. `runtime/params.py`：`DEFAULT_PARAMS` 中 `persistent: false` → `session_type: "default"`；`default_task` 保留（仅 persistent 使用）
+  2. `runtime/session.py` `tick()`：`params.get("persistent")` → `params.get("session_type") == "persistent"`
+  3. `runtime/session.py` `run_daemon_loop()`：ephemeral session 在 input queue 清空 + 无 pending 任务后自动调用 `stop()`
+  4. `tool_engine/providers/spawn_session.py`：增加 `session_type: str = "default"` 参数，写入新 session 的 params.json
+  5. 所有 `entity/*/agent.yaml` 的 params 块：`persistent: true` → `session_type: "persistent"`；`persistent: false` → 删除（default 是默认值）
+  6. 更新 `test_persistent_agent.py` 等相关测试
+  - **注**：ephemeral 的权限限制（read-only 等）不在本任务范围内，属于 `tool_engine/sandbox` 的职责
+
+---
+
 ## 完成记录
 
 <!-- 格式：- [x] 任务名 (commit: abc1234) -->

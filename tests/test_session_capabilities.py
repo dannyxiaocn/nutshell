@@ -202,7 +202,7 @@ def test_memory_injected_into_system_prompt(tmp_path):
     session.memory_path.write_text("Remember: always be concise.")
     session._load_session_capabilities()
 
-    full_prompt = agent._build_system_prompt()
+    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
     assert "Base system prompt." in full_prompt
     assert "Remember: always be concise." in full_prompt
 
@@ -215,7 +215,7 @@ def test_empty_memory_not_injected(tmp_path):
     session.memory_path.write_text("")
     session._load_session_capabilities()
 
-    assert "Session Memory" not in agent._build_system_prompt()
+    assert "Session Memory" not in "\n".join(p for p in agent._build_system_parts() if p)
 
 
 def test_memory_cleared_removes_block(tmp_path):
@@ -225,11 +225,11 @@ def test_memory_cleared_removes_block(tmp_path):
 
     session.memory_path.write_text("Some memory.")
     session._load_session_capabilities()
-    assert "Some memory." in agent._build_system_prompt()
+    assert "Some memory." in "\n".join(p for p in agent._build_system_parts() if p)
 
     session.memory_path.write_text("")
     session._load_session_capabilities()
-    assert "Some memory." not in agent._build_system_prompt()
+    assert "Some memory." not in "\n".join(p for p in agent._build_system_parts() if p)
 
 
 def test_memory_updated_reflects_on_next_load(tmp_path):
@@ -239,12 +239,12 @@ def test_memory_updated_reflects_on_next_load(tmp_path):
 
     session.memory_path.write_text("First memory.")
     session._load_session_capabilities()
-    assert "First memory." in agent._build_system_prompt()
+    assert "First memory." in "\n".join(p for p in agent._build_system_parts() if p)
 
     session.memory_path.write_text("Second memory.")
     session._load_session_capabilities()
-    assert "Second memory." in agent._build_system_prompt()
-    assert "First memory." not in agent._build_system_prompt()
+    assert "Second memory." in "\n".join(p for p in agent._build_system_parts() if p)
+    assert "First memory." not in "\n".join(p for p in agent._build_system_parts() if p)
 
 
 # ── Layered memory (core/memory/) ────────────────────────────────────────────
@@ -259,7 +259,7 @@ def test_memory_layer_dir_loaded(tmp_path):
     (memory_dir / "facts.md").write_text("fact one")
     session._load_session_capabilities()
 
-    full_prompt = agent._build_system_prompt()
+    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
     assert "## Memory: facts" in full_prompt
     assert "fact one" in full_prompt
 
@@ -307,7 +307,7 @@ def test_memory_primary_and_layers_both_rendered(tmp_path):
     (memory_dir / "extra.md").write_text("extra content")
     session._load_session_capabilities()
 
-    full_prompt = agent._build_system_prompt()
+    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
     assert "## Session Memory" in full_prompt
     assert "primary content" in full_prompt
     assert "## Memory: extra" in full_prompt
@@ -325,7 +325,7 @@ def test_memory_only_layers_no_primary(tmp_path):
     (memory_dir / "notes.md").write_text("layer note")
     session._load_session_capabilities()
 
-    full_prompt = agent._build_system_prompt()
+    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
     assert "## Memory: notes" in full_prompt
     assert "layer note" in full_prompt
     assert "## Session Memory" not in full_prompt
@@ -339,7 +339,7 @@ def test_no_memory_dir_backward_compat(tmp_path):
     session.memory_path.write_text("legacy memory")
     session._load_session_capabilities()
 
-    full_prompt = agent._build_system_prompt()
+    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
     assert "## Session Memory\n\nlegacy memory" in full_prompt
     assert agent.memory_layers == []
 
@@ -360,7 +360,7 @@ def test_memory_layers_removed_on_next_reload(tmp_path):
     session._load_session_capabilities()
 
     assert agent.memory_layers == []
-    full_prompt = agent._build_system_prompt()
+    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
     assert "## Memory: facts" not in full_prompt
     assert "fact one" not in full_prompt
 

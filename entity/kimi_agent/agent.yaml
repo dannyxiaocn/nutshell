@@ -4,7 +4,6 @@ version: 1.0.0
 model: kimi-for-coding
 provider: kimi-coding-plan
 extends: agent
-release_policy: persistent
 max_iterations: 20
 
 prompts:

@@ -1,33 +1,18 @@
 from __future__ import annotations
 import asyncio
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
+from nutshell.core.hook import OnLoopEnd, OnLoopStart, OnTextChunk, OnToolCall, OnToolDone
 from nutshell.core.provider import Provider
 from nutshell.core.skill import Skill
 from nutshell.core.tool import Tool
 from nutshell.core.types import AgentResult, Message, ToolCall
 
-class BaseAgent(ABC):
-    """Abstract interface for an agent that processes messages."""
-
-    @abstractmethod
-    async def run(self, input: str, *, clear_history: bool = False) -> "AgentResult":
-        """Run the agent with a user input string and return a result."""
-        ...
-
-    @abstractmethod
-    def close(self) -> None:
-        """Release any held state (e.g., conversation history)."""
-        ...
-
-
-ReleasePolicy = Literal["auto", "manual", "persistent"]
 
 _DEFAULT_MODEL = "claude-sonnet-4-6"
 
 
-class Agent(BaseAgent):
+class Agent:
     """A minimal LLM agent.
 
     Args:
@@ -40,10 +25,6 @@ class Agent(BaseAgent):
         model: Model identifier string (default: claude-sonnet-4-6).
         provider: LLM provider instance. If omitted, AnthropicProvider
                   is used with the ANTHROPIC_API_KEY environment variable.
-        release_policy: Lifecycle when used as a sub-agent.
-            "auto"       - history cleared after each parent run
-            "manual"     - cleared only when .close() is called
-            "persistent" - history preserved across runs
         max_iterations: Max tool-call loops per run (default: 20).
     """
 
@@ -54,7 +35,6 @@ class Agent(BaseAgent):
         skills: list[Skill] | None = None,
         model: str = _DEFAULT_MODEL,
         provider: Provider | None = None,
-        release_policy: ReleasePolicy = "persistent",
         max_iterations: int = 20,
         heartbeat_prompt: str = "",
         session_context_template: str = "",
@@ -65,7 +45,6 @@ class Agent(BaseAgent):
         self.tools: list[Tool] = tools or []
         self.skills: list[Skill] = skills or []
         self.model = model
-        self.release_policy = release_policy
         self.max_iterations = max_iterations
         self.heartbeat_prompt = heartbeat_prompt
         self.session_context_template = session_context_template
@@ -108,12 +87,7 @@ class Agent(BaseAgent):
 
     @classmethod
     def _render_memory_layer(cls, name: str, content: str) -> str:
-        """Render a named memory layer, truncating large ones for prompt efficiency.
-
-        Layers up to _MEMORY_LAYER_INLINE_LINES are injected verbatim.
-        Larger layers show the first N lines and a bash hint for the rest —
-        the same progressive-disclosure approach used for file-backed skills.
-        """
+        """Render a named memory layer, truncating large ones for prompt efficiency."""
         lines = content.split("\n")
         if len(lines) <= cls._MEMORY_LAYER_INLINE_LINES:
             return f"## Memory: {name}\n\n{content}"
@@ -169,12 +143,6 @@ class Agent(BaseAgent):
 
         return "\n".join(static_parts), "\n".join(dynamic_parts)
 
-    def _build_system_prompt(self) -> str:
-        """Return full system prompt as a single string (backward-compatible)."""
-        prefix, suffix = self._build_system_parts()
-        parts = [p for p in [prefix, suffix] if p]
-        return "\n".join(parts)
-
     def _tool_map(self) -> dict[str, Tool]:
         return {t.name: t for t in self.tools}
 
@@ -183,20 +151,20 @@ class Agent(BaseAgent):
         input: str,
         *,
         clear_history: bool = False,
-        on_text_chunk: Callable[[str], None] | None = None,
-        on_tool_call: Callable[[str, dict], None] | None = None,
+        on_text_chunk: OnTextChunk | None = None,
+        on_tool_call: OnToolCall | None = None,
+        on_tool_done: OnToolDone | None = None,
+        on_loop_start: OnLoopStart | None = None,
+        on_loop_end: OnLoopEnd | None = None,
         caller_type: str = "human",
     ) -> AgentResult:
-        """Run the agent with the given input and return an AgentResult.
-
-        Args:
-            input: The user message to send.
-            clear_history: If True, clears conversation history before this run.
-            caller_type: "human" or "agent" — affects system prompt guidance.
-        """
+        """Run the agent with the given input and return an AgentResult."""
         if clear_history:
             self._history = []
         self.caller_type = caller_type
+
+        if on_loop_start:
+            on_loop_start(input)
 
         from nutshell.core.types import TokenUsage as _TokenUsage
         system_prefix, system_dynamic = self._build_system_parts()
@@ -205,7 +173,6 @@ class Agent(BaseAgent):
         all_tool_calls: list[ToolCall] = []
         total_usage = _TokenUsage()
 
-        # Cache history when provider supports it and we have prior turns
         _cache_history = bool(self._history) and getattr(
             self.provider, "_supports_cache_control", False
         )
@@ -247,14 +214,10 @@ class Agent(BaseAgent):
                     thinking_budget=self.thinking_budget,
                 )
             total_usage = total_usage + turn_usage
-            # Only stream the first completion; subsequent rounds (tool loops)
-            # don't stream since the user only cares about the final text.
             on_text_chunk = None
 
-            # Build assistant message content for Anthropic format
             assistant_content: Any = content
             if tool_calls:
-                # Anthropic expects content blocks for tool_use
                 blocks: list[Any] = []
                 if content:
                     blocks.append({"type": "text", "text": content})
@@ -268,16 +231,13 @@ class Agent(BaseAgent):
             if not tool_calls:
                 break
 
-            # Notify about each tool call before executing (for real-time streaming)
             if on_tool_call:
                 for tc in tool_calls:
                     on_tool_call(tc.name, tc.input)
 
-            # Execute tools and append results
-            tool_results = await _execute_tools(tool_calls, tool_map)
+            tool_results = await _execute_tools(tool_calls, tool_map, on_tool_done=on_tool_done)
             messages.append(Message(role="tool", content=tool_results))
 
-        # Update history
         self._history = list(messages)
 
         result = AgentResult(
@@ -288,51 +248,21 @@ class Agent(BaseAgent):
             iterations=iterations,
         )
 
-        if self.release_policy == "auto":
-            self._history = []
+        if on_loop_end:
+            on_loop_end(result)
 
         return result
 
     def close(self) -> None:
-        """Clear conversation history (for release_policy='manual')."""
+        """Clear conversation history."""
         self._history = []
-
-    def as_tool(
-        self,
-        name: str,
-        description: str,
-        *,
-        clear_history: bool = False,
-    ) -> Tool:
-        """Wrap this agent as a Tool that can be used by another agent.
-
-        The sub-agent receives the tool input as its user message.
-
-        Args:
-            clear_history: If True, clears the sub-agent history before each tool
-                invocation. Useful when you want a normally persistent agent to act
-                like a stateless worker in a multi-agent pipeline.
-        """
-        agent = self
-
-        async def _run(input: str) -> str:
-            result = await agent.run(input, clear_history=clear_history)
-            if agent.release_policy == "auto":
-                agent.close()
-            return result.content
-
-        _run.__doc__ = description
-        return Tool(
-            name=name,
-            description=description,
-            func=_run,
-            schema={"type": "object", "properties": {"input": {"type": "string"}}, "required": ["input"]},
-        )
 
 
 async def _execute_tools(
     tool_calls: list[ToolCall],
     tool_map: dict[str, Tool],
+    *,
+    on_tool_done: OnToolDone | None = None,
 ) -> list[dict]:
     """Execute tool calls concurrently and return Anthropic-format tool_result blocks."""
     async def _call(tc: ToolCall) -> dict:
@@ -344,6 +274,8 @@ async def _execute_tools(
                 content = await tool.execute(**tc.input)
             except Exception as exc:
                 content = f"Error executing '{tc.name}': {exc}"
+        if on_tool_done:
+            on_tool_done(tc.name, tc.input, content)
         return {"type": "tool_result", "tool_use_id": tc.id, "content": content}
 
     return list(await asyncio.gather(*[_call(tc) for tc in tool_calls]))
