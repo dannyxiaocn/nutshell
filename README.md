@@ -1,9 +1,8 @@
-# Nutshell `v1.3.64`
+# Nutshell `v1.3.65`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
-New in v1.3.61: entity manifests can document inheritance with `link`, `own`, and `append` markers, and meta-session sync preserves entity-owned memory/playground state.
-New in v1.3.62: child entities can submit review-gated `propose_parent_update` requests for inherited parent files.
+New in v1.3.65: core/ pruned to the cleanest agent loop — dead ABCs, release_policy, as_tool, examples removed; hook.py adds OnLoopStart/OnLoopEnd/OnToolDone extension points; fallback_model/provider bug fixed.
 New in v1.3.64: persistent specialist entities now include tool_craftsman, and archived sessions preserve audit logs in entity meta storage.
 
 ---
@@ -376,12 +375,13 @@ Features: streaming (`on_text_chunk`), function calling (tools), token usage tra
 ```
 nutshell/              ← Python library
 ├── core/
-│   ├── agent.py       # Agent — LLM loop, system prompt assembly, tool dispatch
+│   ├── agent.py       # Agent — the LLM loop
+│   ├── hook.py        # Hook type aliases (OnLoopStart/End, OnToolCall/Done, OnTextChunk)
 │   ├── tool.py        # Tool + @tool decorator
 │   ├── skill.py       # Skill dataclass
 │   ├── types.py       # Message, ToolCall, AgentResult, TokenUsage
 │   ├── provider.py    # Provider ABC
-│   └── loader.py      # BaseLoader ABC
+│   └── loader.py      # AgentConfig — entity yaml reader
 ├── tool_engine/
 │   ├── executor/
 │   │   ├── bash.py    # BashExecutor (subprocess + PTY)
@@ -513,6 +513,12 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 ---
 
 ## Changelog
+
+### v1.3.65
+- **core/ pruned to cleanest agent loop**: removed dead ABCs (`BaseTool`, `BaseAgent`), `release_policy`, `Agent.as_tool()`, `Agent._build_system_prompt()`, and `examples/`
+- **`core/hook.py`**: new Hook type aliases — `OnLoopStart`, `OnLoopEnd`, `OnToolCall`, `OnToolDone`, `OnTextChunk`; `Agent.run()` gains three new extension points
+- **Bug fix**: `session._load_session_capabilities()` now correctly applies `fallback_model` and `fallback_provider` from `params.json` to the agent
+- **`philosophy.md`**: added project design principles document
 
 ### v1.3.63
 - **WebSandbox**: added domain blocking and response truncation for `fetch_url` and `web_search`
@@ -791,7 +797,7 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 - **`nutshell chat` CLI** — single-shot agent interaction. `send_to_session` system tool. `user_input_id` in turns for multi-agent polling.
 
 ### v1.1.7 — v1.1.8
-- **Anthropic thinking block support**. **Layered session memory** (`core/memory/*.md`). **`as_tool(clear_history=True)`**. **`reload_capabilities` summary**.
+- **Anthropic thinking block support**. **Layered session memory** (`core/memory/*.md`). **`reload_capabilities` summary**.
 
 ### v1.1.6
 - **System prompt optimization** — `session.md` reduced to ~20 lines (table format).

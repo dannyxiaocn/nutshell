@@ -1,9 +1,11 @@
 # Nutshell — Claude Code Context
 
-> Current version: **v1.3.46** · Python package · `pip install -e .`
+> Current version: **v1.3.65** · Python package · `pip install -e .`
 
 Minimal Python agent runtime. Core value: **simplicity + persistence**.  
 Agents run as long-lived server-managed sessions with file-based IPC.
+
+See `philosophy.md` for design principles.
 
 ---
 
@@ -11,7 +13,7 @@ Agents run as long-lived server-managed sessions with file-based IPC.
 
 ```
 nutshell/
-├── core/           ABCs + Agent, Tool, Skill, Provider, types, loader
+├── core/           Agent loop + its direct participants: Tool, Skill, Provider, Hook, types, loader
 ├── llm_engine/     LLM providers: Anthropic (+ thinking), Kimi, OpenAI, Codex
 ├── tool_engine/    Bash/shell executors, web_search, built-in tools, sandbox
 ├── skill_engine/   SKILL.md loader + system-prompt renderer
@@ -130,6 +132,17 @@ Switch in session: edit `sessions/<id>/core/params.json` → `{"provider": "open
 `fetch_url`, `recall_memory`, `state_diff`, `git_checkpoint`, `app_notify`
 
 `reload_capabilities` is always injected by `_load_session_capabilities()` (not from YAML).
+
+## Agent.run() hook extension points (core/hook.py)
+
+`Agent.run()` accepts optional hook callbacks:
+- `on_loop_start(input: str)` — fired before the iteration loop begins
+- `on_loop_end(result: AgentResult)` — fired after the loop completes
+- `on_tool_call(name, input)` — fired before each tool executes (pre-existing)
+- `on_tool_done(name, input, result)` — fired after each tool executes
+- `on_text_chunk(chunk)` — fired for each streamed text fragment (pre-existing)
+
+`session.py` uses `on_text_chunk` and `on_tool_call`; the new `on_loop_start/end/tool_done` are reserved for session_engine integration.
 
 ## System prompt structure + caching
 
