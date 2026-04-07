@@ -1,7 +1,8 @@
 # Nutshell Track
 
 > 驱动开发看板。实现类任务必须派发给 `nutshell_dev_codex`，Claude Code 只做维护类操作。  
-> 每次完成一个任务后：更新 track.md（标记[x] + commit ID）、MEMORY.md、README.md，检查遗留代码。
+> 每次完成一个任务后：更新 track.md（标记[x] + commit ID），更新对应子模块 README，bump 版本。
+> Commit 格式：`v{version} [{tag}] {description}`，tags: `[impl]` `[debug]` `[clean]` `[docs]` `[chore]`
 
 ---
 
@@ -13,102 +14,148 @@
 
 ## Module 1 · CLI 清理
 
-- [x] **删除遗留 `nutshell chat` 旧接口和 dui 系列命令** (commit: 95c593f)：删除 pyproject.toml 里 5 个遗留 entry points（nutshell-chat/server/web/new-agent/review-updates）；cmd_review 去掉 sys.argv hack 改为直接调用 review_updates()；new_agent.py/review_updates.py 各自删除 main()。
+- [x] **删除遗留 `nutshell chat` 旧接口和 dui 系列命令** (commit: 95c593f)
 - [x] **CLI 接口审计** (commit: 95c593f)：审查后确认 27 个 subcommand 无重叠无废弃；entry point 清理后接口已最小化。
 
 ---
 
 ## Module 2 · Multi-agent 通信 & QJBQ 融合 + Cambridge Agent Protocol
 
-- [x] **QJBQ 移到 `cli_app/`** (commit: c917184)：git mv qjbq/ → cli_app/qjbq/；创建 cli_app/__init__.py；更新 pyproject.toml packages + entry point；更新所有 import；762 tests pass。
-- [x] **删除系统自带通信方式，统一用 QJBQ** (commit: 9c015a9)：`send_to_session` 改为经由 QJBQ `POST /api/session-message` 发送消息，QJBQ 统一写入目标 `_sessions/<id>/context.jsonl`；保留 relay 不可用时的 direct-write fallback 以兼容现有测试与迁移期场景。
-- [x] **Cambridge Agent Protocol (CAP) 模块设计** (commit: b36eb75)：新增 `nutshell/runtime/cap.py`，定义 `handshake`、`lock`、`broadcast`、`heartbeat-sync` 四类协议原语，并将 `git_coordinator` 暴露为首个 CAP protocol adapter；新增 `tests/test_cap.py` 覆盖原语语义与 git adapter。
+- [x] **QJBQ 移到 `cli_app/`** (commit: c917184)
+- [x] **删除系统自带通信方式，统一用 QJBQ** (commit: 9c015a9)：`send_to_session` 改为经由 QJBQ `POST /api/session-message` 发送消息；保留 relay 不可用时的 direct-write fallback。
+- [x] **Cambridge Agent Protocol (CAP) 模块设计** (commit: b36eb75)：新增 `nutshell/runtime/cap.py`，定义 `handshake`、`lock`、`broadcast`、`heartbeat-sync` 四类协议原语，`git_coordinator` 为首个 CAP adapter。
 
 ---
 
 ## Module 3 · Meta-session 完善
 
-- [x] **整理现有 entity** (commit: bc2cc6f)：新增 `entity/README.md` 作为内建 entity catalog，并为 10 个活跃 entity 补齐 `README.md`，明确用途、状态与保留原因；新增 `tests/test_entity_catalog.py` 防止再次出现用途不明的 entity。
-- [x] **meta session 作为 entity 实例化单位** (commit: 9472524)：`sync_from_entity()` 现同时为 `sessions/<entity>_meta/` 引导 memory 与 playground，`session_factory` 明确从 meta session 实例化子 session；补充 README 与相关 `agent.yaml` 的 `meta_session` 说明字段，并新增 playground 继承测试。
-- [x] **给 meta session 配工具：子 session 管理** (commit: 6a1c5c4)：  
-  - `list_child_sessions(entity)` — 列出 entity 所有子 session + status  
-  - `get_session_info(session_id)` — 获取 session manifest + 最近 turns + tasks  
-  - `archive_session(session_id)` — 将 session 移到 `_archived/` 而非删除  
-  - dream 机制：meta session 定期（24h）审查子 session，决定 keep / archive
-- [x] **Bridge 子进程标注 + Persistent agent 标识** (commit: d773ed7)：  
-  - 已 link 到 bridge 的子进程：状态显示 `napping`（嫩绿色灯），而非普通 idle  
-  - persistent agent（`params.json` 里 `persistent: true`）：单独颜色/图标，表示一直在运行  
-  - 在 `nutshell friends` 和 web UI 中体现
-- [x] **分层 memory 调整（单向流）** (commit: 5d895fc)：删除 update_meta_memory tool 及其测试/registry/entity json；meta_session.py prompt 改为说明 memory 由系统管理；README/CLAUDE.md/index.html 清理残留。761 passed。
+- [x] **整理现有 entity** (commit: bc2cc6f)：新增 `entity/README.md` 作为 entity catalog；新增 `tests/test_entity_catalog.py`。
+- [x] **meta session 作为 entity 实例化单位** (commit: 9472524)：`sync_from_entity()` 同时引导 memory 与 playground；`session_factory` 从 meta session 实例化子 session。
+- [x] **给 meta session 配工具：子 session 管理** (commit: 6a1c5c4)：`list_child_sessions` / `get_session_info` / `archive_session`；dream 机制 24h 审查子 session。
+- [x] **Bridge 子进程标注 + Persistent agent 标识** (commit: d773ed7)：napping 状态、persistent 专属颜色/图标。
+- [x] **分层 memory 调整（单向流）** (commit: 5d895fc)：删除 update_meta_memory tool；memory 由系统管理单向下流。
 
 ---
 
 ## Module 4 · Entity 继承系统改进
 
-- [x] **meta session 完备，entity 保留继承标识** (commit: b4fbc50)：  
-  - meta session 展开后完全看不到继承关系（扁平化），对 agent 透明  
-  - entity 定义里保留标识：`link`（指向 parent）、`own`（自己独有）、`append`（在 parent 基础上追加）  
-  - meta session 的「自己部分」完全独立，entity 更新只更新继承的部分  
-- [x] **entity 可更新 parent entity 内容** (commit: 6bf957d)：设计 `propose_parent_update` 接口（已有 `propose_entity_update`），支持更新 parent entity 的继承内容，走 review 流程
+- [x] **meta session 完备，entity 保留继承标识** (commit: b4fbc50)：link/own/append 字段；meta session 扁平化对 agent 透明。
+- [x] **entity 可更新 parent entity 内容** (commit: 6bf957d)：`propose_parent_update` 接口，走 review 流程。
 
 ---
 
 ## Module 5 · Thinking 配置
 
-- [x] **enable thinking 作为可配置项** (commit: 4978494)：params.json 新增 thinking/thinking_budget；AnthropicProvider 支持 betas+thinking block；KimiProvider _supports_thinking=False 保护；OpenAI/Codex 静默忽略；3 新测试，765 passed。
+- [x] **enable thinking 作为可配置项** (commit: 4978494)：params.json 新增 thinking/thinking_budget；AnthropicProvider betas+thinking block；3 新测试。
+- [x] **Kimi thinking via extra_body** (llm_engine audit commits)：KimiForCodingProvider._thinking_uses_betas=False，与 kimi-cli 实现一致。
+- [x] **CodexProvider 默认模型 gpt-5.4 + high thinking** (commit: bd5d01d)：DEFAULT_MODEL="gpt-5.4"，entity/agent 默认 thinking=true，reasoning.effort="high"。
+- [x] **thinking_effort 可配置** (commit: 91762f5)：params.json 新增 thinking_effort（none/minimal/low/medium/high/xhigh）；Codex 读取使用；其他 provider 静默忽略。
 
 ---
 
 ## Module 6 · 安全审查 / Sandbox 重设计
 
-- [x] **Tool-level sandbox 重设计** (commit: 4a48ad3)：  
-  - 当前 sandbox 是 bash 命令级别（`BashExecutor` 过滤危险命令）  
-  - 新设计：每个 tool 有独立 sandbox policy（pre-check + post-filter），agent 不可见 sandbox 逻辑，只看 tool 返回  
-  - 跳出 playground 修改系统文件：在 bash tool sandbox 里加 path scope 限制  
-  - 设计 `nutshell/tool_engine/sandbox.py`：`ToolSandbox` 基类，`BashSandbox` / `WebSandbox` / `FSSandbox` 实现
-- [x] **WebSandbox 实现** (commit: ec90b69, 2d49425)：sandbox.py 新增 WebSandbox（域名黑名单 + 响应截断）；接入 fetch_url 和 web_search；session.py 从 params 读取 blocked_domains + sandbox_max_web_chars；804 tests passed，v1.3.63。
+- [x] **Tool-level sandbox 重设计** (commit: 4a48ad3)：`nutshell/tool_engine/sandbox.py`：`ToolSandbox` 基类，`BashSandbox` / `WebSandbox` / `FSSandbox` 实现。
+- [x] **WebSandbox 实现** (commit: ec90b69, 2d49425)：域名黑名单 + 响应截断；接入 fetch_url 和 web_search；v1.3.63。
 
 ---
 
 ## Module 7 · 工具 Stats 系统
 
-- [x] **Harness 分层命名** (commit: c24b4b6)：  
-  - `harness`（保留）= agent 自我感知组件的总称  
-  - 拆分为：`sys_harness`（系统基础，每 turn 自动写）+ `audit_harness`（工具/skill 使用审计，跨 session 聚合）  
-  - 读读 harness 相关 blog，明确定义边界
-- [x] **Token 计算器 tool** (commit: cb43c19)：count_tokens(text, model) built-in tool；Claude 用 anthropic tokenizer，OpenAI 用 tiktoken（fallback chars/4），Kimi 按 chars/3.5；788 passed。
-- [x] **Tool manager persistent agent** (commit: 3130b36)：专职维护 tool stats，定期聚合 harness 数据，输出 tool 使用热力图 + 效率报告到 `_sessions/tool_stats/`。
-- [x] **Nutshell 专职 persistent agent 体系** (commit: 369fede)：  
-  - `dev_maintainer` — 保证无 bug + 最精简化每个功能（基于 nutshell_dev）  
-  - `tool_craftsman` — 不断迭代打磨 tool/skill 质量  
-  - 历史 audit 数据保留在 `_sessions/<entity>_meta/core/audit/`，与 meta session dream 频次 align  
-  - **与 meta session 协调**：meta session「删除」子 session 时移到 `archived/`，audit 数据不丢失
+- [x] **Harness 分层命名** (commit: c24b4b6)：sys_harness（每 turn 自动写）+ audit_harness（跨 session 聚合）。
+- [x] **Token 计算器 tool** (commit: cb43c19)：count_tokens(text, model)；anthropic tokenizer / tiktoken / chars 估算。
+- [x] **Tool manager persistent agent** (commit: 3130b36)：聚合 harness 数据，输出 tool 使用热力图到 `_sessions/tool_stats/`。
+- [x] **Nutshell 专职 persistent agent 体系** (commit: 369fede)：dev_maintainer + tool_craftsman；audit 数据保留在 meta session。
 
 ---
 
 ## Module 8 · Codebase Pruning & Architecture Alignment
 
-> 背景：对整个 nutshell 进行 function 级别梳理，删除无实际调用的代码，使各层职责更清晰。
-
-- [x] **`release_policy` 清除**：`Agent.__init__` 和 `Agent.run()` 里的 `release_policy` 字段在 runtime 中是 dead code（session 始终从 context.jsonl 重建 history，不依赖该字段）。删除 agent.py 参数 + llm_engine/loader.py 读取 + 所有 entity yaml 字段 + 相关测试。796 passed。
-
-- [ ] **`core/hook.py` 接入 session_engine**：hook.py 已定义 5 种 hook 类型并接入 Agent.run()，但 session_engine/session.py 的 `chat()` 和 `tick()` 还在用旧的 `on_text_chunk`/`on_tool_call` 直接参数。将其统一为 hook 传递；同时接入 `on_loop_start`/`on_loop_end`/`on_tool_done` 以完整利用扩展点。
-
-- [ ] **`runtime/` 重命名为 `session_engine/`**：命名与 llm_engine/tool_engine/skill_engine 对齐，明确其职责是 agent loop 的调度与持久化。更新所有 import（约 30 处）。
-
-- [ ] **`loader.py` 移至 `session_engine/`**：`AgentConfig.from_path()` 是文件 IO，不属于 core 的 loop 抽象。移动后 core/ 变为零 IO 依赖的纯计算层。
-
-- [ ] **`session_type` 三态替换 `persistent` bool**：将 `params.json` 里的 `persistent: bool` + `default_task` 重构为更清晰的 `session_type: "ephemeral" | "default" | "persistent"`。需要：
-  1. `runtime/params.py`：`DEFAULT_PARAMS` 中 `persistent: false` → `session_type: "default"`；`default_task` 保留（仅 persistent 使用）
-  2. `runtime/session.py` `tick()`：`params.get("persistent")` → `params.get("session_type") == "persistent"`
-  3. `runtime/session.py` `run_daemon_loop()`：ephemeral session 在 input queue 清空 + 无 pending 任务后自动调用 `stop()`
-  4. `tool_engine/providers/spawn_session.py`：增加 `session_type: str = "default"` 参数，写入新 session 的 params.json
-  5. 所有 `entity/*/agent.yaml` 的 params 块：`persistent: true` → `session_type: "persistent"`；`persistent: false` → 删除（default 是默认值）
-  6. 更新 `test_persistent_agent.py` 等相关测试
-  - **注**：ephemeral 的权限限制（read-only 等）不在本任务范围内，属于 `tool_engine/sandbox` 的职责
+- [x] **`release_policy` 清除** (commit: 71db1b4)：agent.py + llm_engine/loader.py + entity yaml 全部删除。
+- [ ] **`core/hook.py` 接入 session_engine**：chat() 和 tick() 统一为 hook 传递；接入 on_loop_start/end/tool_done。
+- [ ] **`runtime/` 重命名为 `session_engine/`**：与 llm_engine/tool_engine/skill_engine 命名对齐；更新约 30 处 import。
+- [ ] **`loader.py` 移至 `session_engine/`**：`AgentConfig.from_path()` 属文件 IO，不属于 core 纯计算层。
+- [ ] **`session_type` 三态替换 `persistent` bool**：`session_type: "ephemeral" | "default" | "persistent"`；ephemeral session 在 queue 清空后自动 stop()；spawn_session 支持 session_type 参数。
 
 ---
 
-## 完成记录
+## 早期开发记录（v1.0 – v1.3.47）
 
-<!-- 格式：- [x] 任务名 (commit: abc1234) -->
+> 早期 track 的完整任务列表，保留作历史参考。
+
+### CLI & UI
+
+- [x] 删除 tui，保留 web 端监控 (93312c7 v1.3.2)
+- [x] 全面转向 cli (ee1dc63 v1.3.1)
+- [x] cli+web parity — cli session 在 web 端实时可见 (8606176 v1.3.9)
+- [x] bug: cli session 无法在 web 端实时显示 (9d6d156 v1.3.23)
+- [x] 做一个 TUI (4420309 v1.3.12)（后因 v1.3.38 路线调整删除）
+- [x] 添加 CUI，agent 可直接调用 (809efc0 v1.1.9 + ee1dc63 v1.3.1)
+- [x] 系统兼容 openclaw skills/tools
+- [x] 接口兼容 claude code → Anthropic SDK
+- [ ] cli 上启动的 session 需要自动后台 server 处理 heartbeat，无 pending heartbeat 后自动停止
+
+### Agent 交互
+
+- [x] git 工作区 / git_checkpoint tool (72d6418 v1.3.16)
+- [x] nutshell_dev 自主领取 track.md 任务 (173e884 v1.3.11)
+- [x] nutshell_dev memory 含 track.md 快照 + --inject-memory (37a04d2 v1.3.8)
+- [x] nutshell_dev 自动标记 track.md + commit (31244b1)
+- [x] nutshell chat 默认 timeout 修复 (95329bd v1.3.7)
+- [ ] 【交互】agent 房间模式 — 进入 agent 房间而非在线聊天；agent 读看板了解现状
+
+### 用户交互
+
+- [x] 任务板用户和 agent 都能看到 (2b907b1 v1.3.3)
+- [x] nutshell log SESSION_ID [-n N] (5678b8e v1.3.4)
+
+### Filesystem-as-everything & Tools
+
+- [x] system prompt 过长优化 (7d45608 v1.1.6)
+- [x] session memory 分层 (71f9c66 v1.1.7)
+- [x] memory recall skill (5dd735b v1.2.3)
+- [x] creator mode skill (d86c2b6)
+- [x] entity 版本控制 + propose_entity_update review 流程 (3abfba4 v1.2.1 / d239374 v1.3.14)
+- [x] 权限/安全性 sandbox (272c76b v1.3.19)
+- [x] agent 自己迭代 tool 和 skill（热插拔）
+- [x] skills 分段式 load in + memory layer 60 行自动截断 (3c12fce v1.3.10)
+- [x] web search tool（brave + tavily 多 provider）
+
+### Multi-agent
+
+- [x] receptionist entity — 接待 agent (79e89bc v1.3.26)
+- [x] multi-agent runtime (1871749 v1.2.2 + 679e482 v1.2.4)
+- [x] agent-agent 通信协议 (809efc0 v1.1.9)
+- [x] 调用 sub-agent / spawn_session 能力 (1871749 v1.2.2)
+- [ ] subagent ACP to OpenClaw
+
+### Harness & Token
+
+- [x] 环境与反馈系统 (a26e603 v1.3.18)
+- [x] 约束系统 sandbox (272c76b v1.3.19)
+- [x] token 追踪 (8c4b494 v1.2.7)
+- [x] nutshell token-report (2888655 v1.3.17)
+- [x] memory cache 优化 (ee7d6eb v1.2.0)
+- [x] heartbeat prompt 精简 (0bb3337 v1.2.5)
+- [x] state_diff tool (f075de1 v1.3.13)
+- [x] Prompt 优化 (693b3a8 v1.3.15)
+
+### CLI Apps for Agent
+
+- [x] 实时通信 — nutshell friends，好友在线状态 (cf83515 v1.3.22)
+- [x] app notification system (59e4375 v1.3.24)
+- [x] 看板 nutshell kanban (3902211 v1.3.25)
+- [x] Repo as a skill / deepwiki (ffcb72d v1.3.20)
+- [x] repo_dev agent (66cfbdf v1.3.21)
+- [ ] 虾游戏（shrimp game for agent）
+
+### Agent Personas & Usage
+
+- [x] yisebi — 懂王·行动派，社交媒体评论角色 (entity/yisebi v1.3.34)
+- [x] game_player — 游戏高玩，速通各类 agent 游戏 (entity/game_player v1.3.33)
+- [x] cli_os — Agent CLI-OS playground (entity/cli_os v1.3.35)
+
+### Model Selection
+
+- [x] auto_model — params.json 自动评估任务复杂度选模型 (v1.3.x)
+- [ ] system-level 快速 evaluate 系统（不依赖模型自判断）
