@@ -1,9 +1,6 @@
-"""Unified tool registry — merges built-in callables + provider swap.
+"""Unified tool registry.
 
-Built-in callables (was runtime/tools/_registry.py):
     get_builtin(name) → Callable | None
-
-Provider swap (was runtime/tool_provider_factory.py):
     resolve_tool_impl(tool_name, provider_name) → Callable | None
     list_providers(tool_name) → list[str]
     registered_tools() → list[str]
@@ -11,117 +8,22 @@ Provider swap (was runtime/tool_provider_factory.py):
 from __future__ import annotations
 
 import importlib
-from functools import partial
 from typing import Callable
 
-from nutshell.tool_engine.sandbox import WebSandbox
-
-
-# ── Built-in factories ────────────────────────────────────────────────────────
 
 def _make_bash() -> Callable:
-    from nutshell.tool_engine.executor.bash import create_bash_tool
+    from nutshell.tool_engine.executor.terminal.bash_terminal import create_bash_tool
     return create_bash_tool()._func
 
 
-def _make_web_search(sandbox: WebSandbox | None = None) -> Callable:
-    from nutshell.tool_engine.providers.web_search.brave import _brave_search
-    return partial(_brave_search, sandbox=sandbox) if sandbox is not None else _brave_search
+def _make_web_search() -> Callable:
+    from nutshell.tool_engine.executor.web_search.brave_web_search import _brave_search
+    return _brave_search
 
-
-def _make_send_to_session() -> Callable:
-    from nutshell.tool_engine.providers.session_msg import send_to_session
-    return send_to_session
-
-
-def _make_propose_entity_update() -> Callable:
-    from nutshell.tool_engine.providers.entity_update import propose_entity_update
-    return propose_entity_update
-
-
-def _make_propose_parent_update() -> Callable:
-    from nutshell.tool_engine.providers.entity_update import propose_parent_update
-    return propose_parent_update
-
-
-
-def _make_spawn_session() -> Callable:
-    from nutshell.tool_engine.providers.spawn_session import spawn_session
-    return spawn_session
-
-
-def _make_fetch_url(sandbox: WebSandbox | None = None) -> Callable:
-    from nutshell.tool_engine.providers.fetch_url import fetch_url
-    return partial(fetch_url, sandbox=sandbox) if sandbox is not None else fetch_url
-
-
-def _make_recall_memory() -> Callable:
-    from nutshell.tool_engine.providers.recall_memory import recall_memory
-    return recall_memory
-
-
-def _make_load_skill(_agent: object | None = None) -> Callable:
-    from nutshell.tool_engine.providers.load_skill import load_skill
-    return partial(load_skill, _agent=_agent) if _agent is not None else load_skill
-
-
-def _make_state_diff() -> Callable:
-    from nutshell.tool_engine.providers.state_diff import state_diff
-    return state_diff
-
-
-def _make_git_checkpoint() -> Callable:
-    from nutshell.tool_engine.providers.git_checkpoint import git_checkpoint
-    return git_checkpoint
-
-
-
-def _make_app_notify() -> Callable:
-    from nutshell.tool_engine.providers.app_notify import app_notify
-    return app_notify
-
-
-def _make_list_child_sessions() -> Callable:
-    from nutshell.tool_engine.providers.list_child_sessions import list_child_sessions
-    return list_child_sessions
-
-
-def _make_get_session_info() -> Callable:
-    from nutshell.tool_engine.providers.get_session_info import get_session_info
-    return get_session_info
-
-
-def _make_archive_session() -> Callable:
-    from nutshell.tool_engine.providers.archive_session import archive_session
-    return archive_session
-
-
-def _make_count_tokens() -> Callable:
-    from nutshell.tool_engine.providers.count_tokens import count_tokens
-    return count_tokens
-
-
-def _make_count_tokens() -> Callable:
-    from nutshell.tool_engine.providers.count_tokens import count_tokens
-    return count_tokens
 
 _BUILTIN_FACTORIES: dict[str, Callable[[], Callable]] = {
-    "bash":                   _make_bash,
-    "web_search":             _make_web_search,
-    "send_to_session":        _make_send_to_session,
-    "propose_entity_update":  _make_propose_entity_update,
-    "propose_parent_update":  _make_propose_parent_update,
-    "spawn_session":          _make_spawn_session,
-    "fetch_url":              _make_fetch_url,
-    "recall_memory":          _make_recall_memory,
-    "load_skill":             _make_load_skill,
-    "state_diff":             _make_state_diff,
-    "git_checkpoint":         _make_git_checkpoint,
-    "app_notify":             _make_app_notify,
-    "list_child_sessions":    _make_list_child_sessions,
-    "get_session_info":       _make_get_session_info,
-    "archive_session":        _make_archive_session,
-    "count_tokens":           _make_count_tokens,
+    "bash":       _make_bash,
+    "web_search": _make_web_search,
 }
 
 
@@ -135,13 +37,13 @@ def get_builtin(name: str) -> Callable | None:
 
 _PROVIDER_REGISTRY: dict[str, dict[str, tuple[str, str]]] = {
     "web_search": {
-        "brave":  ("nutshell.tool_engine.providers.web_search.brave",  "_brave_search"),
-        "tavily": ("nutshell.tool_engine.providers.web_search.tavily", "_tavily_search"),
+        "brave":  ("nutshell.tool_engine.executor.web_search.brave_web_search",  "_brave_search"),
+        "tavily": ("nutshell.tool_engine.executor.web_search.tavily_web_search", "_tavily_search"),
     },
 }
 
 
-def resolve_tool_impl(tool_name: str, provider_name: str, sandbox: WebSandbox | None = None) -> Callable | None:
+def resolve_tool_impl(tool_name: str, provider_name: str) -> Callable | None:
     """Return the async impl callable for (tool_name, provider_name), or None if unknown."""
     providers = _PROVIDER_REGISTRY.get(tool_name, {})
     entry = providers.get(provider_name)
@@ -150,17 +52,14 @@ def resolve_tool_impl(tool_name: str, provider_name: str, sandbox: WebSandbox | 
     module_path, func_name = entry
     try:
         module = importlib.import_module(module_path)
-        impl = getattr(module, func_name)
-        return partial(impl, sandbox=sandbox) if sandbox is not None else impl
+        return getattr(module, func_name)
     except (ImportError, AttributeError):
         return None
 
 
 def list_providers(tool_name: str) -> list[str]:
-    """Return list of registered provider names for a tool."""
     return list(_PROVIDER_REGISTRY.get(tool_name, {}).keys())
 
 
 def registered_tools() -> list[str]:
-    """Return all tool names that have registered providers."""
     return list(_PROVIDER_REGISTRY.keys())

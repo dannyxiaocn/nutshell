@@ -17,7 +17,7 @@ from unittest import mock
 import pytest
 
 from nutshell.runtime.session_factory import _create_session_venv, init_session
-from nutshell.tool_engine.executor.bash import _venv_env, create_bash_tool
+from nutshell.tool_engine.executor.terminal.bash_terminal import _venv_env, create_bash_tool
 
 
 # ── 1. init_session creates .venv ──────────────────────────────────────────────
@@ -69,7 +69,7 @@ def test_venv_env_returns_none_without_venv(tmp_path):
     sessions_base = tmp_path / "sessions"
     sid = "no-venv-session"
     (sessions_base / sid).mkdir(parents=True)
-    with mock.patch("nutshell.tool_engine.executor.bash._REPO_ROOT", tmp_path):
+    with mock.patch("nutshell.tool_engine.executor.terminal.bash_terminal._REPO_ROOT", tmp_path):
         with mock.patch.dict(os.environ, {"NUTSHELL_SESSION_ID": sid}):
             assert _venv_env() is None
 
@@ -84,7 +84,7 @@ def test_venv_env_injects_vars(tmp_path):
     venv_bin = venv_path / "bin"
     venv_bin.mkdir(parents=True)
 
-    with mock.patch("nutshell.tool_engine.executor.bash._REPO_ROOT", tmp_path):
+    with mock.patch("nutshell.tool_engine.executor.terminal.bash_terminal._REPO_ROOT", tmp_path):
         with mock.patch.dict(os.environ, {"NUTSHELL_SESSION_ID": sid}):
             env = _venv_env()
             assert env is not None
@@ -101,7 +101,7 @@ def test_venv_env_strips_pythonhome(tmp_path):
     venv_bin = session_dir / ".venv" / "bin"
     venv_bin.mkdir(parents=True)
 
-    with mock.patch("nutshell.tool_engine.executor.bash._REPO_ROOT", tmp_path):
+    with mock.patch("nutshell.tool_engine.executor.terminal.bash_terminal._REPO_ROOT", tmp_path):
         with mock.patch.dict(os.environ, {"NUTSHELL_SESSION_ID": sid, "PYTHONHOME": "/bad"}):
             env = _venv_env()
             assert "PYTHONHOME" not in env
@@ -121,7 +121,7 @@ async def test_bash_which_python3_in_venv(tmp_path):
     _create_session_venv(session_dir)
     venv_path = session_dir / ".venv"
 
-    with mock.patch("nutshell.tool_engine.executor.bash._REPO_ROOT", tmp_path):
+    with mock.patch("nutshell.tool_engine.executor.terminal.bash_terminal._REPO_ROOT", tmp_path):
         with mock.patch.dict(os.environ, {"NUTSHELL_SESSION_ID": sid}):
             tool = create_bash_tool()
             result = await tool.execute(command="which python3")
@@ -139,7 +139,7 @@ async def test_bash_python3_import_sys(tmp_path):
     _create_session_venv(session_dir)
     venv_path = session_dir / ".venv"
 
-    with mock.patch("nutshell.tool_engine.executor.bash._REPO_ROOT", tmp_path):
+    with mock.patch("nutshell.tool_engine.executor.terminal.bash_terminal._REPO_ROOT", tmp_path):
         with mock.patch.dict(os.environ, {"NUTSHELL_SESSION_ID": sid}):
             tool = create_bash_tool()
             result = await tool.execute(
@@ -160,7 +160,7 @@ async def test_pip_install_to_venv(tmp_path):
     _create_session_venv(session_dir)
     venv_path = session_dir / ".venv"
 
-    with mock.patch("nutshell.tool_engine.executor.bash._REPO_ROOT", tmp_path):
+    with mock.patch("nutshell.tool_engine.executor.terminal.bash_terminal._REPO_ROOT", tmp_path):
         with mock.patch.dict(os.environ, {"NUTSHELL_SESSION_ID": sid}):
             tool = create_bash_tool()
             # Use pip to show where it would install
@@ -196,7 +196,7 @@ async def test_pty_mode_uses_venv(tmp_path):
     _create_session_venv(session_dir)
     venv_path = session_dir / ".venv"
 
-    with mock.patch("nutshell.tool_engine.executor.bash._REPO_ROOT", tmp_path):
+    with mock.patch("nutshell.tool_engine.executor.terminal.bash_terminal._REPO_ROOT", tmp_path):
         with mock.patch.dict(os.environ, {"NUTSHELL_SESSION_ID": sid}):
             tool = create_bash_tool()
             result = await tool.execute(command="which python3", pty=True)

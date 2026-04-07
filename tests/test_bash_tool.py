@@ -1,7 +1,7 @@
 """Tests for the built-in bash tool."""
 import pytest
-from nutshell.tool_engine.executor.bash import create_bash_tool
-from nutshell.tool_engine.executor.shell import ShellExecutor
+from nutshell.tool_engine.executor.terminal.bash_terminal import create_bash_tool
+from nutshell.tool_engine.executor.terminal.shell_terminal import ShellExecutor
 from nutshell.tool_engine.loader import ToolLoader
 from nutshell.core.tool import Tool
 

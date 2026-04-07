@@ -7,10 +7,6 @@ Two execution modes:
   - subprocess (default): asyncio.create_subprocess_shell — async, portable
   - pty: pseudo-terminal via stdlib pty + thread executor — preserves isatty(),
     color output, and avoids stdout buffering. Unix only.
-
-Sandbox:
-  Commands are checked against DANGEROUS_DEFAULTS + any extra blocked_patterns
-  before execution.  Blocked commands return an error message without being run.
 """
 from __future__ import annotations
 
@@ -19,11 +15,10 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Optional
 
 from nutshell.core.tool import Tool
 from nutshell.tool_engine.executor.base import BaseExecutor
-from nutshell.tool_engine.sandbox import BashSandbox, check_blocked
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mGKHF]")
 _MAX_OUTPUT = 10_000
@@ -171,14 +166,10 @@ class BashExecutor(BaseExecutor):
         timeout: float = 30.0,
         workdir: str | None = None,
         max_output: int = _MAX_OUTPUT,
-        blocked_patterns: Sequence[str] | None = None,
-        sandbox: BashSandbox | None = None,
     ) -> None:
         self._timeout = timeout
         self._workdir = workdir
         self._max_output = max_output
-        self._blocked_patterns = list(blocked_patterns) if blocked_patterns else []
-        self._sandbox = sandbox
 
     @classmethod
     def can_handle(cls, tool_name: str, tool_path: Path | None) -> bool:
@@ -186,17 +177,6 @@ class BashExecutor(BaseExecutor):
 
     async def execute(self, **kwargs: Any) -> str:
         command: str = kwargs["command"]
-
-        # Sandbox check — reject dangerous commands before execution
-        if self._sandbox is not None:
-            violation = await self._sandbox.check("bash", kwargs)
-            if violation is not None:
-                return violation
-        else:
-            violation = check_blocked(command, self._blocked_patterns or None)
-            if violation is not None:
-                return f"[SANDBOX] {violation}\nCommand was NOT executed."
-
         timeout = float(kwargs.get("timeout") or self._timeout)
         workdir = kwargs.get("workdir") or self._workdir
         pty = bool(kwargs.get("pty", False))
@@ -211,7 +191,6 @@ def create_bash_tool(
     timeout: float = 30.0,
     workdir: str | None = None,
     max_output: int = _MAX_OUTPUT,
-    blocked_patterns: Sequence[str] | None = None,
 ) -> Tool:
     """Return a bash Tool pre-configured with defaults.
 
@@ -221,15 +200,8 @@ def create_bash_tool(
         timeout: Default execution timeout in seconds.
         workdir: Default working directory (None = inherit from process).
         max_output: Max characters of output returned to the model.
-        blocked_patterns: Extra regex patterns to block (on top of DANGEROUS_DEFAULTS).
-                          Loaded from params.json "blocked_patterns" at session level.
     """
-    executor = BashExecutor(
-        timeout=timeout,
-        workdir=workdir,
-        max_output=max_output,
-        blocked_patterns=blocked_patterns,
-    )
+    executor = BashExecutor(timeout=timeout, workdir=workdir, max_output=max_output)
 
     async def bash(
         command: str,

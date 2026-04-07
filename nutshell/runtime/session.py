@@ -13,8 +13,7 @@ from nutshell.runtime.params import ensure_session_params, read_session_params
 from nutshell.runtime.model_eval import evaluate_task_complexity, suggest_model
 from nutshell.llm_engine.registry import provider_name, resolve_provider
 from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
-from nutshell.tool_engine.sandbox import BashSandbox, WebSandbox
-from nutshell.tool_engine.executor.bash import BashExecutor
+from nutshell.tool_engine.executor.terminal.bash_terminal import BashExecutor
 
 if TYPE_CHECKING:
     from nutshell.runtime.ipc import FileIPC
@@ -172,34 +171,17 @@ class Session:
         # default_workdir: bash and shell tools run from the session directory so
         # agents use short relative paths (core/tasks.md) instead of full session paths.
         try:
-            blocked_patterns = params.get("blocked_patterns") or []
             tools = ToolLoader(
                 default_workdir=str(self.session_dir),
-                blocked_patterns=blocked_patterns,
             ).load_dir(self.core_dir / "tools")
-            bash_sandbox = BashSandbox(blocked_patterns)
-            web_sandbox = WebSandbox(
-                blocked_domains=params.get("blocked_domains") or [],
-                max_response_chars=int(params.get("sandbox_max_web_chars", 50000)),
-            )
             for i, t in enumerate(tools):
                 if t.name == "bash":
-                    executor = BashExecutor(workdir=str(self.session_dir), sandbox=bash_sandbox)
+                    executor = BashExecutor(workdir=str(self.session_dir))
 
                     async def _bash_impl(**kwargs):
                         return await executor.execute(**kwargs)
 
                     tools[i] = Tool(name=t.name, description=t.description, func=_bash_impl, schema=t.schema)
-                elif t.name == "fetch_url":
-                    from functools import partial
-                    from nutshell.tool_engine.registry import _make_fetch_url
-                    tools[i] = Tool(name=t.name, description=t.description, func=_make_fetch_url(web_sandbox), schema=t.schema)
-                elif t.name == "web_search":
-                    from nutshell.tool_engine.registry import _make_web_search
-                    tools[i] = Tool(name=t.name, description=t.description, func=_make_web_search(web_sandbox), schema=t.schema)
-                elif t.name == "load_skill":
-                    from nutshell.tool_engine.registry import _make_load_skill
-                    tools[i] = Tool(name=t.name, description=t.description, func=_make_load_skill(self._agent), schema=t.schema)
         except (FileNotFoundError, PermissionError):
             tools = []
         except Exception as e:
@@ -212,13 +194,7 @@ class Session:
             for i, t in enumerate(tools):
                 if t.name in tool_providers:
                     tool_provider_key = tool_providers[t.name]
-                    if t.name in {"web_search", "fetch_url"}:
-                        try:
-                            impl = resolve_tool_impl(t.name, tool_provider_key, sandbox=web_sandbox)
-                        except TypeError:
-                            impl = resolve_tool_impl(t.name, tool_provider_key)
-                    else:
-                        impl = resolve_tool_impl(t.name, tool_provider_key)
+                    impl = resolve_tool_impl(t.name, tool_provider_key)
                     if impl:
                         tools[i] = Tool(name=t.name, description=t.description, func=impl, schema=t.schema)
 

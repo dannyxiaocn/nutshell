@@ -1,85 +1,94 @@
 # nutshell/tool_engine
 
-一句话定位：负责加载、注册、执行并约束 agent 可调用的工具，包括磁盘工具定义、内置 provider 工具与 sandbox。
+负责加载、注册、执行 agent 可调用的工具。
 
-## 文件/子目录列表
-- `__init__.py`：导出 `ToolLoader` 与内置工具注册入口。
-- `loader.py`：从 `.json` 工具描述和同名脚本加载 Tool；支持 shell/bash 等 executor。
-- `registry.py`：注册与解析内置工具实现，以及按 provider key 选择实现。
-- `reload.py`：生成 `reload_capabilities` 内置工具，触发 session 热重载。
-- `sandbox.py`：工具调用前检查与结果过滤；包含通用、bash、文件系统、web sandbox。
-- `executor/`：脚本型工具执行后端。
-  - `__init__.py`：导出 executor 类型。
-  - `base.py`：`Executor` 抽象协议。
-  - `bash.py`：bash 命令执行器。
-  - `shell.py`：通用 shell 脚本执行器。
-- `providers/`：内置 Python 工具实现。
-  - `app_notify.py`：管理 `core/apps/*.md` 持久通知。
-  - `archive_session.py`：归档 session 到 `_archived/`。
-  - `count_tokens.py`：按模型估算/统计 token。
-  - `entity_update.py`：提交 entity / parent entity 更新提案。
-  - `fetch_url.py`：抓取 URL 文本内容。
-  - `get_session_info.py`：读取 session 元数据、近期 turn、tasks、memory 列表。
-  - `git_checkpoint.py`：在仓库内做 checkpoint commit。
-  - `list_child_sessions.py`：列出当前 entity 的子 session。
-  - `load_skill.py`：按名称加载 skill 正文。
-  - `recall_memory.py`：检索 session memory。
-  - `session_msg.py`：向其他 session 发送同步/异步消息。
-  - `spawn_session.py`：动态创建新 session。
-  - `state_diff.py`：保存状态快照并返回 diff。
+## 目录结构
 
-## 关键设计 / 架构说明
-- 工具来源分两类：
-  - 磁盘定义工具：`*.json + 同名脚本`，适合 entity/session 自定义。
-  - 内置 provider 工具：Python 实现，适合运行时能力与系统级操作。
-- `ToolLoader` 只负责把文件定义转成 `Tool`；实际 provider 绑定、sandbox 注入由 runtime 层完成。
-- executor 层把“脚本如何执行”与“工具如何描述”分离，便于统一 shell/bash 工具加载。
-- sandbox 分为输入检查和输出过滤两步，既可拦危险命令，也可裁剪超长结果。
-- `reload_capabilities` 不从磁盘加载，而是由 runtime 强制注入，保证任何 session 都能热更新能力。
-
-## 主要对外接口
-### `class ToolLoader`
-```python
-from pathlib import Path
-from nutshell.tool_engine import ToolLoader
-
-loader = ToolLoader(default_workdir='.')
-tool = loader.load(Path('tools/bash.json'))
-tools = loader.load_dir(Path('tools'))
 ```
-- `load(path)`：加载单个工具定义。
-- `load_dir(directory)`：批量加载目录中的工具。
+tool_engine/
+├── __init__.py          # 导出 ToolLoader、BashExecutor、registry 入口
+├── loader.py            # 从磁盘 .json 定义加载 Tool 对象
+├── registry.py          # 内置工具注册 + provider swap（bash / web_search）
+├── reload.py            # reload_capabilities 元工具，触发 session 热重载
+├── sandbox.py           # 已移除（空占位）
+└── executor/            # 所有工具的执行实现，按 tool-name/ 分组
+    ├── base.py          # BaseExecutor 抽象基类
+    ├── terminal/        # 终端命令类工具
+    │   ├── bash_terminal.py    # bash 内置工具：BashExecutor + create_bash_tool
+    │   └── shell_terminal.py   # agent 创建的 .sh 脚本工具：ShellExecutor
+    └── web_search/      # 网络搜索类工具
+        ├── brave_web_search.py   # Brave Search 实现（默认）
+        └── tavily_web_search.py  # Tavily 实现（备选）
+```
 
-### `get_builtin(name)` / `resolve_tool_impl(...)` in `registry.py`
+## 设计原则
+
+- **executor/ 按 tool-name/ 分组**：每类工具一个子目录，实现与命名一一对应。
+- **ToolLoader 只管加载**：把磁盘 `.json + 同名脚本` 转成 `Tool` 对象，不关心业务逻辑。
+- **registry 只管 bash 和 web_search**：这两个是系统内置工具；agent 自建工具通过 ShellExecutor 执行 `.sh` 脚本，不进注册表。
+
+## 工具来源
+
+| 来源 | 说明 | 执行方式 |
+|------|------|----------|
+| 系统内置 | `bash`、`web_search` | registry → executor/terminal / executor/web_search |
+| Agent 创建 | `*.json + *.sh` 磁盘定义 | ShellExecutor（stdin JSON → stdout 结果） |
+
+## 关键文件说明
+
+### `loader.py` — ToolLoader
+
+从 `.json` 工具描述文件加载 `Tool` 对象。Resolution 优先级（高→低）：
+
+1. `impl_registry`（调用方显式注入）
+2. `BashExecutor`（tool_name == "bash"）
+3. `ShellExecutor`（同名 `.sh` 文件存在）
+4. `get_builtin()`（registry 查找）
+5. Stub（抛 NotImplementedError）
+
+```python
+from nutshell.tool_engine import ToolLoader
+tools = ToolLoader(default_workdir=".").load_dir(Path("core/tools"))
+```
+
+### `registry.py` — 内置注册 + Provider swap
+
 ```python
 from nutshell.tool_engine.registry import get_builtin, resolve_tool_impl
-impl = get_builtin('spawn_session')
-```
-作用：获取内置工具实现或按 provider key 解析实现。
 
-### `create_reload_tool(session)`
+impl = get_builtin("bash")          # → BashExecutor callable
+impl = get_builtin("web_search")    # → _brave_search callable
+
+# 切换 web_search 后端
+impl = resolve_tool_impl("web_search", "tavily")  # → _tavily_search callable
+```
+
+### `executor/terminal/bash_terminal.py` — bash 工具
+
+- `BashExecutor`：subprocess 模式（默认）+ PTY 模式（`pty=true`）
+- `create_bash_tool()`：返回封装好 schema 的 `Tool` 对象
+- `_venv_env()`：自动激活 session `.venv`（当 `NUTSHELL_SESSION_ID` 存在时）
+
+### `executor/terminal/shell_terminal.py` — agent 创建的 .sh 工具
+
+- `ShellExecutor`：将 kwargs 序列化为 JSON 写入 stdin，执行 `.sh` 脚本，读 stdout 返回
+
+### `executor/web_search/` — 网络搜索
+
+- `brave_web_search.py`：调用 Brave Search API（需 `BRAVE_API_KEY`）
+- `tavily_web_search.py`：调用 Tavily API（需 `TAVILY_API_KEY`，备选）
+
+### `reload.py` — reload_capabilities 元工具
+
+持有 Session 引用，调用时触发 `session._load_session_capabilities()`，让 agent 在不重启的情况下感知 `core/tools/` 和 `core/skills/` 的文件变化。由 `runtime/session.py` 强制注入，不经过磁盘加载。
+
 ```python
 from nutshell.tool_engine.reload import create_reload_tool
-reload_tool = create_reload_tool(session)
-```
-作用：创建 `reload_capabilities` 工具。
-
-### Sandbox 类
-```python
-from nutshell.tool_engine.sandbox import BashSandbox, WebSandbox
-```
-- `check(tool_name, params)`：拦截危险调用。
-- `filter_result(tool_name, result)`：裁剪输出。
-
-### Executor 类
-```python
-from nutshell.tool_engine.executor.bash import BashExecutor
-result = await BashExecutor(workdir='.').execute(command='ls -la')
+reload_tool = create_reload_tool(session)  # session 提供 _load_session_capabilities()
 ```
 
-## 与其他模块的依赖关系
-- 依赖 `nutshell.core.Tool`、`BaseLoader` 抽象。
-- 被 `nutshell.runtime.session.Session` 调用：加载 session `core/tools/`、注入 sandbox、替换特定实现。
-- 与 `entity/agent/tools/*.json`、`sessions/*/core/tools/` 的工具定义格式直接绑定。
-- 部分 provider 工具依赖 `nutshell.runtime`（如 session factory、entity update、status/目录结构）。
-- 被测试目录 `tests/tool_engine/` 重点覆盖。
+## 依赖关系
+
+- 依赖 `nutshell.core.Tool`、`BaseLoader` 抽象
+- 被 `nutshell.runtime.session.Session` 调用：加载 `core/tools/`、替换 bash executor
+- `executor/terminal/bash_terminal.py` 读取 `NUTSHELL_SESSION_ID` 环境变量以激活 session venv

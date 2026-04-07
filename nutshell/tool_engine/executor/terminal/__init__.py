@@ -1,10 +1,4 @@
-from nutshell.tool_engine.executor.base import BaseExecutor
 from nutshell.tool_engine.executor.terminal.bash_terminal import BashExecutor, create_bash_tool
 from nutshell.tool_engine.executor.terminal.shell_terminal import ShellExecutor
 
-__all__ = [
-    "BaseExecutor",
-    "BashExecutor",
-    "ShellExecutor",
-    "create_bash_tool",
-]
+__all__ = ["BashExecutor", "ShellExecutor", "create_bash_tool"]
