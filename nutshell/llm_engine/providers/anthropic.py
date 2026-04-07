@@ -11,10 +11,13 @@ if TYPE_CHECKING:
 
 
 class AnthropicProvider(Provider):
-    _supports_thinking = True
+    _supports_thinking: ClassVar[bool] = True
     """LLM provider backed by Anthropic Claude."""
 
     _supports_cache_control: ClassVar[bool] = True
+    # When True, thinking is enabled via Anthropic's betas header + thinking param.
+    # When False (e.g. Kimi), thinking is enabled via extra_body only (no betas).
+    _thinking_uses_betas: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -60,8 +63,11 @@ class AnthropicProvider(Provider):
             "messages": api_messages,
         }
         if thinking and self._supports_thinking:
-            kwargs["betas"] = ["interleaved-thinking-2025-05-14"]
-            kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            if self._thinking_uses_betas:
+                kwargs["betas"] = ["interleaved-thinking-2025-05-14"]
+                kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            else:
+                kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
             kwargs["max_tokens"] = max(self.max_tokens, thinking_budget + 1000)
         if api_tools:
             kwargs["tools"] = api_tools

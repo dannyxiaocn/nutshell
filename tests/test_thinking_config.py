@@ -69,3 +69,48 @@ async def test_anthropic_thinking_disabled_omits_beta_and_thinking_block():
 def test_default_params_include_thinking_fields():
     assert DEFAULT_PARAMS["thinking"] is False
     assert DEFAULT_PARAMS["thinking_budget"] == 8000
+
+
+# ── Kimi thinking ─────────────────────────────────────────────────────────────
+
+from nutshell.llm_engine.providers.kimi import KimiForCodingProvider
+
+
+@pytest.mark.asyncio
+async def test_kimi_thinking_enabled_uses_extra_body_not_betas():
+    provider = KimiForCodingProvider(api_key="test")
+    provider._client = DummyClient()
+
+    await provider.complete(
+        messages=[],
+        tools=[],
+        system_prompt="sys",
+        model="kimi-k2",
+        thinking=True,
+        thinking_budget=9000,
+    )
+
+    call = provider._client.messages.calls[0]
+    # Kimi uses extra_body, not betas
+    assert "betas" not in call
+    assert "thinking" not in call
+    assert call.get("extra_body") == {"thinking": {"type": "enabled"}}
+    assert call["max_tokens"] >= 10000
+
+
+@pytest.mark.asyncio
+async def test_kimi_thinking_disabled_omits_extra_body():
+    provider = KimiForCodingProvider(api_key="test")
+    provider._client = DummyClient()
+
+    await provider.complete(
+        messages=[],
+        tools=[],
+        system_prompt="sys",
+        model="kimi-k2",
+    )
+
+    call = provider._client.messages.calls[0]
+    assert "betas" not in call
+    assert "thinking" not in call
+    assert "extra_body" not in call

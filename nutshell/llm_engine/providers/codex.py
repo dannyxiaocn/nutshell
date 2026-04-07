@@ -158,17 +158,17 @@ def _extract_account_id(token: str) -> str:
 
 def _refresh_access_token(refresh_token: str) -> dict[str, str]:
     import urllib.request
-    import urllib.parse
 
-    data = urllib.parse.urlencode({
+    # Official Codex uses JSON body (not form-urlencoded) per codex-rs/login/src/auth/manager.rs
+    payload = json.dumps({
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
         "client_id": _CLIENT_ID,
     }).encode()
     req = urllib.request.Request(
         _TOKEN_URL,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data=payload,
+        headers={"Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -218,10 +218,12 @@ def _build_request_body(
         "instructions": system_prompt,
         "input": _convert_messages(messages),
         "text": {"verbosity": "medium"},
-        "include": ["reasoning.encrypted_content"],
         "tool_choice": "auto",
         "parallel_tool_calls": True,
     }
+    # Note: "reasoning.encrypted_content" is for cross-request reasoning state
+    # preservation, NOT for displaying thinking content. Thinking text arrives
+    # via response.reasoning_text.delta SSE events regardless of this flag.
     if tools:
         body["tools"] = [_tool_to_responses_api(t) for t in tools]
     return body
@@ -408,6 +410,13 @@ async def _parse_sse_stream(
                         text_parts.append(delta)
                         if on_text_chunk:
                             on_text_chunk(delta)
+
+                elif etype == "response.reasoning_text.delta":
+                    # Streaming thinking/reasoning content — forward to on_text_chunk
+                    # (same treatment as Anthropic's thinking_delta)
+                    delta = event.get("delta", "")
+                    if delta and on_text_chunk:
+                        on_text_chunk(delta)
 
                 elif etype in ("response.completed", "response.done"):
                     resp_data = event.get("response", {})

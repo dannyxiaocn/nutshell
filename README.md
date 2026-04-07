@@ -1,7 +1,8 @@
-# Nutshell `v1.3.67`
+# Nutshell `v1.3.68`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
+New in v1.3.68: llm_engine audit — Kimi thinking enabled via extra_body (matches kimi-cli); Codex token refresh fixed to JSON body, reasoning_text.delta SSE event handled, misused include field removed; OpenAI/Codex _supports_thinking=False flags; cache breakpoint, tool fallback fixes; llm_engine/README.md fully documented.
 New in v1.3.67: skill progressive disclosure now uses structured load_skill tool calls plus /skill slash-command expansion; skill catalog no longer exposes file paths.
 New in v1.3.66: llm_engine refactor — AgentLoader moved to runtime/agent_loader.py; shared _common.py extracts _parse_json_args; openai_provider.py renamed to openai_api.py; llm_engine/README.md added.
 New in v1.3.65: core/ pruned to the cleanest agent loop — dead ABCs, release_policy, as_tool, examples removed; hook.py adds OnLoopStart/OnLoopEnd/OnToolDone extension points; fallback_model/provider bug fixed.

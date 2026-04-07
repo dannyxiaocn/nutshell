@@ -13,11 +13,16 @@ class KimiForCodingProvider(AnthropicProvider):
     Thin wrapper over AnthropicProvider pointing at Kimi's Anthropic-compatible
     messages API. Uses KIMI_FOR_CODING_API_KEY env var by default, with
     KIMI_API_KEY kept as a compatibility fallback.
+
+    Thinking is enabled via extra_body={"thinking": {"type": "enabled"}} —
+    Kimi does not use Anthropic's betas header mechanism.
     """
 
     # Kimi's API does not support Anthropic cache_control blocks.
     _supports_cache_control: ClassVar[bool] = False
-    _supports_thinking: ClassVar[bool] = False
+    # Kimi supports thinking via extra_body, not Anthropic betas.
+    _supports_thinking: ClassVar[bool] = True
+    _thinking_uses_betas: ClassVar[bool] = False
 
     def __init__(
         self,
