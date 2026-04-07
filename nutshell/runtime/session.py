@@ -195,6 +195,9 @@ class Session:
                 elif t.name == "web_search":
                     from nutshell.tool_engine.registry import _make_web_search
                     tools[i] = Tool(name=t.name, description=t.description, func=_make_web_search(web_sandbox), schema=t.schema)
+                elif t.name == "load_skill":
+                    from nutshell.tool_engine.registry import _make_load_skill
+                    tools[i] = Tool(name=t.name, description=t.description, func=_make_load_skill(self._agent), schema=t.schema)
         except (FileNotFoundError, PermissionError):
             tools = []
         except Exception as e:
@@ -206,14 +209,14 @@ class Session:
             from nutshell.tool_engine.registry import resolve_tool_impl
             for i, t in enumerate(tools):
                 if t.name in tool_providers:
-                    provider_name = tool_providers[t.name]
+                    tool_provider_key = tool_providers[t.name]
                     if t.name in {"web_search", "fetch_url"}:
                         try:
-                            impl = resolve_tool_impl(t.name, provider_name, sandbox=web_sandbox)
+                            impl = resolve_tool_impl(t.name, tool_provider_key, sandbox=web_sandbox)
                         except TypeError:
-                            impl = resolve_tool_impl(t.name, provider_name)
+                            impl = resolve_tool_impl(t.name, tool_provider_key)
                     else:
-                        impl = resolve_tool_impl(t.name, provider_name)
+                        impl = resolve_tool_impl(t.name, tool_provider_key)
                     if impl:
                         tools[i] = Tool(name=t.name, description=t.description, func=impl, schema=t.schema)
 
@@ -290,12 +293,32 @@ class Session:
 
     # ── Activation ────────────────────────────────────────────────
 
+    def _expand_slash_command(self, message: str) -> str:
+        """If message starts with /skill-name, inject full skill content as context."""
+        if not message.startswith("/"):
+            return message
+        parts = message[1:].split(None, 1)
+        cmd = parts[0]
+        args = parts[1] if len(parts) > 1 else ""
+        for skill in self._agent.skills:
+            if skill.name == cmd:
+                if skill.location is not None:
+                    from nutshell.skill_engine.loader import _parse_frontmatter
+                    text = Path(skill.location).read_text(encoding="utf-8")
+                    _, body = _parse_frontmatter(text)
+                else:
+                    body = skill.body
+                header = f"[Skill: {skill.name}]\n\n{body.strip()}"
+                return f"{header}\n\n---\n\n{args}" if args else header
+        return message
+
     async def chat(self, message: str, *, user_input_id: str | None = None, caller_type: str = "human") -> AgentResult:
         """Run agent with user message. Holds agent lock — blocks heartbeat tick.
 
         Args:
             caller_type: "human" or "agent" — passed to Agent.run() for prompt adaptation.
         """
+        message = self._expand_slash_command(message)
         old_len = len(self._agent._history)
         self._set_model_status("running", "user")
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()

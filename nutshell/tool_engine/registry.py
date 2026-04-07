@@ -60,6 +60,11 @@ def _make_recall_memory() -> Callable:
     return recall_memory
 
 
+def _make_load_skill(_agent: object | None = None) -> Callable:
+    from nutshell.tool_engine.providers.load_skill import load_skill
+    return partial(load_skill, _agent=_agent) if _agent is not None else load_skill
+
+
 def _make_state_diff() -> Callable:
     from nutshell.tool_engine.providers.state_diff import state_diff
     return state_diff
@@ -109,6 +114,7 @@ _BUILTIN_FACTORIES: dict[str, Callable[[], Callable]] = {
     "spawn_session":          _make_spawn_session,
     "fetch_url":              _make_fetch_url,
     "recall_memory":          _make_recall_memory,
+    "load_skill":             _make_load_skill,
     "state_diff":             _make_state_diff,
     "git_checkpoint":         _make_git_checkpoint,
     "app_notify":             _make_app_notify,

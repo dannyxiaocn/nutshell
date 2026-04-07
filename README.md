@@ -1,7 +1,8 @@
-# Nutshell `v1.3.66`
+# Nutshell `v1.3.67`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
+New in v1.3.67: skill progressive disclosure now uses structured load_skill tool calls plus /skill slash-command expansion; skill catalog no longer exposes file paths.
 New in v1.3.66: llm_engine refactor — AgentLoader moved to runtime/agent_loader.py; shared _common.py extracts _parse_json_args; openai_provider.py renamed to openai_api.py; llm_engine/README.md added.
 New in v1.3.65: core/ pruned to the cleanest agent loop — dead ABCs, release_policy, as_tool, examples removed; hook.py adds OnLoopStart/OnLoopEnd/OnToolDone extension points; fallback_model/provider bug fixed.
 
@@ -517,6 +518,11 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 
 ## Changelog
 
+### v1.3.67
+- **Skill progressive disclosure via `load_skill`**: skill catalog now advertises only `name` + `description`, and agents are instructed to call `load_skill(name=...)` instead of manually reading `SKILL.md` files by path.
+- **New built-in tool**: `nutshell/tool_engine/providers/load_skill.py`, registered with agent-context injection so skills can be loaded directly from the current agent's available skill set.
+- **Slash command support**: `Session.chat()` now expands `/skill-name ...` into injected skill content plus trailing arguments, matching Claude Code-style skill activation.
+
 ### v1.3.65
 - **core/ pruned to cleanest agent loop**: removed dead ABCs (`BaseTool`, `BaseAgent`), `release_policy`, `Agent.as_tool()`, `Agent._build_system_prompt()`, and `examples/`
 - **`core/hook.py`**: new Hook type aliases — `OnLoopStart`, `OnLoopEnd`, `OnToolCall`, `OnToolDone`, `OnTextChunk`; `Agent.run()` gains three new extension points
@@ -817,6 +823,11 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 
 
 ## Changelog
+
+### v1.3.67
+- **Skill progressive disclosure via `load_skill`**: skill catalog now advertises only `name` + `description`, and agents are instructed to call `load_skill(name=...)` instead of manually reading `SKILL.md` files by path.
+- **New built-in tool**: `nutshell/tool_engine/providers/load_skill.py`, registered with agent-context injection so skills can be loaded directly from the current agent's available skill set.
+- **Slash command support**: `Session.chat()` now expands `/skill-name ...` into injected skill content plus trailing arguments, matching Claude Code-style skill activation.
 
 ### v1.3.63
 - **WebSandbox**: added domain blocking and response truncation for `fetch_url` and `web_search`
