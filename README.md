@@ -1,9 +1,9 @@
-# Nutshell `v1.3.65`
+# Nutshell `v1.3.66`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
+New in v1.3.66: llm_engine refactor — AgentLoader moved to runtime/agent_loader.py; shared _common.py extracts _parse_json_args; openai_provider.py renamed to openai_api.py; llm_engine/README.md added.
 New in v1.3.65: core/ pruned to the cleanest agent loop — dead ABCs, release_policy, as_tool, examples removed; hook.py adds OnLoopStart/OnLoopEnd/OnToolDone extension points; fallback_model/provider bug fixed.
-New in v1.3.64: persistent specialist entities now include tool_craftsman, and archived sessions preserve audit logs in entity meta storage.
 
 ---
 
@@ -393,14 +393,17 @@ nutshell/              ← Python library
 ├── llm_engine/
 │   ├── providers/
 │   │   ├── anthropic.py   # AnthropicProvider (streaming, thinking, cache)
-│   │   ├── kimi.py        # KimiForCodingProvider
-│   │   └── openai_provider.py  # OpenAIProvider (GPT models)
+│   │   ├── openai_api.py  # OpenAIProvider (GPT / any OpenAI-compat endpoint)
+│   │   ├── kimi.py        # KimiForCodingProvider (extends Anthropic)
+│   │   ├── codex.py       # CodexProvider (ChatGPT OAuth, Responses API)
+│   │   └── _common.py     # _parse_json_args() shared across providers
 │   ├── registry.py
-│   └── loader.py      # AgentLoader — entity/ dir → Agent (handles extends chain)
+│   └── README.md      # provider setup guide (env vars, Codex OAuth flow)
 ├── skill_engine/
 │   ├── loader.py      # SkillLoader
 │   └── renderer.py    # build_skills_block()
 └── runtime/
+    ├── agent_loader.py  # AgentLoader — entity/ dir → Agent (extends chain, provider wiring)
     ├── session.py     # Session — reads files, runs daemon loop
     ├── ipc.py         # FileIPC — context.jsonl + events.jsonl
     ├── session_factory.py  # init_session() — shared session initialization
@@ -604,12 +607,19 @@ When multiple agent sessions work on the same git repository, a **master/sub** c
 - New `keep_alive` parameter on `_new_session()` in `ui/cli/chat.py`; wired through `cmd_chat` in `ui/cli/main.py`
 - 11 new tests in `test_cli_keepalive.py`; 434 total
 
+### v1.3.66
+- **llm_engine refactor** — `AgentLoader` moved from `llm_engine/loader.py` to `nutshell/runtime/agent_loader.py`; `llm_engine/` now only owns provider implementations and registry
+- `llm_engine/providers/_common.py` — shared `_parse_json_args()` extracted; used by `openai_api.py` and `codex.py`
+- `openai_provider.py` renamed to `openai_api.py` for clarity
+- `nutshell/llm_engine/README.md` added — full provider setup guide with env vars and Codex OAuth flow
+- All import sites updated; 796 tests pass
+
 ### v1.3.28
-- **OpenAI provider** — new `OpenAIProvider` in `nutshell/llm_engine/providers/openai_provider.py`; supports GPT models via the official `openai` Python SDK
+- **OpenAI provider** — new `OpenAIProvider` in `nutshell/llm_engine/providers/openai_api.py`; supports GPT models via the official `openai` Python SDK
 - Works with standard API keys and **openai-codex OAuth tokens** (`OPENAI_API_KEY` env var)
 - Full feature parity: streaming text chunks, function calling (tools), token usage tracking (with cached-token support)
 - Registered in `llm_engine/registry.py` as `"openai"` — switch via `params.json` (`provider: openai`, `model: gpt-5.4`)
-- 20 new tests in `test_openai_provider.py`; 423 total
+- 20 new tests in `test_openai_api.py`; 423 total
 
 
 ### v1.3.27

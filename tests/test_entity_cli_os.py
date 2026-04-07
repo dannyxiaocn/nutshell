@@ -193,29 +193,29 @@ class TestAgentLoaderIntegration:
     """Verify the cli_os entity loads through AgentLoader without errors."""
 
     def test_load_cli_os(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         agent = AgentLoader().load(CLI_OS_DIR)
         assert agent is not None
 
     def test_loaded_agent_has_system_prompt(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         agent = AgentLoader().load(CLI_OS_DIR)
         assert "CLI-OS" in agent.system_prompt
 
     def test_loaded_agent_has_bash_tool(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         agent = AgentLoader().load(CLI_OS_DIR)
         tool_names = {t.name for t in agent.tools}
         assert "bash" in tool_names
 
     def test_loaded_agent_has_fetch_url_tool(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         agent = AgentLoader().load(CLI_OS_DIR)
         tool_names = {t.name for t in agent.tools}
         assert "fetch_url" in tool_names
 
     def test_loaded_agent_no_dev_tools(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         agent = AgentLoader().load(CLI_OS_DIR)
         tool_names = {t.name for t in agent.tools}
         assert "git_checkpoint" not in tool_names
@@ -223,18 +223,18 @@ class TestAgentLoaderIntegration:
         assert "spawn_session" not in tool_names
 
     def test_loaded_agent_has_skills(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         agent = AgentLoader().load(CLI_OS_DIR)
         skill_names = {s.name for s in agent.skills}
         assert "cli-explorer" in skill_names
 
     def test_loaded_agent_model(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         agent = AgentLoader().load(CLI_OS_DIR)
         assert agent.model == "claude-sonnet-4-6"
 
     def test_loaded_agent_inherits_heartbeat(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         agent = AgentLoader().load(CLI_OS_DIR)
         assert agent.heartbeat_prompt  # inherited from agent
 

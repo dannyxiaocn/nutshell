@@ -204,19 +204,19 @@ class TestAgentLoaderIntegration:
     """Verify the yisebi entity loads through AgentLoader without errors."""
 
     def test_load_yisebi(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(YISEBI_DIR)
         assert agent is not None
 
     def test_loaded_agent_has_system_prompt(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(YISEBI_DIR)
         assert "yisebi" in agent.system_prompt.lower()
 
     def test_loaded_agent_has_tools(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(YISEBI_DIR)
         tool_names = {t.name for t in agent.tools}
@@ -225,7 +225,7 @@ class TestAgentLoaderIntegration:
         assert "fetch_url" in tool_names
 
     def test_loaded_agent_no_dev_tools(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(YISEBI_DIR)
         tool_names = {t.name for t in agent.tools}
@@ -234,20 +234,20 @@ class TestAgentLoaderIntegration:
         assert "spawn_session" not in tool_names
 
     def test_loaded_agent_has_skills(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(YISEBI_DIR)
         skill_names = {s.name for s in agent.skills}
         assert "social-media" in skill_names
 
     def test_loaded_agent_inherits_heartbeat(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(YISEBI_DIR)
         assert agent.heartbeat_prompt  # inherited from agent
 
     def test_loaded_agent_model(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(YISEBI_DIR)
         assert agent.model == "claude-sonnet-4-6"

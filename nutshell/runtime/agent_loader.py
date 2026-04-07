@@ -16,6 +16,7 @@ class AgentLoader(BaseLoader[Agent]):
     """Load a complete Agent from an entity directory containing agent.yaml.
 
     Supports arbitrarily deep entity inheritance via ``extends`` in agent.yaml.
+    Provider resolution is delegated to ``nutshell.llm_engine.registry``.
     """
 
     def __init__(self, impl_registry: dict[str, Callable] | None = None) -> None:
@@ -98,7 +99,6 @@ class AgentLoader(BaseLoader[Agent]):
 
         fallback_model = manifest.get("fallback_model", "")
         fallback_provider = manifest.get("fallback_provider", "")
-        # Inherit fallback from parent if not overridden
         if not fallback_model and parent is not None:
             fallback_model = getattr(parent, "fallback_model", "") or ""
         if not fallback_provider and parent is not None:
@@ -116,6 +116,7 @@ class AgentLoader(BaseLoader[Agent]):
             fallback_provider=fallback_provider,
         )
 
+        # Delegate provider instantiation to llm_engine — runtime → llm_engine boundary
         try:
             from nutshell.llm_engine.registry import resolve_provider
             agent._provider = resolve_provider(provider_str)
@@ -154,6 +155,5 @@ class AgentLoader(BaseLoader[Agent]):
 
     def load_from_entity(self, name: str) -> Agent:
         """Load agent by entity name from the default entity/ directory."""
-        from pathlib import Path
         entity_dir = Path(__file__).parent.parent.parent / "entity" / name
         return self.load(entity_dir)

@@ -140,7 +140,7 @@ class TestKeepAliveBranching:
 
         with (
             mock.patch.dict("sys.modules", {
-                "nutshell.llm_engine.loader": mock.MagicMock(AgentLoader=fake_loader_cls),
+                "nutshell.runtime.agent_loader": mock.MagicMock(AgentLoader=fake_loader_cls),
                 "nutshell.runtime.session": mock.MagicMock(Session=fake_session_cls),
                 "nutshell.runtime.ipc": mock.MagicMock(FileIPC=fake_ipc_cls),
                 "nutshell.runtime.session_factory": mock.MagicMock(init_session=fake_init_session),

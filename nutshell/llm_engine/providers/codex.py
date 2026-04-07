@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from nutshell.core.provider import Provider
 from nutshell.core.types import TokenUsage, ToolCall
+from nutshell.llm_engine.providers._common import _parse_json_args
 
 if TYPE_CHECKING:
     from nutshell.core.types import Message
@@ -417,17 +418,8 @@ async def _parse_sse_stream(
 
     text = "".join(text_parts)
     tool_calls = [
-        ToolCall(id=call_id, name=tc["name"], input=_parse_args(tc["args"]))
+        ToolCall(id=call_id, name=tc["name"], input=_parse_json_args(tc["args"]))
         for call_id, tc in tc_map.items()
         if tc["name"]
     ]
     return text, tool_calls, usage
-
-
-def _parse_args(args_str: str) -> dict[str, Any]:
-    if not args_str:
-        return {}
-    try:
-        return json.loads(args_str)
-    except json.JSONDecodeError:
-        return {}

@@ -11,7 +11,7 @@ import pytest
 import yaml
 from pathlib import Path
 
-from nutshell.llm_engine.loader import AgentLoader
+from nutshell.runtime.agent_loader import AgentLoader
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

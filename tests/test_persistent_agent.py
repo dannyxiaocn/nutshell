@@ -282,7 +282,7 @@ def test_session_factory_no_params_key_defaults(tmp_path):
 
 def test_persistent_agent_entity_loads():
     """entity/persistent_agent/ can be loaded by AgentLoader."""
-    from nutshell.llm_engine.loader import AgentLoader
+    from nutshell.runtime.agent_loader import AgentLoader
 
     entity_dir = Path(__file__).parent.parent / "entity" / "persistent_agent"
     if not entity_dir.exists():

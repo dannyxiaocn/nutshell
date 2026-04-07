@@ -167,7 +167,7 @@ def _new_session(
 ) -> int:
     """Handle new-session mode. Spawns daemon thread, returns exit code."""
     import asyncio
-    from nutshell.llm_engine.loader import AgentLoader
+    from nutshell.runtime.agent_loader import AgentLoader
     from nutshell.runtime.session import Session
     from nutshell.runtime.ipc import FileIPC
     from nutshell.runtime.session_factory import init_session

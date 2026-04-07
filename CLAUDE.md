@@ -1,6 +1,6 @@
 # Nutshell — Claude Code Context
 
-> Current version: **v1.3.65** · Python package · `pip install -e .`
+> Current version: **v1.3.66** · Python package · `pip install -e .`
 
 Minimal Python agent runtime. Core value: **simplicity + persistence**.  
 Agents run as long-lived server-managed sessions with file-based IPC.
@@ -14,10 +14,10 @@ See `philosophy.md` for design principles.
 ```
 nutshell/
 ├── core/           Agent loop + its direct participants: Tool, Skill, Provider, Hook, types, loader
-├── llm_engine/     LLM providers: Anthropic (+ thinking), Kimi, OpenAI, Codex
+├── llm_engine/     LLM providers only: anthropic, openai_api, kimi, codex, _common; registry
 ├── tool_engine/    Bash/shell executors, web_search, built-in tools, sandbox
 ├── skill_engine/   SKILL.md loader + system-prompt renderer
-└── runtime/        session.py, session_factory.py, ipc.py, watcher.py,
+└── runtime/        agent_loader.py, session.py, session_factory.py, ipc.py, watcher.py,
                     meta_session.py, status.py, params.py, server.py
 
 ui/                 (repo root — NOT inside nutshell/)
@@ -181,7 +181,7 @@ Only flags diffs when **entity has non-empty content** — meta's built-in promp
 4. Run tests
 
 ### Add an LLM provider
-1. Create `nutshell/llm_engine/providers/<name>_provider.py` implementing `Provider` ABC
+1. Create `nutshell/llm_engine/providers/<name>.py` implementing `Provider` ABC
 2. Register in `nutshell/llm_engine/registry.py`
 
 ### Add a new entity

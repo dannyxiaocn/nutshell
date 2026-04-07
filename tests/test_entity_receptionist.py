@@ -96,19 +96,19 @@ class TestAgentLoaderIntegration:
     """Verify the receptionist entity loads through AgentLoader without errors."""
 
     def test_load_receptionist(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(RECEPTIONIST_DIR)
         assert agent is not None
 
     def test_loaded_agent_has_system_prompt(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(RECEPTIONIST_DIR)
         assert "receptionist" in agent.system_prompt.lower()
 
     def test_loaded_agent_has_tools(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(RECEPTIONIST_DIR)
         tool_names = {t.name for t in agent.tools}
@@ -117,7 +117,7 @@ class TestAgentLoaderIntegration:
         assert "send_to_session" in tool_names
 
     def test_loaded_agent_has_skills(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(RECEPTIONIST_DIR)
         skill_names = {s.name for s in agent.skills}
@@ -125,14 +125,14 @@ class TestAgentLoaderIntegration:
         assert "multi-agent" in skill_names
 
     def test_loaded_agent_inherits_heartbeat_from_parent(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(RECEPTIONIST_DIR)
         # heartbeat is inherited from agent entity — should be non-empty
         assert agent.heartbeat_prompt  # inherited, not empty
 
     def test_loaded_agent_model(self):
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(RECEPTIONIST_DIR)
         assert agent.model == "claude-sonnet-4-6"
@@ -140,7 +140,7 @@ class TestAgentLoaderIntegration:
     def test_no_heavy_tools(self):
         """Receptionist should NOT have git_checkpoint or propose_entity_update —
         those are for agents that do real dev work."""
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         loader = AgentLoader()
         agent = loader.load(RECEPTIONIST_DIR)
         tool_names = {t.name for t in agent.tools}

@@ -206,7 +206,7 @@ def _entity_config_snapshot(entity_name: str, entity_base: Path) -> dict[str, st
         ('session_context_template', 'prompts/session.md', 'core/session.md'),
     ]
     try:
-        from nutshell.llm_engine.loader import AgentLoader
+        from nutshell.runtime.agent_loader import AgentLoader
         agent = AgentLoader().load(entity_dir)
         for attr, src_rel, dst_rel in _PROMPT_MAP:
             content = (getattr(agent, attr, None) or '').strip()

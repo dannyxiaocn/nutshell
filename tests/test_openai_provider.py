@@ -9,7 +9,7 @@ import pytest
 
 from nutshell.core.types import Message, TokenUsage, ToolCall
 from nutshell.core.tool import Tool
-from nutshell.llm_engine.providers.openai_provider import (
+from nutshell.llm_engine.providers.openai_api import (
     OpenAIProvider,
     _build_messages,
     _extract_usage_from_obj,
@@ -490,4 +490,4 @@ def test_registry_has_openai():
     assert "openai" in _REGISTRY
     mod, cls = _REGISTRY["openai"]
     assert cls == "OpenAIProvider"
-    assert "openai_provider" in mod
+    assert "openai_api" in mod

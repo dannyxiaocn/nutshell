@@ -12,7 +12,7 @@ from nutshell.runtime.ipc import FileIPC
 from nutshell.tool_engine.loader import ToolLoader
 from nutshell.skill_engine.loader import SkillLoader
 from nutshell.skill_engine.renderer import build_skills_block
-from nutshell.llm_engine.loader import AgentLoader
+from nutshell.runtime.agent_loader import AgentLoader
 from nutshell.tool_engine.executor.bash import create_bash_tool
 
 __all__ = [
