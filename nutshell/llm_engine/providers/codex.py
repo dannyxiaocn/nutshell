@@ -13,7 +13,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 from nutshell.core.provider import Provider
 from nutshell.core.types import TokenUsage, ToolCall
@@ -37,6 +37,8 @@ class CodexProvider(Provider):
     Access tokens are refreshed automatically.
     """
 
+    _supports_thinking: ClassVar[bool] = False
+
     def __init__(self, max_tokens: int = 8096) -> None:
         self.max_tokens = max_tokens
 
@@ -59,7 +61,12 @@ class CodexProvider(Provider):
     ) -> tuple[str, list[ToolCall], TokenUsage]:
         access_token, account_id = self._get_auth()
         headers = _build_headers(access_token, account_id)
-        body = _build_request_body(model, system_prompt, messages, tools)
+        full_system = (
+            (cache_system_prefix + "\n\n" + system_prompt).strip()
+            if cache_system_prefix
+            else system_prompt
+        )
+        body = _build_request_body(model, full_system, messages, tools)
 
         import httpx
 
@@ -383,8 +390,9 @@ async def _parse_sse_stream(
                         current_tc_id = call_id
 
                 elif etype == "response.function_call_arguments.delta":
-                    if current_tc_id and current_tc_id in tc_map:
-                        tc_map[current_tc_id]["args"] += event.get("delta", "")
+                    delta_call_id = event.get("call_id") or current_tc_id
+                    if delta_call_id and delta_call_id in tc_map:
+                        tc_map[delta_call_id]["args"] += event.get("delta", "")
 
                 elif etype == "response.output_item.done":
                     item = event.get("item", {})

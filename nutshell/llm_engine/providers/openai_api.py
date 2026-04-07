@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 import os
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 from nutshell.core.provider import Provider
 from nutshell.core.types import TokenUsage, ToolCall
@@ -23,6 +23,8 @@ class OpenAIProvider(Provider):
     OPENAI_API_KEY   – API key or OAuth token (fallback when *api_key* is None)
     OPENAI_BASE_URL  – Optional custom endpoint
     """
+
+    _supports_thinking: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -179,7 +181,7 @@ def _build_messages(
                         # Fallback: treat as plain text
                         result.append({"role": "user", "content": str(block)})
             else:
-                result.append({"role": "user", "content": str(msg.content)})
+                result.append({"role": "tool", "tool_call_id": "", "content": str(msg.content)})
         elif msg.role == "assistant":
             # Assistant messages may contain tool_calls
             if isinstance(msg.content, list):
