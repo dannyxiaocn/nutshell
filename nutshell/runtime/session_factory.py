@@ -2,7 +2,6 @@
 
 Used by:
   - ui/web/sessions.py  (web UI new-session endpoint)
-  - nutshell/tool_engine/providers/spawn_session.py  (agent tool)
 """
 from __future__ import annotations
 
@@ -85,7 +84,7 @@ def init_session(
 
     Args:
         session_id:          The unique session identifier (e.g. '2026-03-25_10-00-00').
-        entity_name:         Name of the entity in entity_base/ (e.g. 'agent', 'kimi_agent').
+        entity_name:         Name of the entity in entity_base/ (e.g. 'agent', 'nutshell_dev').
         sessions_base:       Root of agent-visible sessions/ directory.
         system_sessions_base: Root of _sessions/ directory.
         entity_base:         Root of entity/ directory.

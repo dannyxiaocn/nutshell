@@ -1,7 +1,7 @@
 name: nutshell_dev
-description: Development assistant with nutshell project context. Extends kimi_agent (kimi-for-coding model) with nutshell skill added.
+description: Development assistant with nutshell project context. Extends the default agent with nutshell-specific skills and heartbeat behavior.
 version: 1.0.0
-extends: kimi_agent
+extends: agent
 max_iterations: 20
 link:
   - model
@@ -22,17 +22,15 @@ own:
   - playground
 
 prompts:
-  system:                        # inherited from kimi_agent → agent
+  system:                        # inherited from agent
   heartbeat: prompts/heartbeat.md  # autonomous track.md task selection
   session_context:               # inherited
 
-tools:    # inherited from kimi_agent → agent
+tools:    # inherited from agent
 
 skills:
   - skills/nutshell
   - skills/creator-mode
-  - skills/multi-agent
-  - skills/model-selection
 
 meta_session: >-
   This entity instantiates child sessions via sessions/<entity>_meta/, which

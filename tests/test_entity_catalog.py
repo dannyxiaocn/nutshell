@@ -8,17 +8,8 @@ REPO_ROOT = Path(__file__).parent.parent
 ENTITY_DIR = REPO_ROOT / "entity"
 ACTIVE_ENTITIES = [
     "agent",
-    "cli_os",
-    "game_player",
-    "kimi_agent",
-    "dev_maintainer",
     "nutshell_dev",
     "nutshell_dev_codex",
-    "persistent_agent",
-    "tool_craftsman",
-    "tool_manager",
-    "receptionist",
-    "yisebi",
 ]
 
 

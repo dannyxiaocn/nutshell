@@ -119,15 +119,13 @@ def test_prompt_stats_skills(tmp_path, capsys):
     skills_dir = core / "skills"
     (skills_dir / "creator-mode").mkdir(parents=True)
     (skills_dir / "creator-mode" / "SKILL.md").write_text("# Creator Mode")
-    (skills_dir / "multi-agent").mkdir(parents=True)
-    (skills_dir / "multi-agent" / "SKILL.md").write_text("# Multi Agent")
 
     args = _FakeArgs("test-session", sessions_base, system_base)
     rc = cmd_prompt_stats(args)
     assert rc == 0
     out = capsys.readouterr().out
     assert "skills (catalog)" in out
-    assert "2 skills" in out
+    assert "1 skills" in out
 
 
 def test_prompt_stats_heartbeat_section(tmp_path, capsys):

@@ -17,7 +17,6 @@ Usage:
     nutshell review                         Review pending entity update requests
     nutshell server                         Start the Nutshell server
     nutshell web                            Start the web UI (monitoring)
-    nutshell os [MESSAGE]                    CLI-OS playground session
     nutshell dream ENTITY                    Trigger meta session dream cycle
 
 All session-management commands (sessions, new, stop, start, tasks) work without
@@ -153,7 +152,7 @@ def _add_chat_parser(subparsers) -> None:
             "Send a message to an existing session or create a new one.\n\n"
             "Examples:\n"
             "  nutshell chat 'Plan a data pipeline'\n"
-            "  nutshell chat --entity kimi_agent 'Review this code'\n"
+            "  nutshell chat --entity nutshell_dev 'Review this code'\n"
             "  nutshell chat --session 2026-03-25_10-00-00 'Status?'\n"
             "  nutshell chat --session <id> --no-wait 'Run overnight'\n"
         ),
@@ -266,7 +265,7 @@ def _add_new_parser(subparsers) -> None:
             "the current timestamp unless specified explicitly.\n\n"
             "Examples:\n"
             "  nutshell new\n"
-            "  nutshell new --entity kimi_agent\n"
+            "  nutshell new --entity nutshell_dev\n"
             "  nutshell new my-project --entity agent\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1242,119 +1241,6 @@ def _cmd_visit(args) -> int:
     from ui.cli.visit import cmd_visit
     return cmd_visit(args)
 
-# ── Subcommand: os ─────────────────────────────────────────────────────────
-
-_CLI_OS_ENTITY = "cli_os"
-_CLI_OS_MAX_AGE_HOURS = 24
-
-
-def _find_recent_cli_os_session(
-    sessions_base: Path,
-    system_base: Path,
-    max_age_hours: float = _CLI_OS_MAX_AGE_HOURS,
-) -> str | None:
-    """Find the most recent cli_os session created within *max_age_hours*.
-
-    Returns the session ID or None.
-    """
-    from datetime import timedelta
-
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
-    sessions = _read_all_sessions(sessions_base, system_base)
-    for s in sessions:  # already sorted most-recent first
-        if s.get("entity") != _CLI_OS_ENTITY:
-            continue
-        if s.get("status") == "stopped":
-            continue
-        created = s.get("created_at", "")
-        if not created:
-            continue
-        try:
-            ts = datetime.fromisoformat(created)
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            if ts >= cutoff:
-                return s["id"]
-        except (ValueError, TypeError):
-            continue
-    return None
-
-
-def _add_os_parser(subparsers) -> None:
-    p = subparsers.add_parser(
-        "os",
-        help="Launch a CLI-OS playground session.",
-        description=(
-            "Start an interactive CLI-OS session — a Linux-like playground\n"
-            "where the agent is root and can freely code, explore, and build.\n\n"
-            "If a cli_os session was created within the last 24 hours,\n"
-            "it will be continued automatically.\n\n"
-            "Examples:\n"
-            "  nutshell os                         # open / resume CLI-OS\n"
-            "  nutshell os 'build me a web server' # open with a task\n"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument("message", nargs="?", default=None,
-                   help="Optional message to send (default: greeting)")
-    p.add_argument("--new", action="store_true", dest="force_new",
-                   help="Force a new session (ignore recent ones)")
-    p.add_argument("--timeout", type=float, default=300.0,
-                   help="Seconds to wait for a response (default: 300)")
-    p.add_argument("--no-wait", action="store_true",
-                   help="Fire-and-forget (don't wait for response)")
-    p.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE,
-                   help=argparse.SUPPRESS)
-    p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE,
-                   help=argparse.SUPPRESS)
-    p.set_defaults(func=cmd_os)
-
-
-def cmd_os(args) -> int:
-    """Launch or continue a CLI-OS playground session."""
-    message = args.message or "Hey! I just logged in. What's on this machine?"
-
-    # Try to find a recent session to continue
-    if not args.force_new:
-        recent_id = _find_recent_cli_os_session(
-            args.sessions_base, args.system_base,
-        )
-        if recent_id is not None:
-            print(f"Resuming CLI-OS session: {recent_id}")
-            from ui.cli.chat import _continue_session
-            return _continue_session(
-                recent_id, message,
-                no_wait=args.no_wait,
-                timeout=args.timeout,
-                system_base=args.system_base,
-            )
-
-    # Create a new cli_os session
-    from nutshell.runtime.session_factory import init_session
-    entity_dir = _REPO_ROOT / "entity" / _CLI_OS_ENTITY
-    if not entity_dir.exists():
-        print(f"Error: entity '{_CLI_OS_ENTITY}' not found in entity/",
-              file=sys.stderr)
-        return 1
-
-    session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    try:
-        init_session(
-            session_id=session_id,
-            entity_name=_CLI_OS_ENTITY,
-            sessions_base=args.sessions_base,
-            system_sessions_base=args.system_base,
-            initial_message=message,
-        )
-    except Exception as exc:
-        print(f"Error creating CLI-OS session: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"CLI-OS session: {session_id}")
-    return 0
-
-
-
 # ── Subcommand: dream ─────────────────────────────────────────────────────────
 
 def _add_dream_parser(subparsers) -> None:
@@ -1540,8 +1426,6 @@ def main() -> None:
             "Dream (session cleanup):\n"
             "  nutshell dream ENTITY                 Trigger meta session dream cycle\n"
             "\n"
-            "Playground:\n"
-            "  nutshell os [MESSAGE]               CLI-OS playground session\n\n"
             "Other:\n"
             "  nutshell review                     Review agent update requests\n"
             "  nutshell server                     Start the server\n"
@@ -1567,7 +1451,6 @@ def main() -> None:
     _add_repo_skill_parser(subparsers)
     _add_repo_dev_parser(subparsers)
     _add_visit_parser(subparsers)
-    _add_os_parser(subparsers)
     _add_dream_parser(subparsers)
     _add_meta_parser(subparsers)
     _add_exec_parser(subparsers, "server", "Start the Nutshell server daemon.")

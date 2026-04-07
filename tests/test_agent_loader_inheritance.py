@@ -354,33 +354,20 @@ def test_c_model_wins_over_b_and_a(tmp_path):
 # ── Real entity chain ─────────────────────────────────────────────────────────
 
 def test_real_nutshell_dev_entity_chain():
-    """nutshell_dev → kimi_agent → agent inheritance loads without errors."""
+    """nutshell_dev → agent inheritance loads without errors."""
     entity_root = Path(__file__).parent.parent / "entity"
     if not (entity_root / "nutshell_dev" / "agent.yaml").exists():
         pytest.skip("nutshell_dev entity not found")
 
     agent = AgentLoader().load(entity_root / "nutshell_dev")
 
-    # kimi_agent sets the model; nutshell_dev inherits it
+    # agent sets the model; nutshell_dev inherits it
     assert agent.model  # non-empty
-    # agent provides tools; nutshell_dev inherits them through kimi_agent
+    # agent provides tools; nutshell_dev inherits them directly
     assert len(agent.tools) > 0
     # nutshell_dev explicitly lists skills including nutshell
     skill_names = {s.name for s in agent.skills}
     assert "nutshell" in skill_names
-
-
-def test_real_kimi_agent_inherits_tools_from_agent():
-    """kimi_agent (tools: null) inherits agent's tools."""
-    entity_root = Path(__file__).parent.parent / "entity"
-    if not (entity_root / "kimi_agent" / "agent.yaml").exists():
-        pytest.skip("kimi_agent entity not found")
-
-    agent = AgentLoader().load(entity_root / "kimi_agent")
-
-    assert len(agent.tools) > 0
-    names = {t.name for t in agent.tools}
-    assert "bash" in names
 
 
 def test_agent_entity_loads_all_builtin_tools():
@@ -392,13 +379,6 @@ def test_agent_entity_loads_all_builtin_tools():
     expected = {
         "bash",
         "web_search",
-        "send_to_session",
-        "spawn_session",
-        "propose_entity_update",
-        "fetch_url",
-        "recall_memory",
-        "state_diff",
-        "git_checkpoint",
     }
     missing = expected - names
     assert not missing, f"Missing tools from agent entity: {missing}"

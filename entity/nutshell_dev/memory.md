@@ -85,7 +85,7 @@ I maintain two levels of memory:
 - **Bash default workdir** = `sessions/<my-id>/` — use `cd playground/nutshell` before repo work
 - **memory.md** (this file's session copy) is auto-injected every activation
 - **skills** loaded from `core/skills/<name>/SKILL.md` — reload with `reload_capabilities`
-- **Built-in tools**: bash, web_search, send_to_session, spawn_session, propose_entity_update, fetch_url, recall_memory, reload_capabilities
+- **Built-in tools**: bash, web_search, reload_capabilities
 - Adding a built-in tool: implement → register registry.py → add JSON schema → **add to entity/agent/agent.yaml** (easy to forget)
 
 ## Recent Changes (v1.3.x)

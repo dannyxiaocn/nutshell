@@ -2,7 +2,7 @@
 
 Usage:
     nutshell-chat "message"                              # new session (default entity: agent)
-    nutshell-chat --entity kimi_agent "message"          # new session, custom entity
+    nutshell-chat --entity nutshell_dev "message"        # new session, custom entity
     nutshell-chat --session <id> "message"               # continue existing session
     nutshell-chat --session <id> --no-wait "message"     # fire-and-forget
     nutshell-chat --session <id> --timeout 60 "message"  # custom timeout (seconds)
@@ -311,7 +311,7 @@ def main() -> None:
         epilog=(
             "Examples:\n"
             "  nutshell-chat 'Plan a data pipeline'\n"
-            "  nutshell-chat --entity kimi_agent 'Review this code'\n"
+            "  nutshell-chat --entity nutshell_dev 'Review this code'\n"
             "  nutshell-chat --session 2026-03-24_10-00-00 'Status update?'\n"
             "  nutshell-chat --session <id> --no-wait 'Run overnight report'\n"
         ),

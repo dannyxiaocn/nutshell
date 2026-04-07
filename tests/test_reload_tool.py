@@ -13,7 +13,7 @@ class _MockSession:
     def __init__(self):
         self.reload_count = 0
         self._agent = type("AgentStub", (), {
-            "tools": [_Named("bash"), _Named("reload_capabilities"), _Named("fetch_url")],
+            "tools": [_Named("bash"), _Named("reload_capabilities"), _Named("web_search")],
             "skills": [_Named("creator-mode"), _Named("coding-style")],
         })()
 
@@ -43,7 +43,7 @@ async def test_reload_tool_calls_load_capabilities():
     result = await t.execute()
     assert session.reload_count == 1
     assert "reloaded" in result.lower()
-    assert "Tools (3): bash, reload_capabilities, fetch_url" in result
+    assert "Tools (3): bash, reload_capabilities, web_search" in result
     assert "Skills (2): creator-mode, coding-style" in result
 
 

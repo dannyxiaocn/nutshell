@@ -5,7 +5,7 @@ General-purpose default assistant.
 ## Purpose
 - canonical base entity for most sessions
 - carries the core built-in tool set
-- provides general skills such as multi-agent coordination and model selection
+- provides general skills such as creator-mode
 
 ## Notes
 - most other entities inherit from `agent`

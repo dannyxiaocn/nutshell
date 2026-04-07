@@ -23,6 +23,6 @@ Your session: `sessions/{session_id}/`
 
 **Memory**: One fact per line. Avoid injecting large documents — memory is prepended to every activation.
 
-**App notifications**: Files in `core/apps/<app>.md` are injected as an **App Notifications** block in your system prompt on every activation. Use `app_notify` tool to write/clear/list notifications, or write the files directly with bash. Useful for persistent status displays, alerts from other agents, or cross-app communication.
+**App notifications**: Files in `core/apps/<app>.md` are injected as an **App Notifications** block in your system prompt on every activation. Create, update, or remove these files directly with bash when you need persistent status displays or alerts.
 
 **New tools/skills**: Use the `creator-mode` skill (read it via bash before building).

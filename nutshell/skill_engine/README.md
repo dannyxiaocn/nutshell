@@ -11,7 +11,7 @@
 - 优先使用目录式 skill：`skills/<name>/SKILL.md`；同时兼容历史平铺 `skills/<name>.md`。
 - frontmatter 与正文分离：`name`、`description` 用于目录与激活，正文在真正加载后再注入。
 - skill 分为两类：
-  - 文件型 skill：只在 prompt 中注入目录项，模型按需调用 `load_skill` 再读取全文。
+  - 文件型 skill：只在 prompt 中注入目录项，模型按需通过 bash 读取对应 `SKILL.md` 全文。
   - 内联 skill：直接把正文写进 prompt。
 - 这种 progressive disclosure 设计减少默认 prompt 体积，适合 skill 数量较多的实体。
 

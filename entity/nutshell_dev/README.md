@@ -8,5 +8,5 @@ Project development agent for nutshell itself.
 - used operationally in the repo's autonomous development workflow
 
 ## Notes
-- extends `kimi_agent`
+- extends `agent`
 - maintained as a first-class internal entity, not dead config

@@ -31,8 +31,8 @@ def build_skills_block(skills: list[Skill]) -> str:
         catalog.append("</available_skills>")
         parts.append(
             "\n\n# Available Skills\n"
-            "When a task matches a skill's description, call load_skill(name='<skill-name>') "
-            "to get the full instructions before proceeding.\n\n"
+            "When a task matches a skill's description, read that skill's SKILL.md via bash "
+            "before proceeding.\n\n"
             + "\n".join(catalog)
         )
 

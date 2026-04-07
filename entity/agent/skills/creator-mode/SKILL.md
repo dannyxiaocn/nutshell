@@ -226,19 +226,9 @@ echo '{"arg1": "value"}' | bash sessions/YOUR_ID/core/tools/my_tool.sh
 
 ---
 
-## Proposing permanent improvements
+## Making improvements stick
 
-Session tools/skills are local to this session. To make an improvement available in **all future sessions**, use `propose_entity_update`:
-
-```
-propose_entity_update(
-    file_path="entity/agent/skills/creator-mode/SKILL.md",
-    content="<full new content>",
-    reason="Added X because Y",
-)
-```
-
-A human can review and apply the request via `nutshell-review-updates`. Only use this when the improvement is genuinely general-purpose, not session-specific.
+Session tools/skills are local to this session. If you want an improvement to persist for future sessions, edit the checked-out repository copy directly with `bash`, update the relevant entity files, run tests, and commit the change in that repo.
 
 ---
 
@@ -250,11 +240,6 @@ System tools loaded by default (always available, no .json needed in core/tools/
 |------|---------|
 | `bash` | Execute shell commands |
 | `web_search` | Search the web via Brave/Tavily |
-| `fetch_url` | Fetch a URL and return plain text |
-| `send_to_session` | Send a message to another session |
-| `spawn_session` | Create a new sub-session from an entity |
-| `recall_memory` | Search memory.md + memory/*.md for a keyword |
-| `propose_entity_update` | Submit a permanent improvement request |
 | `reload_capabilities` | Hot-reload tools + skills from core/ |
 
 ---

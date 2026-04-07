@@ -1,4 +1,4 @@
-# Nutshell `v1.3.71`
+# Nutshell `v1.3.72`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking.
 
@@ -82,7 +82,7 @@ _sessions/<id>/          ← system-only
 ```bash
 # Messaging
 nutshell chat "message"                          # new session
-nutshell chat --entity kimi_agent "message"      # custom entity
+nutshell chat --entity nutshell_dev "message"    # custom entity
 nutshell chat --session <id> "message"           # continue session
 
 # Sessions
@@ -140,7 +140,6 @@ pytest tests/runtime/ -q  # runtime only
 > Maintained by nutshell_dev agents. Surprising friction points recorded here.
 
 - **No tool result visibility in web UI** — tool results require reading `context.jsonl` manually.
-- **`send_to_session` timeout is silent** — no "delivered but no reply" vs "not delivered" distinction.
 - **Memory layer truncation invisible to agent** — agent only gets a bash hint when layers are cut.
 - **Playground push fails to non-bare remotes** — `receive.denyCurrentBranch` requires manual fetch+merge by orchestrator.
 - **No structured tool responses** — tools return free-form strings; `{ok, output, error}` would help agents reason about failures.

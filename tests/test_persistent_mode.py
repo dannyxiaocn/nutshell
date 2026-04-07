@@ -5,7 +5,6 @@ Covers:
   - session.py tick(): persistent mode fires with default_task when tasks empty
   - session.py tick(): non-persistent mode skips when tasks empty (existing behaviour)
   - session_factory: entity params (persistent, default_task) propagate to params.json
-  - entity/persistent_agent/ loads successfully
 """
 
 import json
@@ -282,34 +281,3 @@ def test_session_factory_no_params_key_defaults(tmp_path):
     params = read_session_params(sessions_base / "s2")
     assert params["persistent"] is False
     assert params["default_task"] is None
-
-
-# ── entity/persistent_agent/ loads ────────────────────────────────
-
-
-def test_persistent_agent_entity_loads():
-    """entity/persistent_agent/ can be loaded by AgentLoader."""
-    from nutshell.runtime.agent_loader import AgentLoader
-
-    entity_dir = Path(__file__).parent.parent / "entity" / "persistent_agent"
-    if not entity_dir.exists():
-        pytest.skip("entity/persistent_agent/ not found")
-
-    agent = AgentLoader().load(entity_dir)
-    assert agent is not None
-    assert "persistent" in agent.system_prompt.lower()
-
-
-def test_persistent_agent_yaml_has_params():
-    """agent.yaml declares persistent=true and heartbeat_interval=43200."""
-    import yaml
-
-    yaml_path = Path(__file__).parent.parent / "entity" / "persistent_agent" / "agent.yaml"
-    if not yaml_path.exists():
-        pytest.skip("entity/persistent_agent/agent.yaml not found")
-
-    manifest = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-    params = manifest.get("params", {})
-    assert params.get("persistent") is True
-    assert params.get("heartbeat_interval") == 43200
-    assert params.get("default_task") is not None

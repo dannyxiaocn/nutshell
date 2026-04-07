@@ -43,7 +43,7 @@ pytest tests/ -q          # must pass before anything else
 Then:
 1. Update `README.md` — relevant section + new Changelog entry
 2. Bump version in **both** `pyproject.toml` AND `README.md` heading
-3. Commit: `git commit -m "vX.Y.Z: {short summary}\n\n- detail\nCo-Authored-By: ..."`
+3. Commit using the repo's current required format
 4. `git push origin main`
 5. Report commit ID back to Claude Code
 
@@ -64,11 +64,11 @@ git add track.md && git commit -m "track: ..."
 
 ### 3. Adding a Built-in Tool
 
-1. `nutshell/tool_engine/providers/<name>.py` — expose `async <name>(**kwargs) -> str`
-2. Register in `_BUILTIN_FACTORIES` in `nutshell/tool_engine/registry.py`
-3. Add `entity/agent/tools/<name>.json` (JSON schema)
-4. **Add to `entity/agent/agent.yaml` tools list** ← CRITICAL: omitting = sessions never get the tool
-5. Write `tests/test_<name>.py`
+1. Add a real implementation that the current runtime can resolve
+2. Register it in `nutshell/tool_engine/registry.py` if it is a built-in tool
+3. Add `entity/agent/tools/<name>.json` only after the implementation exists
+4. Add it to `entity/agent/agent.yaml` only if sessions should expose it by default
+5. Write or update tests
 6. Run full SOP
 
 ### 4. Adding a New LLM Provider
@@ -90,19 +90,16 @@ nutshell/
 │   └── loader.py          — AgentLoader (inheritance chain resolution)
 ├── llm_engine/
 │   ├── providers/
-│   │   ├── anthropic.py   — AnthropicProvider: streaming, thinking, cache_control
-│   │   └── kimi.py        — KimiProvider: Anthropic-compatible, no cache_control
+│   │   ├── anthropic.py   — AnthropicProvider
+│   │   ├── codex.py       — CodexProvider
+│   │   ├── kimi.py        — KimiForCodingProvider
+│   │   └── openai_api.py  — OpenAIProvider
 │   ├── registry.py        — resolve_provider(name), provider_name(provider)
 │   └── loader.py
 ├── tool_engine/
-│   ├── executor/          — base.py, bash.py (subprocess/PTY), shell.py
-│   ├── providers/
-│   │   ├── web_search/    — brave.py, tavily.py
-│   │   ├── session_msg.py — send_to_session: sync/async cross-session messaging
-│   │   ├── spawn_session.py — spawn_session: creates session from entity
-│   │   ├── entity_update.py — propose_entity_update: entity change requests
-│   │   ├── fetch_url.py   — fetch_url: stdlib URL fetcher, HTML stripping
-│   │   └── recall_memory.py — recall_memory: keyword search in memory files
+│   ├── executor/
+│   │   ├── terminal/      — bash / shell executors
+│   │   └── web_search/    — brave / tavily providers
 │   ├── registry.py        — _BUILTIN_FACTORIES + get_builtin(name)
 │   ├── loader.py          — ToolLoader: .json + built-in registry + .sh shell tools
 │   ├── reload.py          — create_reload_tool(): hot-reload core/ capabilities
@@ -155,14 +152,13 @@ nutshell review                       # review agent entity-update requests
 ## Entity Inheritance
 
 ```
-entity/agent/        — base: claude-sonnet-4-6, anthropic
-  ↑ entity/kimi_agent/   — kimi provider/model
-    ↑ entity/nutshell_dev/ — adds: nutshell skill, memory.md pre-seeded
+entity/agent/              — base runtime entity
+  ↑ entity/nutshell_dev/      — adds: nutshell skill, memory.md pre-seeded
+    ↑ entity/nutshell_dev_codex/ — codex-tuned development variant
 ```
 
 **Built-in tools** (always available):
-`bash`, `web_search`, `send_to_session`, `spawn_session`, `propose_entity_update`,
-`fetch_url`, `recall_memory`, `reload_capabilities`
+`bash`, `web_search`, `reload_capabilities`
 
 ---
 
