@@ -35,9 +35,15 @@ class CodexProvider(Provider):
 
     Uses ``~/.codex/auth.json`` written by the official ``codex`` CLI.
     Access tokens are refreshed automatically.
+
+    Default model: gpt-5.4 with high reasoning effort when thinking=True.
     """
 
-    _supports_thinking: ClassVar[bool] = False
+    _supports_thinking: ClassVar[bool] = True
+    # Default model for the Codex OAuth endpoint.
+    # Passed through to complete() when the session model is empty or the
+    # generic fallback ("claude-sonnet-4-6").
+    DEFAULT_MODEL: ClassVar[str] = "gpt-5.4"
 
     def __init__(self, max_tokens: int = 8096) -> None:
         self.max_tokens = max_tokens
@@ -66,7 +72,9 @@ class CodexProvider(Provider):
             if cache_system_prefix
             else system_prompt
         )
-        body = _build_request_body(model, full_system, messages, tools)
+        # Fall back to DEFAULT_MODEL when no model is configured for this provider
+        effective_model = model if model and model != "claude-sonnet-4-6" else self.DEFAULT_MODEL
+        body = _build_request_body(effective_model, full_system, messages, tools, thinking=thinking)
 
         import httpx
 
@@ -207,6 +215,7 @@ def _build_request_body(
     system_prompt: str,
     messages: list["Message"],
     tools: list["Tool"],
+    thinking: bool = False,
 ) -> dict[str, Any]:
     # Strip "openai-codex/" prefix if present — bare model id for the endpoint
     model_id = model.split("/")[-1] if "/" in model else model
@@ -221,9 +230,11 @@ def _build_request_body(
         "tool_choice": "auto",
         "parallel_tool_calls": True,
     }
-    # Note: "reasoning.encrypted_content" is for cross-request reasoning state
-    # preservation, NOT for displaying thinking content. Thinking text arrives
-    # via response.reasoning_text.delta SSE events regardless of this flag.
+    if thinking:
+        # Codex Responses API uses reasoning.effort (not budget_tokens).
+        # Values: "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+        # Source: codex-rs/protocol/src/openai_models.rs ReasoningEffort enum
+        body["reasoning"] = {"effort": "high"}
     if tools:
         body["tools"] = [_tool_to_responses_api(t) for t in tools]
     return body

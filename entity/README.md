@@ -1,22 +1,24 @@
-# entity
+# entity — Entity Catalog
 
 一句话定位：存放 nutshell 内置 agent 实体模板；每个子目录定义一种可实例化的 agent 配置单元。
 
 ## 文件/子目录列表
-- `README.md`：当前目录总览。
-- `agent/`：默认通用 agent；定义基础 prompts、工具与技能集合，是多数实体的继承基类。
-- `cli_os/`：偏 shell/CLI 操作的专用实体。
-- `dev_maintainer/`：持续关注测试、代码质量与维护任务的实体。
-- `game_player/`：游戏/谜题求解导向实体。
-- `kimi_agent/`：Kimi provider 变体，复用默认 agent 能力面。
-- `nutshell_dev/`：用于开发 nutshell 仓库本身的实体，附带项目技能与 heartbeat。
-- `nutshell_dev_codex/`：`nutshell_dev` 的 Codex/OpenAI 变体，带专用 memory 模板。
-- `openai_agent/`：OpenAI provider 变体。
-- `persistent_agent/`：长心跳、持久在线的通用后台实体。
-- `receptionist/`：对外接口/任务分发实体。
-- `tool_craftsman/`：聚焦工具与技能打磨的维护实体。
-- `tool_manager/`：聚合审计日志并分析工具使用情况的后台实体。
-- `yisebi/`：面向社交评论场景的风格化实体。
+
+| 实体 | 说明 |
+|------|------|
+| `agent` | 默认通用 agent；定义基础 prompts、工具与技能集合，是多数实体的继承基类 |
+| `cli_os` | 偏 shell/CLI 操作的专用实体 |
+| `dev_maintainer` | 持续关注测试、代码质量与维护任务的实体 |
+| `game_player` | 游戏/谜题求解导向实体 |
+| `kimi_agent` | Kimi provider 变体，复用默认 agent 能力面 |
+| `nutshell_dev` | 用于开发 nutshell 仓库本身的实体，附带项目技能与 heartbeat |
+| `nutshell_dev_codex` | `nutshell_dev` 的 Codex/OpenAI 变体，带专用 memory 模板 |
+| `openai_agent` | OpenAI provider 变体 |
+| `persistent_agent` | 长心跳、持久在线的通用后台实体 |
+| `receptionist` | 对外接口/任务分发实体 |
+| `tool_craftsman` | 聚焦工具与技能打磨的维护实体 |
+| `tool_manager` | 聚合审计日志并分析工具使用情况的后台实体 |
+| `yisebi` | 面向社交评论场景的风格化实体 |
 
 各实体目录通常包含：
 - `agent.yaml`：实体定义，声明继承、prompts、tools、skills、params、meta_session 等。

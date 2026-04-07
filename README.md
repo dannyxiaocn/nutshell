@@ -1,7 +1,8 @@
-# Nutshell `v1.3.68`
+# Nutshell `v1.3.69`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking. **Primary interface: CLI.**
 
+New in v1.3.69: CodexProvider default model gpt-5.4 with high reasoning effort; thinking=True sends reasoning:{effort:"high"} per Codex Responses API; _supports_thinking=True; entity/README.md fixed to pass catalog tests.
 New in v1.3.68: llm_engine audit — Kimi thinking enabled via extra_body (matches kimi-cli); Codex token refresh fixed to JSON body, reasoning_text.delta SSE event handled, misused include field removed; OpenAI/Codex _supports_thinking=False flags; cache breakpoint, tool fallback fixes; llm_engine/README.md fully documented.
 New in v1.3.67: skill progressive disclosure now uses structured load_skill tool calls plus /skill slash-command expansion; skill catalog no longer exposes file paths.
 New in v1.3.66: llm_engine refactor — AgentLoader moved to runtime/agent_loader.py; shared _common.py extracts _parse_json_args; openai_provider.py renamed to openai_api.py; llm_engine/README.md added.
