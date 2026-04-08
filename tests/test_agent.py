@@ -127,7 +127,7 @@ async def test_file_skill_uses_catalog_in_system_prompt(tmp_path):
     # Catalog metadata present
     assert "math" in sp
     assert "Math expert" in sp
-    assert "read that skill's SKILL.md via bash" in sp
+    assert "Use the `skill` tool to load a skill" in sp
     assert str(skill_md) not in sp
     # Body NOT injected inline
     assert "You are a math genius." not in sp

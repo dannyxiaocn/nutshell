@@ -31,6 +31,7 @@ prompts:
 
 tools:
   - tools/bash.json
+  - tools/skill.json
   - tools/web_search.json
 
 skills:

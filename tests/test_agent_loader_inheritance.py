@@ -310,6 +310,29 @@ def test_c_adds_new_skill_not_in_parents(tmp_path):
     assert "new_skill" in names
 
 
+def test_inherited_skill_tool_uses_child_skill_set(tmp_path):
+    """When tools are inherited, the skill tool still sees the child's resolved skills."""
+    a = make_entity(tmp_path, "a", model="claude-sonnet-4-6", provider="anthropic",
+                    prompts={}, tools=["tools/skill.json"], skills=["skills/alpha_skill"])
+    (a / "tools").mkdir(exist_ok=True)
+    (a / "tools" / "skill.json").write_text(
+        '{"name":"skill","description":"load skill","input_schema":{"type":"object","properties":{"skill":{"type":"string"}},"required":["skill"]}}',
+        encoding="utf-8",
+    )
+    write_skill_dir(a, "alpha_skill", "alpha from A")
+
+    b = make_entity(tmp_path, "b", extends="a", model=None, provider=None,
+                    prompts={}, tools=None, skills=["skills/beta_skill"])
+    write_skill_dir(b, "beta_skill", "beta from B")
+
+    agent = load(tmp_path, "b")
+    skill_tool = next(t for t in agent.tools if t.name == "skill")
+
+    import asyncio
+    result = asyncio.get_event_loop().run_until_complete(skill_tool.execute(skill="beta_skill"))
+    assert "Loaded skill: beta_skill" in result
+
+
 # ── Model / provider inheritance ─────────────────────────────────────────────
 
 def test_model_propagates_through_chain(tmp_path):
@@ -378,6 +401,7 @@ def test_agent_entity_loads_all_builtin_tools():
 
     expected = {
         "bash",
+        "skill",
         "web_search",
     }
     missing = expected - names

@@ -159,12 +159,13 @@ class Session:
 
         # 3. skills from core/skills/
         try:
-            self._agent.skills = SkillLoader().load_dir(self.core_dir / "skills")
+            skills = SkillLoader().load_dir(self.core_dir / "skills")
         except (FileNotFoundError, PermissionError):
-            self._agent.skills = []
+            skills = []
         except Exception as e:
             print(f"[session] Warning: failed to load skills: {e}")
-            self._agent.skills = []
+            skills = []
+        self._agent.skills = skills
 
         # 4. tools from core/tools/ + tool_providers overrides
         # default_workdir: bash and shell tools run from the session directory so
@@ -172,6 +173,7 @@ class Session:
         try:
             tools = ToolLoader(
                 default_workdir=str(self.session_dir),
+                skills=skills,
             ).load_dir(self.core_dir / "tools")
             for i, t in enumerate(tools):
                 if t.name == "bash":

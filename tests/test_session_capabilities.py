@@ -192,6 +192,37 @@ def test_session_skill_order_preserved(tmp_path):
     assert names.index("alpha") < names.index("beta") < names.index("gamma")
 
 
+@pytest.mark.asyncio
+async def test_session_skill_tool_loads_session_skill(tmp_path):
+    """The built-in skill tool can load a session skill after capability reload."""
+    agent = Agent(system_prompt="Base", provider=MockProvider([]))
+    session = make_session(tmp_path, agent)
+
+    skill_dir = session.core_dir / "skills" / "reasoning"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: reasoning\ndescription: improved reasoning\n---\n\nImproved body.\n"
+    )
+
+    tool_schema = {
+        "name": "skill",
+        "description": "load skills",
+        "input_schema": {
+            "type": "object",
+            "properties": {"skill": {"type": "string"}},
+            "required": ["skill"],
+        },
+    }
+    (session.core_dir / "tools" / "skill.json").write_text(json.dumps(tool_schema))
+
+    session._load_session_capabilities()
+
+    skill_tool = next(t for t in agent.tools if t.name == "skill")
+    result = await skill_tool.execute(skill="reasoning")
+    assert "Loaded skill: reasoning" in result
+    assert "Improved body." in result
+
+
 # ── Memory injection ──────────────────────────────────────────────────────────
 
 def test_memory_injected_into_system_prompt(tmp_path):

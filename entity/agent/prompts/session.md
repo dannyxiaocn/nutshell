@@ -25,4 +25,4 @@ Your session: `sessions/{session_id}/`
 
 **App notifications**: Files in `core/apps/<app>.md` are injected as an **App Notifications** block in your system prompt on every activation. Create, update, or remove these files directly with bash when you need persistent status displays or alerts.
 
-**New tools/skills**: Use the `creator-mode` skill (read it via bash before building).
+**New tools/skills**: Use the `skill` tool to load `creator-mode` before building.
