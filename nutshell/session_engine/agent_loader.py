@@ -24,9 +24,12 @@ class AgentLoader(BaseLoader[Agent]):
     def __init__(self, impl_registry: dict[str, Callable] | None = None) -> None:
         self._impl_registry = impl_registry or {}
 
-    def load(self, path: Path) -> Agent:
+    def load(self, path: Path, _stack: tuple[Path, ...] = ()) -> Agent:
         """Load agent from a directory containing agent.yaml."""
         path = Path(path)
+        if path in _stack:
+            cycle = " -> ".join(p.name for p in (*_stack, path))
+            raise ValueError(f"Entity inheritance cycle detected: {cycle}")
         config = AgentConfig.from_path(path)
         manifest = config.manifest
 
@@ -39,7 +42,7 @@ class AgentLoader(BaseLoader[Agent]):
                     f"Entity '{path.name}' extends '{extends}' "
                     f"but parent not found at: {candidate}"
                 )
-            parent = AgentLoader(self._impl_registry).load(candidate)
+            parent = AgentLoader(self._impl_registry).load(candidate, (*_stack, path))
 
         ancestor_dirs = self._ancestor_dirs(path)
 
@@ -142,8 +145,12 @@ class AgentLoader(BaseLoader[Agent]):
     def _ancestor_dirs(self, path: Path) -> list[Path]:
         """Return [path, parent, grandparent, ...] by walking the extends chain."""
         dirs: list[Path] = []
+        seen: set[Path] = set()
         current = path
         while True:
+            if current in seen:
+                break
+            seen.add(current)
             dirs.append(current)
             try:
                 config = AgentConfig.from_path(current)
@@ -157,4 +164,3 @@ class AgentLoader(BaseLoader[Agent]):
                 break
             current = parent
         return dirs
-

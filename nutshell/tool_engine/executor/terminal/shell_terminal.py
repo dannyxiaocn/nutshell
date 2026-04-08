@@ -28,6 +28,7 @@ class ShellExecutor(BaseExecutor):
 
     async def execute(self, **kwargs: Any) -> str:
         input_json = json.dumps(kwargs).encode()
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 "bash", str(self._sh_path),
@@ -45,6 +46,9 @@ class ShellExecutor(BaseExecutor):
                 return f"Error (exit {proc.returncode}): {err[:500]}"
             return stdout.decode("utf-8", errors="replace")
         except asyncio.TimeoutError:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.communicate()
             return "Error: shell tool timed out after 30s"
         except Exception as e:
             return f"Error: {e}"

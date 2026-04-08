@@ -89,6 +89,6 @@ class SkillLoader(BaseLoader[Skill]):
         for p in sorted(directory.iterdir()):
             if p.is_dir() and (p / "SKILL.md").exists():
                 skills.append(self.load(p))
-            elif p.is_file() and p.suffix == ".md":
+            elif p.is_file() and p.suffix == ".md" and p.name.upper() != "README.MD":
                 skills.append(self.load(p))
         return skills

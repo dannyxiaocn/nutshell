@@ -57,7 +57,10 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
     ts = event.get("ts", "")
 
     if etype == "user_input":
-        return [{"type": "user", "content": event.get("content", ""), "ts": ts}]
+        display = {"type": "user", "content": event.get("content", ""), "ts": ts}
+        if not for_history and event.get("id"):
+            display["id"] = event["id"]
+        return [display]
 
     if etype == "turn":
         result: list[dict] = []
@@ -94,6 +97,8 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                 )
                 if text:
                     ev: dict = {"type": "agent", "content": text, "ts": ts}
+                    if not for_history and event.get("user_input_id"):
+                        ev["id"] = event["user_input_id"]
                     if triggered_by == "heartbeat":
                         ev["triggered_by"] = "heartbeat"
                     if event.get("usage"):

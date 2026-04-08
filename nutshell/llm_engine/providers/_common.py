@@ -8,6 +8,7 @@ def _parse_json_args(args_str: str) -> dict[str, Any]:
     if not args_str:
         return {}
     try:
-        return json.loads(args_str)
+        parsed = json.loads(args_str)
     except (json.JSONDecodeError, TypeError):
         return {}
+    return parsed if isinstance(parsed, dict) else {}
