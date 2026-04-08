@@ -1,6 +1,6 @@
 import pytest
 
-from nutshell.session_engine.params import DEFAULT_PARAMS
+from nutshell.session_engine.session_params import DEFAULT_PARAMS
 from nutshell.llm_engine.providers.anthropic import AnthropicProvider
 
 

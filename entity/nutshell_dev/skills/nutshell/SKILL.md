@@ -107,14 +107,19 @@ nutshell/
 ├── skill_engine/
 │   ├── loader.py          — SkillLoader: SKILL.md + flat .md
 │   └── renderer.py        — build_skills_block()
+├── session_engine/
+│   ├── session.py         — Session: chat(), tick(), run_daemon_loop()
+│   ├── session_init.py    — init_session(): copies entity → core/ (skills, tools, memory)
+│   ├── session_status.py  — status.json r/w, pid_alive
+│   ├── session_params.py  — params.json: DEFAULT_PARAMS, read/write/ensure_session_params
+│   ├── entity_config.py   — AgentConfig: agent.yaml parsing + inheritance
+│   ├── entity_state.py    — meta session management, entity sync/alignment
+│   └── agent_loader.py    — AgentLoader: entity → Agent construction
 └── runtime/
-    ├── session.py         — Session: chat(), tick(), run_daemon_loop(stop_event=)
-    ├── ipc.py             — FileIPC: context.jsonl + events.jsonl; send_message() → msg_id
-    ├── status.py          — status.json r/w
-    ├── params.py          — params.json: DEFAULT_PARAMS, read/write/ensure_session_params
-    ├── session_factory.py — init_session(): copies entity → core/ (skills, tools, memory)
-    ├── entity_updates.py  — list_pending_updates(), apply_update(id), reject_update(id)
-    └── server.py          — nutshell-server entry point
+    ├── server.py          — nutshell-server entry point
+    ├── watcher.py         — SessionWatcher: polls _sessions/, starts session tasks
+    ├── ipc.py             — FileIPC: context.jsonl + events.jsonl; display converters
+    └── bridge.py          — BridgeSession: client-side session handle for frontends
 
 ui/                        (NOT inside nutshell/ package)
 ├── cli/

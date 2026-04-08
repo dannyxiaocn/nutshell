@@ -183,7 +183,7 @@ def test_cmd_new_bad_entity(tmp_path, capsys):
 # ── cmd_stop / cmd_start ──────────────────────────────────────────────────────
 
 def test_cmd_stop_and_start(tmp_path, capsys):
-    from nutshell.session_engine.status import read_session_status
+    from nutshell.session_engine.session_status import read_session_status
     sessions, system = _seed_session(tmp_path, "ctrl-session")
 
     import argparse
@@ -477,7 +477,7 @@ def test_cmd_new_inject_memory(tmp_path):
     """cmd_new with --inject-memory writes memory layers after session creation."""
     import argparse
     from ui.cli.main import _DEFAULT_SYSTEM_BASE, _DEFAULT_SESSIONS_BASE
-    from nutshell.session_engine.factory import init_session
+    from nutshell.session_engine.session_init import init_session
 
     sessions = tmp_path / "sessions"
     system = tmp_path / "_sessions"
@@ -494,7 +494,7 @@ def test_cmd_new_inject_memory(tmp_path):
     )
     from ui.cli.main import cmd_new
     import unittest.mock as mock
-    with mock.patch("nutshell.session_engine.factory.init_session") as m:
+    with mock.patch("nutshell.session_engine.session_init.init_session") as m:
         m.return_value = None
         # cmd_new calls _write_inject_memory after init_session
         # We need session dir to exist for mkdir to work on memory

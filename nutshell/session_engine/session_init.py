@@ -12,9 +12,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from nutshell.session_engine.params import ensure_session_params, write_session_params
-from nutshell.session_engine.status import ensure_session_status, write_session_status
-from nutshell.session_engine.meta import (
+from nutshell.session_engine.session_params import ensure_session_params, write_session_params
+from nutshell.session_engine.session_status import ensure_session_status, write_session_status
+from nutshell.session_engine.entity_state import (
     _meta_is_synced,
     check_meta_alignment,
     ensure_gene_initialized,

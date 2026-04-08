@@ -169,8 +169,8 @@ def _new_session(
     import asyncio
     from nutshell.session_engine.agent_loader import AgentLoader
     from nutshell.session_engine.session import Session
-    from nutshell.session_engine.ipc import FileIPC
-    from nutshell.session_engine.factory import init_session
+    from nutshell.runtime.ipc import FileIPC
+    from nutshell.session_engine.session_init import init_session
 
     entity_base = Path(__file__).parent.parent.parent / "entity"
     try:

@@ -16,7 +16,7 @@ from unittest import mock
 
 import pytest
 
-from nutshell.session_engine.factory import _create_session_venv, init_session
+from nutshell.session_engine.session_init import _create_session_venv, init_session
 from nutshell.tool_engine.executor.terminal.bash_terminal import _venv_env, create_bash_tool
 
 

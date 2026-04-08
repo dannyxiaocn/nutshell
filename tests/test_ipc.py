@@ -5,9 +5,9 @@ import pytest
 
 from nutshell.core.provider import Provider
 from nutshell.core.agent import Agent
-from nutshell.session_engine.ipc import FileIPC, _context_event_to_display, _runtime_event_to_display
+from nutshell.runtime.ipc import FileIPC, _context_event_to_display, _runtime_event_to_display
 from nutshell.session_engine.session import Session
-from nutshell.session_engine.status import read_session_status
+from nutshell.session_engine.session_status import read_session_status
 
 
 class MockProvider(Provider):

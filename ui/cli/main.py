@@ -9,12 +9,12 @@ Usage:
     nutshell log [SESSION_ID] [-n N] [--since T] [--watch]  Show conversation history
     nutshell tasks [SESSION_ID]             Show a session's task board
     nutshell entity new [options]           Scaffold a new entity directory
-    nutshell entity log NAME                Show entity version changelog
+
     nutshell prompt-stats [SESSION_ID]      Show prompt space breakdown for a session
     nutshell token-report [SESSION_ID]      Show per-turn token usage breakdown
     nutshell repo-skill REPO_PATH           Generate codebase overview skill
     nutshell friends [--json]                IM-style session list with status
-    nutshell review                         Review pending entity update requests
+
     nutshell server                         Start the Nutshell server
     nutshell web                            Start the web UI (monitoring)
     nutshell dream ENTITY                    Trigger meta session dream cycle
@@ -287,7 +287,7 @@ def _add_new_parser(subparsers) -> None:
 
 
 def cmd_new(args) -> int:
-    from nutshell.session_engine.factory import init_session
+    from nutshell.session_engine.session_init import init_session
     session_id = args.session_id or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     entity_dir = _REPO_ROOT / "entity" / args.entity
     if not entity_dir.exists():
@@ -325,14 +325,14 @@ def _add_stop_parser(subparsers) -> None:
 
 
 def cmd_stop(args) -> int:
-    from nutshell.session_engine.status import write_session_status
+    from nutshell.session_engine.session_status import write_session_status
     system_dir = args.system_base / args.session_id
     if not (system_dir / "manifest.json").exists():
         print(f"Error: session '{args.session_id}' not found", file=sys.stderr)
         return 1
     write_session_status(system_dir, status="stopped",
                          stopped_at=datetime.now().isoformat())
-    from nutshell.session_engine.ipc import FileIPC
+    from nutshell.runtime.ipc import FileIPC
     FileIPC(system_dir).append_event(
         {"type": "status", "value": "stopped via CLI"}
     )
@@ -354,13 +354,13 @@ def _add_start_parser(subparsers) -> None:
 
 
 def cmd_start(args) -> int:
-    from nutshell.session_engine.status import write_session_status
+    from nutshell.session_engine.session_status import write_session_status
     system_dir = args.system_base / args.session_id
     if not (system_dir / "manifest.json").exists():
         print(f"Error: session '{args.session_id}' not found", file=sys.stderr)
         return 1
     write_session_status(system_dir, status="active", stopped_at=None)
-    from nutshell.session_engine.ipc import FileIPC
+    from nutshell.runtime.ipc import FileIPC
     FileIPC(system_dir).append_event(
         {"type": "status", "value": "resumed via CLI"}
     )
@@ -962,21 +962,6 @@ def _add_entity_parser(subparsers) -> None:
     enew.add_argument("--entity-dir", default="entity", metavar="DIR",
                       help="Base directory for entities (default: entity/)")
 
-    elog = esub.add_parser(
-        "log",
-        help="Show entity version changelog.",
-        description=(
-            "Show the version changelog for an entity.\n\n"
-            "Examples:\n"
-            "  nutshell entity log agent\n"
-            "  nutshell entity log nutshell_dev\n"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    elog.add_argument("name", metavar="NAME", help="Entity name")
-    elog.add_argument("--entity-dir", default="entity", metavar="DIR",
-                      help=argparse.SUPPRESS)
-
     p.set_defaults(func=cmd_entity)
 
 
@@ -1001,40 +986,7 @@ def cmd_entity(args) -> int:
             print(f"  (extends '{parent}')")
         return 0
 
-    if args.entity_cmd == "log":
-        from nutshell.runtime.entity_updates import get_entity_version, get_entity_changelog
-        entity_dir = Path(args.entity_dir)
-        entity_path = entity_dir / args.name
-        if not entity_path.exists():
-            print(f"Error: entity '{args.name}' not found in {entity_dir}/", file=sys.stderr)
-            return 1
-        version = get_entity_version(args.name, repo_root=entity_dir.parent)
-        changelog = get_entity_changelog(args.name, repo_root=entity_dir.parent)
-        print(f"Entity: {args.name}  (v{version})")
-        print("─" * 60)
-        if changelog:
-            print(changelog)
-        else:
-            print("(no changelog entries yet — changes are recorded when updates are applied)")
-        return 0
-
     return 0
-
-
-# ── Subcommand: review ────────────────────────────────────────────────────────
-
-def _add_review_parser(subparsers) -> None:
-    p = subparsers.add_parser(
-        "review",
-        help="Review pending entity update requests from agents.",
-    )
-    p.add_argument("--list", action="store_true", help="List only, don't prompt")
-    p.set_defaults(func=cmd_review)
-
-
-def cmd_review(args) -> int:
-    from ui.cli.review_updates import review_updates
-    return review_updates(list_only=args.list)
 
 
 # ── Subcommands: server / web ─────────────────────────────────────────────────
@@ -1258,8 +1210,8 @@ def _add_dream_parser(subparsers) -> None:
 
 def cmd_dream(args) -> int:
     """Send a wake-up message to the entity's meta session to trigger the dream cycle."""
-    from nutshell.session_engine.meta import get_meta_session_id
-    from nutshell.session_engine.ipc import FileIPC
+    from nutshell.session_engine.entity_state import get_meta_session_id
+    from nutshell.runtime.ipc import FileIPC
 
     meta_id = get_meta_session_id(args.entity)
     sys_dir = args.system_base / meta_id
@@ -1309,7 +1261,7 @@ def _add_meta_parser(subparsers) -> None:
 
 
 def cmd_meta(args) -> int:
-    from nutshell.session_engine.meta import (
+    from nutshell.session_engine.entity_state import (
         MetaAlignmentError,
         check_meta_alignment,
         compute_meta_diffs,
@@ -1414,7 +1366,8 @@ def main() -> None:
             "Entity management:\n"
             "  nutshell entity new                 Scaffold entity interactively\n"
             "  nutshell entity new -n NAME         Scaffold entity by name\n"
-            "  nutshell entity log NAME            Show entity version changelog\n\n"
+
+
             "Diagnostics:\n"
             "  nutshell prompt-stats [SESSION_ID]  Show prompt space breakdown\n"
             "  nutshell token-report [SESSION_ID]  Show per-turn token costs\n\n"
@@ -1427,7 +1380,6 @@ def main() -> None:
             "  nutshell dream ENTITY                 Trigger meta session dream cycle\n"
             "\n"
             "Other:\n"
-            "  nutshell review                     Review agent update requests\n"
             "  nutshell server                     Start the server\n"
             "  nutshell web                        Start the web UI (monitoring)\n"
         ),
@@ -1445,7 +1397,7 @@ def main() -> None:
     _add_entity_parser(subparsers)
     _add_prompt_stats_parser(subparsers)
     _add_token_report_parser(subparsers)
-    _add_review_parser(subparsers)
+
     _add_friends_parser(subparsers)
     _add_kanban_parser(subparsers)
     _add_repo_skill_parser(subparsers)

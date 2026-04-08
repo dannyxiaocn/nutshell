@@ -22,8 +22,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from nutshell.session_engine.params import read_session_params, write_session_params
-from nutshell.session_engine.status import write_session_status
+from nutshell.session_engine.session_params import read_session_params, write_session_params
+from nutshell.session_engine.session_status import write_session_status
 from .sessions import _init_session, _is_meta_session_id, _read_session_info, _sort_sessions
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
@@ -111,7 +111,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
 
     @app.post("/api/sessions/{session_id}/messages")
     async def send_message(session_id: str, body: dict):
-        from nutshell.session_engine.bridge import BridgeSession
+        from nutshell.runtime.bridge import BridgeSession
         system_dir = system_sessions_dir / session_id
         if not system_dir.exists():
             raise HTTPException(404, f"Session not found: {session_id}")
@@ -127,7 +127,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
         Drains any pending queued inputs and defers the next heartbeat tick.
         In-progress turns run to completion.
         """
-        from nutshell.session_engine.bridge import BridgeSession
+        from nutshell.runtime.bridge import BridgeSession
         system_dir = system_sessions_dir / session_id
         if not system_dir.exists():
             raise HTTPException(404, f"Session not found: {session_id}")
@@ -155,7 +155,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
             raise HTTPException(404, f"Session not found: {session_id}")
 
         async def generator() -> AsyncIterator[str]:
-            from nutshell.session_engine.bridge import BridgeSession
+            from nutshell.runtime.bridge import BridgeSession
             bridge = BridgeSession(system_dir)
             seq = 0
             async for event, _ctx, _evt in bridge.async_iter_events(
@@ -174,7 +174,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
 
     @app.get("/api/sessions/{session_id}/history")
     async def get_history(session_id: str):
-        from nutshell.session_engine.ipc import FileIPC
+        from nutshell.runtime.ipc import FileIPC
         ipc = FileIPC(system_sessions_dir / session_id)
         events: list[dict] = []
         context_offset = 0
@@ -189,7 +189,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
 
     @app.post("/api/sessions/{session_id}/stop")
     async def stop_session(session_id: str):
-        from nutshell.session_engine.ipc import FileIPC
+        from nutshell.runtime.ipc import FileIPC
         system_dir = system_sessions_dir / session_id
         write_session_status(system_dir, status="stopped", stopped_at=datetime.now().isoformat())
         if system_dir.exists():
@@ -200,7 +200,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
 
     @app.post("/api/sessions/{session_id}/start")
     async def start_session(session_id: str):
-        from nutshell.session_engine.ipc import FileIPC
+        from nutshell.runtime.ipc import FileIPC
         system_dir = system_sessions_dir / session_id
         write_session_status(system_dir, status="active", stopped_at=None)
         if system_dir.exists():

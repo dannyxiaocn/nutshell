@@ -1,4 +1,4 @@
-# Nutshell `v1.3.73`
+# Nutshell `v1.3.76`
 
 A minimal Python agent runtime. Agents run as persistent server-managed sessions with autonomous heartbeat ticking.
 
@@ -22,11 +22,12 @@ nutshell chat "Plan a data pipeline"
 
 ```
 nutshell/
-├── core/          Agent loop, Tool, Skill, Provider ABC, Hook types
-├── llm_engine/    LLM providers: anthropic, openai, kimi, codex  → README
-├── tool_engine/   Bash executor, web_search, built-in tools, sandbox
-├── skill_engine/  SKILL.md loader + system-prompt renderer
-└── runtime/       Session lifecycle, IPC, watcher, meta-session   → README
+├── core/             Agent loop, Tool, Skill, Provider ABC, Hook types
+├── llm_engine/       LLM providers: anthropic, openai, kimi, codex        → README
+├── tool_engine/      Bash executor, web_search, built-in tools, sandbox
+├── skill_engine/     SKILL.md loader + system-prompt renderer
+├── session_engine/   Session lifecycle + entity asset management           → README
+└── runtime/          Server, watcher, IPC, bridge, env, coordination      → README
 
 ui/
 ├── cli/main.py    Unified `nutshell` CLI
@@ -103,7 +104,6 @@ nutshell dream ENTITY                            # wake meta session
 # Server
 nutshell server                                  # watcher + web UI
 nutshell web                                     # web UI only
-nutshell review                                  # review pending entity updates
 ```
 
 ---

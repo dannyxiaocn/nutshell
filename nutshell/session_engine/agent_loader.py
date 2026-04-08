@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Callable
 
 from nutshell.core.loader import BaseLoader
-from nutshell.session_engine.loader import AgentConfig
+from nutshell.session_engine.entity_config import AgentConfig
 from nutshell.core.agent import Agent
 from nutshell.skill_engine.loader import SkillLoader
 from nutshell.tool_engine.executor.skill.skill_tool import create_skill_tool

@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 
 from nutshell.core.agent import Agent
 from nutshell.core.types import AgentResult, TokenUsage, ToolCall
-from nutshell.session_engine.params import DEFAULT_PARAMS, read_session_params, write_session_params
+from nutshell.session_engine.session_params import DEFAULT_PARAMS, read_session_params, write_session_params
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -233,7 +233,7 @@ async def test_tick_with_real_tasks_ignores_session_type(tmp_path):
 
 def test_session_factory_propagates_entity_params(tmp_path):
     """init_session reads params from agent.yaml and writes them to params.json."""
-    from nutshell.session_engine.factory import init_session
+    from nutshell.session_engine.session_init import init_session
 
     # Create a minimal entity with params (using legacy persistent: true)
     entity_base = tmp_path / "entity"
@@ -272,7 +272,7 @@ def test_session_factory_propagates_entity_params(tmp_path):
 
 def test_session_factory_no_params_key_defaults(tmp_path):
     """init_session without params key in agent.yaml keeps defaults."""
-    from nutshell.session_engine.factory import init_session
+    from nutshell.session_engine.session_init import init_session
 
     entity_base = tmp_path / "entity"
     entity_dir = entity_base / "plain"

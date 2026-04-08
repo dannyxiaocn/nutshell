@@ -10,13 +10,13 @@ from nutshell.core.agent import Agent
 from nutshell.core.hook import OnLoopEnd, OnLoopStart, OnTextChunk, OnToolCall, OnToolDone
 from nutshell.core.tool import Tool
 from nutshell.core.types import AgentResult
-from nutshell.session_engine.params import ensure_session_params, read_session_params
-from nutshell.llm_engine.registry import resolve_provider
-from nutshell.session_engine.status import ensure_session_status, read_session_status, write_session_status
+from nutshell.session_engine.session_params import ensure_session_params, read_session_params
+from nutshell.llm_engine.registry import provider_name, resolve_provider
+from nutshell.session_engine.session_status import ensure_session_status, read_session_status, write_session_status
 from nutshell.tool_engine.executor.terminal.bash_terminal import BashExecutor
 
 if TYPE_CHECKING:
-    from nutshell.session_engine.ipc import FileIPC
+    from nutshell.runtime.ipc import FileIPC
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"

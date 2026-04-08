@@ -1,1 +1,1 @@
-"""Nutshell session engine — session lifecycle, IPC, factory, and meta-session management."""
+"""Nutshell session engine — session lifecycle, entity config, and entity state management."""

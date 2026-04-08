@@ -142,8 +142,8 @@ class TestKeepAliveBranching:
             mock.patch.dict("sys.modules", {
                 "nutshell.session_engine.agent_loader": mock.MagicMock(AgentLoader=fake_loader_cls),
                 "nutshell.session_engine.session": mock.MagicMock(Session=fake_session_cls),
-                "nutshell.session_engine.ipc": mock.MagicMock(FileIPC=fake_ipc_cls),
-                "nutshell.session_engine.factory": mock.MagicMock(init_session=fake_init_session),
+                "nutshell.runtime.ipc": mock.MagicMock(FileIPC=fake_ipc_cls),
+                "nutshell.session_engine.session_init": mock.MagicMock(init_session=fake_init_session),
             }),
             mock.patch("ui.cli.chat.datetime") as mock_dt,
             mock.patch("ui.cli.chat._send_message", return_value="fake-id"),

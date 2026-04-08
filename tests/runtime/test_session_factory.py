@@ -1,8 +1,8 @@
 import pytest
 
-import nutshell.session_engine.meta as ms
-from nutshell.session_engine.meta import MetaAlignmentError
-from nutshell.session_engine.factory import init_session
+import nutshell.session_engine.entity_state as ms
+from nutshell.session_engine.entity_state import MetaAlignmentError
+from nutshell.session_engine.session_init import init_session
 
 
 def _seed_entity(tmp_path):

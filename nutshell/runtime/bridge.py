@@ -92,7 +92,7 @@ class BridgeSession:
     """
 
     def __init__(self, system_dir: Path) -> None:
-        from nutshell.session_engine.ipc import FileIPC
+        from nutshell.runtime.ipc import FileIPC
         self._ipc = FileIPC(system_dir)
         self._seen_ids = BoundedIDSet()   # inbound dedup
         self._posted_ids = BoundedIDSet() # echo dedup

@@ -5,8 +5,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from nutshell.session_engine.params import read_session_params
-from nutshell.session_engine.status import read_session_status, pid_alive as _pid_alive
+from nutshell.session_engine.session_params import read_session_params
+from nutshell.session_engine.session_status import read_session_status, pid_alive as _pid_alive
 
 
 def _is_meta_session_id(session_id: str) -> bool:
@@ -96,10 +96,10 @@ def _init_session(
 ) -> None:
     """Initialize a new session directory structure by copying entity content to core/.
 
-    Delegates to nutshell.session_engine.factory.init_session.
+    Delegates to nutshell.session_engine.session_init.init_session.
     `entity` may be a full relative path ('entity/agent') or just a name ('agent').
     """
-    from nutshell.session_engine.factory import init_session
+    from nutshell.session_engine.session_init import init_session
 
     # Resolve entity_name and entity_base from the entity string
     # Web UI historically passes full paths like "entity/agent"

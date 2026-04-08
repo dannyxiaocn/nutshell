@@ -106,7 +106,7 @@ def _entity_rel_from_meta_path(path: str) -> str:
 
 
 def _load_agent_config(entity_name: str, entity_base: Path):
-    from nutshell.session_engine.loader import AgentConfig
+    from nutshell.session_engine.entity_config import AgentConfig
 
     entity_dir = entity_base / entity_name
     if not entity_dir.exists():
@@ -591,8 +591,8 @@ def start_meta_agent(
     Returns the system dir path (_sessions/<entity>_meta/).
     """
     from datetime import datetime
-    from nutshell.session_engine.status import ensure_session_status
-    from nutshell.session_engine.params import read_session_params, write_session_params
+    from nutshell.session_engine.session_status import ensure_session_status
+    from nutshell.session_engine.session_params import read_session_params, write_session_params
 
     sessions_base = s_base or _SESSIONS_DIR
     system_base = sys_base or (_REPO_ROOT / '_sessions')
