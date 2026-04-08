@@ -11,6 +11,7 @@ ACTIVE_ENTITIES = [
     "agent",
     "nutshell_dev",
     "nutshell_dev_codex",
+    "porters",
 ]
 
 

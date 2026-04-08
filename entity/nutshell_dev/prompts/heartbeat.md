@@ -34,11 +34,12 @@ Return exactly: SESSION_FINISHED
 Re-read `Memory: track_sop` for the complete step-by-step SOP.
 
 Key checkpoints:
-1. Setup: `ls playground/nutshell 2>/dev/null || git clone /Users/xiaobocheng/agent_core/nutshell playground/nutshell && cd playground/nutshell && git pull`
-2. Implement, test (`pytest tests/ -q`), commit (`vX.Y.Z: ...`)
-3. Mark track.md done (Step 6 of SOP — use Python regex, see track_sop)
-4. Update entity memory (Step 7)
-5. `git push origin main`
+1. Setup the playground, sync `main`, and work on a `wip-<task-slug>` branch while the task is in progress.
+2. Implement, test (`pytest tests/ -q`), and commit on the `wip-` branch.
+3. When the task is genuinely ready for handoff, rename or recreate the branch as `ready-<task-slug>` and push that branch instead of pushing `main`.
+4. Mark track.md done (Step 6 of SOP — use Python regex, see track_sop)
+5. Update entity memory (Step 7)
+6. Report the `ready-` branch name and commit state clearly.
 
 When the task is **fully done** (committed, pushed, track.md marked):
 
@@ -52,4 +53,4 @@ grep -c '^\- \[ \]' /Users/xiaobocheng/agent_core/nutshell/track.md
 
 ---
 
-**Important**: Never mark a task done until tests pass and changes are pushed. If blocked, write the blocker to `core/tasks.md` so you can resume next heartbeat.
+**Important**: Never mark a task done until tests pass and the `ready-` branch is pushed. If blocked, write the blocker to `core/tasks.md` so you can resume next heartbeat.

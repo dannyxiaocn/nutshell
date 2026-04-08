@@ -19,6 +19,7 @@ It is the repo's provider-specific developer template for the Codex workflow, so
 
 - Use this variant when the session should default to the Codex provider flow.
 - It stays aligned with `nutshell_dev` but can diverge in provider-specific memory and defaults.
+- Follow the same branch policy as `nutshell_dev`: active work happens on `wip-<slug>`, and merge-ready work is handed off on `ready-<slug>`.
 
 ## Directory Map
 

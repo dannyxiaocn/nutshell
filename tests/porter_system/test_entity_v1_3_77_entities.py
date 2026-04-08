@@ -4,16 +4,13 @@ import unittest
 from pathlib import Path
 
 from nutshell.session_engine.agent_loader import AgentLoader
+from porter_test_support import repo_root_from
 
 
-REPO_ROOT = Path(__file__).resolve()
-for candidate in (REPO_ROOT.parent, *REPO_ROOT.parents):
-    if (candidate / "pyproject.toml").exists():
-        REPO_ROOT = candidate
-        break
+REPO_ROOT = repo_root_from(Path(__file__))
 
 ENTITY_ROOT = REPO_ROOT / "entity"
-ACTIVE_ENTITIES = ["agent", "nutshell_dev", "nutshell_dev_codex"]
+ACTIVE_ENTITIES = ["agent", "nutshell_dev", "nutshell_dev_codex", "porters"]
 
 
 class EntityUnitTests(unittest.TestCase):
@@ -32,4 +29,3 @@ class EntityUnitTests(unittest.TestCase):
         for entity in ACTIVE_ENTITIES:
             agent = loader.load(ENTITY_ROOT / entity)
             self.assertTrue(agent.model)
-
