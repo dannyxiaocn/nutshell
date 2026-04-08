@@ -1,12 +1,12 @@
-# `entity/`
+# Entity Catalog
 
 Entities are reusable agent templates. Each entity directory defines the prompts, tools, skills, defaults, and seed memory used to create sessions.
 
 ## Built-In Entities
 
-- `agent/`: the default base entity.
-- `nutshell_dev/`: a repo-development variant for this project.
-- `nutshell_dev_codex/`: the Codex-tuned development variant.
+- `agent`: the default base entity.
+- `nutshell_dev`: a repo-development variant for this project.
+- `nutshell_dev_codex`: the Codex-tuned development variant.
 
 ## How To Use It
 
@@ -34,4 +34,3 @@ Each new child session is created from:
 - `tools/`: default tool schemas exposed to sessions.
 - `skills/`: default skill catalog.
 - `memory.md` and `memory/*.md`: seed memory copied into new sessions.
-

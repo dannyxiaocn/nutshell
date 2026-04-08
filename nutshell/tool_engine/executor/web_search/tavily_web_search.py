@@ -14,6 +14,28 @@ from typing import Optional
 from nutshell.core.tool import Tool
 
 
+def _unsupported_filters(
+    *,
+    country: Optional[str],
+    language: Optional[str],
+    freshness: Optional[str],
+    date_after: Optional[str],
+    date_before: Optional[str],
+) -> list[str]:
+    unsupported: list[str] = []
+    if country:
+        unsupported.append("country")
+    if language:
+        unsupported.append("language")
+    if freshness:
+        unsupported.append("freshness")
+    if date_after:
+        unsupported.append("date_after")
+    if date_before:
+        unsupported.append("date_before")
+    return unsupported
+
+
 def _tavily_search_sync(
     query: str,
     count: int,
@@ -26,6 +48,19 @@ def _tavily_search_sync(
     api_key = os.environ.get("TAVILY_API_KEY", "").strip()
     if not api_key:
         return "Error: TAVILY_API_KEY environment variable is not set."
+    unsupported = _unsupported_filters(
+        country=country,
+        language=language,
+        freshness=freshness,
+        date_after=date_after,
+        date_before=date_before,
+    )
+    if unsupported:
+        joined = ", ".join(unsupported)
+        return (
+            "Error: Tavily web_search currently supports only 'query' and 'count'. "
+            f"Unsupported filters: {joined}."
+        )
 
     payload: dict = {
         "api_key": api_key,
@@ -114,7 +149,8 @@ def create_web_search_tool() -> Tool:
         name="web_search",
         description=(
             "Search the web using Tavily Search. Returns titles, URLs, and descriptions. "
-            "Requires TAVILY_API_KEY environment variable."
+            "Requires TAVILY_API_KEY environment variable. Tavily currently supports only "
+            "`query` and `count`; other shared web_search filters return a validation error."
         ),
         func=_tavily_search,
         schema=_SCHEMA,

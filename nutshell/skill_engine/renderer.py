@@ -1,4 +1,5 @@
 from __future__ import annotations
+from html import escape
 from nutshell.core.skill import Skill
 
 
@@ -22,11 +23,14 @@ def build_skills_block(skills: list[Skill]) -> str:
     if file_skills:
         catalog = ["<available_skills>"]
         for s in file_skills:
-            when_to_use = f"\n    <when_to_use>{s.when_to_use}</when_to_use>" if s.when_to_use else ""
+            safe_name = escape(s.name)
+            safe_description = escape(s.description)
+            safe_when_to_use = escape(s.when_to_use) if s.when_to_use else ""
+            when_to_use = f"\n    <when_to_use>{safe_when_to_use}</when_to_use>" if safe_when_to_use else ""
             catalog.append(
                 f"  <skill>\n"
-                f"    <name>{s.name}</name>\n"
-                f"    <description>{s.description}</description>\n"
+                f"    <name>{safe_name}</name>\n"
+                f"    <description>{safe_description}</description>\n"
                 f"{when_to_use}"
                 f"  </skill>"
             )

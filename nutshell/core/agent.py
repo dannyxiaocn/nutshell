@@ -41,6 +41,8 @@ class Agent:
         fallback_model: str = "",
         fallback_provider: str = "",
     ) -> None:
+        if max_iterations < 1:
+            raise ValueError("max_iterations must be at least 1")
         self.system_prompt = system_prompt
         self.tools: list[Tool] = tools or []
         self.skills: list[Skill] = skills or []
@@ -270,15 +272,23 @@ async def _execute_tools(
     """Execute tool calls concurrently and return Anthropic-format tool_result blocks."""
     async def _call(tc: ToolCall) -> dict:
         tool = tool_map.get(tc.name)
+        is_error = False
         if tool is None:
             content = f"Error: tool '{tc.name}' not found."
+            is_error = True
         else:
             try:
                 content = await tool.execute(**tc.input)
             except Exception as exc:
                 content = f"Error executing '{tc.name}': {exc}"
+                is_error = True
         if on_tool_done:
             on_tool_done(tc.name, tc.input, content)
-        return {"type": "tool_result", "tool_use_id": tc.id, "content": content}
+        return {
+            "type": "tool_result",
+            "tool_use_id": tc.id,
+            "content": content,
+            "is_error": is_error,
+        }
 
     return list(await asyncio.gather(*[_call(tc) for tc in tool_calls]))
