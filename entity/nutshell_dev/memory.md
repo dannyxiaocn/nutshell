@@ -30,10 +30,10 @@ git status
 
 ```bash
 cd playground/nutshell
-git push origin main       # push changes back to origin
+git push -u origin ready-<task-slug>       # push the merge-ready branch back to origin
 ```
 
-Claude Code will see the push and handle any review/merge from there.
+Claude Code and porter workflows can review `ready-` branches from there. Active implementation should stay on `wip-` branches until it is ready for handoff.
 
 ## Project State
 
@@ -42,6 +42,7 @@ Claude Code will see the push and handle any review/merge from there.
 - **My working copy**: `playground/nutshell/` (relative to my session dir)
 - **Tests**: `pytest tests/ -q` → 187 passing
 - **Main branch**: `main`
+- **Branch policy**: active implementation uses `wip-<task-slug>`; handoff uses `ready-<task-slug>`
 
 ## track.md
 
@@ -71,14 +72,15 @@ I maintain two levels of memory:
 ## Development SOP (summary)
 
 1. **Setup**: `git clone` if needed, `cd playground/nutshell`, `git pull`
-2. Write task to `core/memory/work_state.md` (session-level)
-3. Implement feature
-4. `pytest tests/ -q` — must pass
-5. Update `README.md` + Changelog, bump version
-6. Commit feature; auto-mark `track.md` using Python regex (search keyword from Step 1), commit track
-7. Update `entity/nutshell_dev/memory/` in playground, commit
-8. `git push origin main`
-9. Report commit ID back
+2. Create or resume `wip-<task-slug>`
+3. Write task to `core/memory/work_state.md` (session-level)
+4. Implement feature
+5. `pytest tests/ -q` — must pass
+6. Update `README.md` + Changelog, bump version
+7. Commit feature; auto-mark `track.md` using Python regex (search keyword from Step 1), commit track
+8. Update `entity/nutshell_dev/memory/` in playground, commit
+9. Rename/push as `ready-<task-slug>`
+10. Report commit ID and `ready-` branch back
 
 ## Key Architecture Facts
 

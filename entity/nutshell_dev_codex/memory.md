@@ -77,6 +77,7 @@ Treat this as an optional startup SOP, not an unconditional blocker.
 
 - project: `nutshell`
 - main branch: `main`
+- branch naming policy: active work uses `wip-<task-slug>`, handoff uses `ready-<task-slug>`
 - repo root: `/Users/xiaobocheng/agent_core/nutshell`
 - important runtime memory mechanism: session memory is re-read from disk every activation
 - meta-session memory seeds future sessions before legacy entity memory fallback

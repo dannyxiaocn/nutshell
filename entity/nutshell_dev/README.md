@@ -19,6 +19,7 @@ This is the repo's built-in self-hosting developer persona. It turns the generic
 
 - Use this entity when you want repo-aware defaults and project memory.
 - It keeps the generic runtime behavior from `agent` while adding local development context.
+- Use `wip-<slug>` for active implementation branches and promote them to `ready-<slug>` when they are ready for porter/merge review.
 
 ## Directory Map
 

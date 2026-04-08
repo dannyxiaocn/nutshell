@@ -6,10 +6,18 @@
 # Ensure workspace exists (local clone of the origin repo)
 ls playground/nutshell 2>/dev/null || git clone /Users/xiaobocheng/agent_core/nutshell playground/nutshell
 cd playground/nutshell
+git checkout main
 git pull origin main        # sync latest before starting work
 ```
 
 All subsequent bash commands run from `playground/nutshell/`.
+
+## Branch naming policy
+
+- Active implementation branch: `wip-<task-slug>`
+- Ready-for-review branch: `ready-<task-slug>`
+
+Start on `wip-...`, finish on `ready-...`. Do not push feature work directly to `main`.
 
 ## Step 1 — Record task start in memory
 
@@ -40,6 +48,13 @@ EOF
 ## Step 3 — Implement
 
 Work entirely inside `playground/nutshell/`.
+
+Create or reset a task branch before editing:
+
+```bash
+BRANCH_SLUG="<task-slug>"
+git checkout -B "wip-${BRANCH_SLUG}"
+```
 
 ## Step 4 — Verify
 
@@ -122,10 +137,11 @@ git commit -m "nutshell_dev: update entity memory after vX.Y.Z"
 ## Step 8 — Push + report
 
 ```bash
-git push origin main
+git branch -M "ready-${BRANCH_SLUG}"
+git push -u origin "ready-${BRANCH_SLUG}"
 ```
 
-Report the feature commit ID (from Step 5) to Claude Code.
+Report the feature commit ID (from Step 5) and the `ready-` branch name to Claude Code.
 
 ## Step 9 — Update session memory
 

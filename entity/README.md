@@ -7,12 +7,14 @@ Entities are reusable agent templates. Each entity directory defines the prompts
 - `agent`: the default base entity.
 - `nutshell_dev`: a repo-development variant for this project.
 - `nutshell_dev_codex`: the Codex-tuned development variant.
+- `porters`: the persistent porter that hardens `ready-` branches and consolidates porter-system tests.
 
 ## How To Use It
 
 ```bash
 nutshell new --entity agent
 nutshell chat --entity nutshell_dev "fix the failing test"
+nutshell new --entity porters
 ```
 
 Each new child session is created from:
