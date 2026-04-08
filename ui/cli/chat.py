@@ -167,10 +167,10 @@ def _new_session(
 ) -> int:
     """Handle new-session mode. Spawns daemon thread, returns exit code."""
     import asyncio
-    from nutshell.runtime.agent_loader import AgentLoader
-    from nutshell.runtime.session import Session
-    from nutshell.runtime.ipc import FileIPC
-    from nutshell.runtime.session_factory import init_session
+    from nutshell.session_engine.agent_loader import AgentLoader
+    from nutshell.session_engine.session import Session
+    from nutshell.session_engine.ipc import FileIPC
+    from nutshell.session_engine.factory import init_session
 
     entity_base = Path(__file__).parent.parent.parent / "entity"
     try:

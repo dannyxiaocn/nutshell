@@ -7,12 +7,13 @@ from nutshell.core.types import AgentResult, Message, ToolCall
 from nutshell.core.provider import Provider
 from nutshell.llm_engine.providers.anthropic import AnthropicProvider
 from nutshell.core.loader import BaseLoader
-from nutshell.runtime.session import Session, SESSION_FINISHED
-from nutshell.runtime.ipc import FileIPC
+from nutshell.session_engine.loader import AgentConfig
+from nutshell.session_engine.session import Session, SESSION_FINISHED
+from nutshell.session_engine.ipc import FileIPC
 from nutshell.tool_engine.loader import ToolLoader
 from nutshell.skill_engine.loader import SkillLoader
 from nutshell.skill_engine.renderer import build_skills_block
-from nutshell.runtime.agent_loader import AgentLoader
+from nutshell.session_engine.agent_loader import AgentLoader
 from nutshell.tool_engine.executor.terminal.bash_terminal import create_bash_tool
 
 __all__ = [
@@ -29,6 +30,8 @@ __all__ = [
     "AgentResult",
     "Message",
     "ToolCall",
+    # Config
+    "AgentConfig",
     # Loaders
     "ToolLoader",
     "SkillLoader",

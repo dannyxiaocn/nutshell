@@ -1,1 +1,1 @@
-"""Nutshell runtime — session lifecycle, IPC, and server."""
+"""Nutshell runtime — server, environment, CAP protocol, and git coordination."""

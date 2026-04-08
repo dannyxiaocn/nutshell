@@ -287,7 +287,7 @@ def _add_new_parser(subparsers) -> None:
 
 
 def cmd_new(args) -> int:
-    from nutshell.runtime.session_factory import init_session
+    from nutshell.session_engine.factory import init_session
     session_id = args.session_id or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     entity_dir = _REPO_ROOT / "entity" / args.entity
     if not entity_dir.exists():
@@ -325,14 +325,14 @@ def _add_stop_parser(subparsers) -> None:
 
 
 def cmd_stop(args) -> int:
-    from nutshell.runtime.status import write_session_status
+    from nutshell.session_engine.status import write_session_status
     system_dir = args.system_base / args.session_id
     if not (system_dir / "manifest.json").exists():
         print(f"Error: session '{args.session_id}' not found", file=sys.stderr)
         return 1
     write_session_status(system_dir, status="stopped",
                          stopped_at=datetime.now().isoformat())
-    from nutshell.runtime.ipc import FileIPC
+    from nutshell.session_engine.ipc import FileIPC
     FileIPC(system_dir).append_event(
         {"type": "status", "value": "stopped via CLI"}
     )
@@ -354,13 +354,13 @@ def _add_start_parser(subparsers) -> None:
 
 
 def cmd_start(args) -> int:
-    from nutshell.runtime.status import write_session_status
+    from nutshell.session_engine.status import write_session_status
     system_dir = args.system_base / args.session_id
     if not (system_dir / "manifest.json").exists():
         print(f"Error: session '{args.session_id}' not found", file=sys.stderr)
         return 1
     write_session_status(system_dir, status="active", stopped_at=None)
-    from nutshell.runtime.ipc import FileIPC
+    from nutshell.session_engine.ipc import FileIPC
     FileIPC(system_dir).append_event(
         {"type": "status", "value": "resumed via CLI"}
     )
@@ -1258,8 +1258,8 @@ def _add_dream_parser(subparsers) -> None:
 
 def cmd_dream(args) -> int:
     """Send a wake-up message to the entity's meta session to trigger the dream cycle."""
-    from nutshell.runtime.meta_session import get_meta_session_id
-    from nutshell.runtime.ipc import FileIPC
+    from nutshell.session_engine.meta import get_meta_session_id
+    from nutshell.session_engine.ipc import FileIPC
 
     meta_id = get_meta_session_id(args.entity)
     sys_dir = args.system_base / meta_id
@@ -1309,7 +1309,7 @@ def _add_meta_parser(subparsers) -> None:
 
 
 def cmd_meta(args) -> int:
-    from nutshell.runtime.meta_session import (
+    from nutshell.session_engine.meta import (
         MetaAlignmentError,
         check_meta_alignment,
         compute_meta_diffs,

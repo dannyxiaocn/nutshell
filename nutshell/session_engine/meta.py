@@ -106,7 +106,7 @@ def _entity_rel_from_meta_path(path: str) -> str:
 
 
 def _load_agent_config(entity_name: str, entity_base: Path):
-    from nutshell.core.loader import AgentConfig
+    from nutshell.session_engine.loader import AgentConfig
 
     entity_dir = entity_base / entity_name
     if not entity_dir.exists():
@@ -206,7 +206,7 @@ def _entity_config_snapshot(entity_name: str, entity_base: Path) -> dict[str, st
         ('session_context_template', 'prompts/session.md', 'core/session.md'),
     ]
     try:
-        from nutshell.runtime.agent_loader import AgentLoader
+        from nutshell.session_engine.agent_loader import AgentLoader
         agent = AgentLoader().load(entity_dir)
         for attr, src_rel, dst_rel in _PROMPT_MAP:
             content = (getattr(agent, attr, None) or '').strip()
@@ -568,7 +568,7 @@ Be intelligent — don't just follow rules mechanically. Consider context, task 
 """
 
 _META_AGENT_DEFAULTS = {
-    "persistent": True,
+    "session_type": "persistent",
     "heartbeat_interval": 21600,
     "default_task": "Dream: review and process all child sessions for this entity",
 }
@@ -591,8 +591,8 @@ def start_meta_agent(
     Returns the system dir path (_sessions/<entity>_meta/).
     """
     from datetime import datetime
-    from nutshell.runtime.status import ensure_session_status
-    from nutshell.runtime.params import read_session_params, write_session_params
+    from nutshell.session_engine.status import ensure_session_status
+    from nutshell.session_engine.params import read_session_params, write_session_params
 
     sessions_base = s_base or _SESSIONS_DIR
     system_base = sys_base or (_REPO_ROOT / '_sessions')

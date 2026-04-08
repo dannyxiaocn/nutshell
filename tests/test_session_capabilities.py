@@ -13,8 +13,8 @@ from nutshell.core.provider import Provider
 from nutshell.core.agent import Agent
 from nutshell.core.skill import Skill
 from nutshell.core.tool import tool
-from nutshell.runtime.params import write_session_params
-from nutshell.runtime.session import Session
+from nutshell.session_engine.params import write_session_params
+from nutshell.session_engine.session import Session
 
 
 class MockProvider(Provider):

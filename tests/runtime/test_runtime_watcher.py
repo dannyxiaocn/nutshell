@@ -2,13 +2,13 @@ import json
 
 import pytest
 
-from nutshell.runtime.meta_session import populate_meta_from_entity
-from nutshell.runtime.status import read_session_status, write_session_status
+from nutshell.session_engine.meta import populate_meta_from_entity
+from nutshell.session_engine.status import read_session_status, write_session_status
 
 
 @pytest.mark.asyncio
 async def test_watcher_blocks_misaligned_meta_session(tmp_path, monkeypatch, capsys):
-    from nutshell.runtime.watcher import SessionWatcher
+    from nutshell.session_engine.watcher import SessionWatcher
 
     entity_base = tmp_path / 'entity'
     ent = entity_base / 'demo'
@@ -22,7 +22,7 @@ async def test_watcher_blocks_misaligned_meta_session(tmp_path, monkeypatch, cap
     system_dir = tmp_path / '_sessions'
     sessions_dir.mkdir()
     system_dir.mkdir()
-    monkeypatch.setattr('nutshell.runtime.meta_session._SESSIONS_DIR', sessions_dir)
+    monkeypatch.setattr('nutshell.session_engine.meta._SESSIONS_DIR', sessions_dir)
     populate_meta_from_entity('demo', entity_base, sessions_dir)
     (sessions_dir / 'demo_meta' / 'core' / 'system.md').write_text('drift\n', encoding='utf-8')
 
@@ -35,7 +35,7 @@ async def test_watcher_blocks_misaligned_meta_session(tmp_path, monkeypatch, cap
     (ses / 'core' / 'params.json').write_text(json.dumps({'heartbeat_interval': 10}), encoding='utf-8')
     write_session_status(sys_session_dir, status='active')
 
-    monkeypatch.setattr('nutshell.runtime.meta_session._REPO_ROOT', tmp_path)
+    monkeypatch.setattr('nutshell.session_engine.meta._REPO_ROOT', tmp_path)
     watcher = SessionWatcher(sessions_dir, system_dir)
     await watcher._start_session(sid, sys_session_dir, {'entity': 'demo'})
     out = capsys.readouterr().out

@@ -20,7 +20,7 @@ _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
 
 
 async def _run(sessions_dir: Path, system_sessions_dir: Path) -> None:
-    from nutshell.runtime.watcher import SessionWatcher
+    from nutshell.session_engine.watcher import SessionWatcher
 
     watcher = SessionWatcher(sessions_dir, system_sessions_dir)
     stop_event = asyncio.Event()

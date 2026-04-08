@@ -13,7 +13,7 @@ import pytest
 
 from nutshell.core.provider import Provider
 from nutshell.core.agent import Agent
-from nutshell.runtime.session import Session
+from nutshell.session_engine.session import Session
 
 
 class MockProvider(Provider):

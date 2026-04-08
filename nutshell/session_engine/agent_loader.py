@@ -2,7 +2,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from nutshell.core.loader import AgentConfig, BaseLoader
+from nutshell.core.loader import BaseLoader
+from nutshell.session_engine.loader import AgentConfig
 from nutshell.core.agent import Agent
 from nutshell.skill_engine.loader import SkillLoader
 from nutshell.tool_engine.executor.skill.skill_tool import create_skill_tool
@@ -157,7 +158,3 @@ class AgentLoader(BaseLoader[Agent]):
             current = parent
         return dirs
 
-    def load_from_entity(self, name: str) -> Agent:
-        """Load agent by entity name from the default entity/ directory."""
-        entity_dir = Path(__file__).parent.parent.parent / "entity" / name
-        return self.load(entity_dir)

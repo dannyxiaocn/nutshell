@@ -7,15 +7,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nutshell.core.agent import Agent
+from nutshell.core.hook import OnLoopEnd, OnLoopStart, OnTextChunk, OnToolCall, OnToolDone
 from nutshell.core.tool import Tool
 from nutshell.core.types import AgentResult
-from nutshell.runtime.params import ensure_session_params, read_session_params
+from nutshell.session_engine.params import ensure_session_params, read_session_params
 from nutshell.llm_engine.registry import resolve_provider
-from nutshell.runtime.status import ensure_session_status, read_session_status, write_session_status
+from nutshell.session_engine.status import ensure_session_status, read_session_status, write_session_status
 from nutshell.tool_engine.executor.terminal.bash_terminal import BashExecutor
 
 if TYPE_CHECKING:
-    from nutshell.runtime.ipc import FileIPC
+    from nutshell.session_engine.ipc import FileIPC
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
@@ -62,6 +63,12 @@ class Session:
         base_dir: Path = SESSIONS_DIR,
         system_base: Path = _SYSTEM_SESSIONS_DIR,
         heartbeat: float = DEFAULT_HEARTBEAT_INTERVAL,
+        *,
+        on_loop_start: OnLoopStart | None = None,
+        on_loop_end: OnLoopEnd | None = None,
+        on_tool_done: OnToolDone | None = None,
+        on_tool_call: OnToolCall | None = None,
+        on_text_chunk: OnTextChunk | None = None,
     ) -> None:
         self._agent = agent
         self._session_id = session_id or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -70,6 +77,13 @@ class Session:
         self._heartbeat_interval = heartbeat
         self._agent_lock: asyncio.Lock = asyncio.Lock()
         self._ipc: FileIPC | None = None
+
+        # External hooks — composed with internal IPC callbacks in chat()/tick()
+        self.on_loop_start = on_loop_start
+        self.on_loop_end = on_loop_end
+        self.on_tool_done = on_tool_done
+        self.on_tool_call = on_tool_call
+        self.on_text_chunk = on_text_chunk
 
         # Idempotent directory creation — safe for both new and resumed sessions
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -309,6 +323,9 @@ class Session:
                     message,
                     on_text_chunk=on_chunk,
                     on_tool_call=tool_call_cb,
+                    on_tool_done=self.on_tool_done,
+                    on_loop_start=self.on_loop_start,
+                    on_loop_end=self.on_loop_end,
                     caller_type=caller_type,
                 )
         except BaseException:
@@ -342,22 +359,23 @@ class Session:
     async def tick(self) -> AgentResult | None:
         """Single heartbeat: run agent if tasks are non-empty.
 
-        Returns None if tasks are empty (unless persistent mode is enabled).
+        Returns None if tasks are empty (unless session_type is "persistent").
         Clears tasks and prunes history if agent responds SESSION_FINISHED.
 
-        **Persistent mode**: when ``persistent=True`` in params.json and tasks
-        are empty, the agent is still activated using ``default_task`` (or a
-        built-in fallback prompt).  This keeps the agent alive indefinitely.
+        session_type behavior:
+          "ephemeral"  — heartbeat fires normally; auto-stop after queue drains
+          "default"    — heartbeat fires only when tasks.md has content
+          "persistent" — always fires with default_task when tasks.md is empty
         """
         tasks_content = self.tasks_path.read_text(encoding="utf-8").strip()
         params = read_session_params(self.session_dir)
+        session_type = self._resolve_session_type(params)
 
         # Determine triggered_by label for logging
         triggered_by = "heartbeat"
 
         if not tasks_content:
-            # Check persistent mode
-            if not params.get("persistent"):
+            if session_type != "persistent":
                 return None
             # Persistent mode — use default_task as the prompt
             default_task = params.get("default_task") or self._DEFAULT_PERSISTENT_PROMPT
@@ -390,6 +408,9 @@ class Session:
                     prompt,
                     on_text_chunk=on_chunk,
                     on_tool_call=tool_call_cb,
+                    on_tool_done=self.on_tool_done,
+                    on_loop_start=self.on_loop_start,
+                    on_loop_end=self.on_loop_end,
                 )
         except BaseException:
             self._set_model_status("idle", triggered_by)
@@ -430,6 +451,19 @@ class Session:
 
         self._set_model_status("idle", triggered_by)
         return result
+
+    # ── Session type ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _resolve_session_type(params: dict) -> str:
+        """Return normalized session_type from params, with backward compat for 'persistent' bool."""
+        st = params.get("session_type")
+        if st in ("ephemeral", "default", "persistent"):
+            return st
+        # Backward compat: old params with persistent=True → "persistent"
+        if params.get("persistent"):
+            return "persistent"
+        return "default"
 
     # ── Stop / Start ───────────────────────────────────────────────
 
@@ -551,6 +585,19 @@ class Session:
                         # from the moment output completes, not from when the message arrived.
                         last_tick_time = asyncio.get_event_loop().time()
 
+                # Ephemeral auto-stop: after processing all inputs, if queue is
+                # empty and tasks.md is empty, auto-stop the session.
+                if inputs and not self.is_stopped():
+                    session_type = self._resolve_session_type(read_session_params(self.session_dir))
+                    if session_type == "ephemeral":
+                        tasks_content = self.tasks_path.read_text(encoding="utf-8").strip()
+                        _, next_offset = ipc.poll_inputs(input_offset)
+                        no_pending = next_offset == input_offset  # nothing new arrived
+                        if not tasks_content and no_pending:
+                            self.set_status("stopped")
+                            write_session_status(self.system_dir, stopped_at=datetime.now().isoformat())
+                            self._append_event({"type": "status", "value": "ephemeral auto-stop"})
+
                 # Auto-expire stopped sessions after 5 hours
                 if self.is_stopped():
                     st = read_session_status(self.system_dir)
@@ -666,16 +713,20 @@ class Session:
     def _make_tool_call_callback(self):
         """Return (callback, counter) pair for streaming tool call events.
 
-        The callback writes a tool_call event to context.jsonl for each tool
+        The callback writes a tool_call event to events.jsonl for each tool
         invoked, giving the UI real-time visibility before results return.
+        Composes with the external on_tool_call hook if set.
         The counter reports how many tool calls were streamed (used to mark
         the turn with has_streaming_tools=True so history doesn't duplicate them).
         """
         count: list[int] = [0]
+        ext = self.on_tool_call
 
         def on_tool_call(name: str, input: dict) -> None:
             count[0] += 1
             self._append_event({"type": "tool_call", "name": name, "input": input})
+            if ext:
+                ext(name, input)
 
         def get_count() -> int:
             return count[0]
@@ -706,6 +757,7 @@ class Session:
 
         Chunks are buffered and flushed every ~150 characters to limit
         write frequency while still giving the UI near-real-time feedback.
+        Composes with the external on_text_chunk hook if set.
 
         The returned callback has a ``.flush()`` attribute that must be
         called after ``agent.run()`` completes to emit any remaining
@@ -714,6 +766,7 @@ class Session:
         """
         buf: list[str] = []
         buf_len: list[int] = [0]
+        ext = self.on_text_chunk
         FLUSH_THRESHOLD = 150
 
         def on_chunk(chunk: str) -> None:
@@ -724,6 +777,8 @@ class Session:
                 self._append_event({"type": "partial_text", "content": accumulated})
                 buf.clear()
                 buf_len[0] = 0
+            if ext:
+                ext(chunk)
 
         def flush() -> None:
             """Emit any remaining buffered text as a final partial_text event."""

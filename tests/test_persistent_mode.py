@@ -1,10 +1,11 @@
-"""Tests for persistent agent feature.
+"""Tests for session_type feature (ephemeral / default / persistent).
 
 Covers:
-  - params.py: persistent and default_task fields
+  - params.py: session_type and default_task fields
   - session.py tick(): persistent mode fires with default_task when tasks empty
-  - session.py tick(): non-persistent mode skips when tasks empty (existing behaviour)
-  - session_factory: entity params (persistent, default_task) propagate to params.json
+  - session.py tick(): default mode skips when tasks empty (existing behaviour)
+  - session.py _resolve_session_type(): backward compat for persistent bool
+  - session_factory: entity params (session_type, default_task) propagate to params.json
 """
 
 import json
@@ -14,7 +15,7 @@ from unittest.mock import AsyncMock
 
 from nutshell.core.agent import Agent
 from nutshell.core.types import AgentResult, TokenUsage, ToolCall
-from nutshell.runtime.params import DEFAULT_PARAMS, read_session_params, write_session_params
+from nutshell.session_engine.params import DEFAULT_PARAMS, read_session_params, write_session_params
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -33,13 +34,13 @@ class MockProvider:
         return (r[0], r[1], r[2] if len(r) > 2 else TokenUsage())
 
 
-# ── params.py — new fields ────────────────────────────────────────
+# ── params.py — session_type field ──────────────────────────────────
 
 
-def test_default_params_has_persistent():
-    """DEFAULT_PARAMS includes persistent=False."""
-    assert "persistent" in DEFAULT_PARAMS
-    assert DEFAULT_PARAMS["persistent"] is False
+def test_default_params_has_session_type():
+    """DEFAULT_PARAMS includes session_type='default'."""
+    assert "session_type" in DEFAULT_PARAMS
+    assert DEFAULT_PARAMS["session_type"] == "default"
 
 
 def test_default_params_has_default_task():
@@ -48,33 +49,46 @@ def test_default_params_has_default_task():
     assert DEFAULT_PARAMS["default_task"] is None
 
 
-def test_read_params_persistent_defaults(tmp_path):
-    """read_session_params returns persistent=False when params.json has no persistent key."""
+def test_read_params_session_type_defaults(tmp_path):
+    """read_session_params returns session_type='default' when params.json is empty."""
     session_dir = tmp_path / "session"
     core = session_dir / "core"
     core.mkdir(parents=True)
     (core / "params.json").write_text("{}", encoding="utf-8")
     params = read_session_params(session_dir)
-    assert params["persistent"] is False
+    assert params["session_type"] == "default"
     assert params["default_task"] is None
 
 
-def test_write_read_persistent_params(tmp_path):
-    """write_session_params persists persistent + default_task; read returns them."""
+def test_write_read_session_type_params(tmp_path):
+    """write_session_params persists session_type + default_task; read returns them."""
     session_dir = tmp_path / "session"
-    write_session_params(session_dir, persistent=True, default_task="Check mail")
+    write_session_params(session_dir, session_type="persistent", default_task="Check mail")
     params = read_session_params(session_dir)
-    assert params["persistent"] is True
+    assert params["session_type"] == "persistent"
     assert params["default_task"] == "Check mail"
+
+
+# ── _resolve_session_type backward compat ────────────────────────
+
+
+def test_resolve_session_type_backward_compat():
+    """_resolve_session_type converts old persistent=True to 'persistent'."""
+    from nutshell.session_engine.session import Session
+    assert Session._resolve_session_type({"persistent": True}) == "persistent"
+    assert Session._resolve_session_type({"persistent": False}) == "default"
+    assert Session._resolve_session_type({}) == "default"
+    assert Session._resolve_session_type({"session_type": "ephemeral"}) == "ephemeral"
+    assert Session._resolve_session_type({"session_type": "persistent"}) == "persistent"
 
 
 # ── session.py tick() — persistent mode ───────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_tick_skips_when_not_persistent_and_empty_tasks(tmp_path):
-    """tick() returns None when tasks empty and persistent=False (default)."""
-    from nutshell.runtime.session import Session
+async def test_tick_skips_when_default_and_empty_tasks(tmp_path):
+    """tick() returns None when tasks empty and session_type='default'."""
+    from nutshell.session_engine.session import Session
 
     provider = MockProvider([("should not be called", [])])
     agent = Agent(provider=provider)
@@ -94,8 +108,8 @@ async def test_tick_skips_when_not_persistent_and_empty_tasks(tmp_path):
 
 @pytest.mark.asyncio
 async def test_tick_fires_with_default_task_when_persistent(tmp_path):
-    """tick() triggers LLM with default_task when persistent=True and tasks empty."""
-    from nutshell.runtime.session import Session
+    """tick() triggers LLM with default_task when session_type='persistent' and tasks empty."""
+    from nutshell.session_engine.session import Session
 
     provider = MockProvider([("All clear, nothing to do.", [])])
     agent = Agent(provider=provider)
@@ -112,7 +126,7 @@ async def test_tick_fires_with_default_task_when_persistent(tmp_path):
     # Enable persistent mode with a custom default_task
     write_session_params(
         session.session_dir,
-        persistent=True,
+        session_type="persistent",
         default_task="Check incoming messages.",
     )
 
@@ -123,8 +137,8 @@ async def test_tick_fires_with_default_task_when_persistent(tmp_path):
 
 @pytest.mark.asyncio
 async def test_tick_persistent_uses_builtin_fallback_when_no_default_task(tmp_path):
-    """tick() uses built-in fallback prompt when persistent=True but default_task is None."""
-    from nutshell.runtime.session import Session
+    """tick() uses built-in fallback prompt when session_type='persistent' but default_task is None."""
+    from nutshell.session_engine.session import Session
 
     captured_prompts: list[str] = []
     original_run = Agent.run
@@ -143,7 +157,7 @@ async def test_tick_persistent_uses_builtin_fallback_when_no_default_task(tmp_pa
         system_base=tmp_path / "_sessions",
     )
 
-    write_session_params(session.session_dir, persistent=True, default_task=None)
+    write_session_params(session.session_dir, session_type="persistent", default_task=None)
 
     # Monkeypatch agent.run to capture the prompt
     agent.run = lambda msg, **kw: capturing_run(agent, msg, **kw)
@@ -158,7 +172,7 @@ async def test_tick_persistent_uses_builtin_fallback_when_no_default_task(tmp_pa
 @pytest.mark.asyncio
 async def test_tick_persistent_triggered_by_heartbeat_default(tmp_path):
     """tick() writes triggered_by='heartbeat_default' into persisted turn context."""
-    from nutshell.runtime.session import Session
+    from nutshell.session_engine.session import Session
 
     provider = MockProvider([("ok", [])])
     agent = Agent(provider=provider)
@@ -170,7 +184,7 @@ async def test_tick_persistent_triggered_by_heartbeat_default(tmp_path):
         system_base=tmp_path / "_sessions",
     )
 
-    write_session_params(session.session_dir, persistent=True, default_task="Check state")
+    write_session_params(session.session_dir, session_type="persistent", default_task="Check state")
 
     result = await session.tick()
     assert result is not None
@@ -185,9 +199,9 @@ async def test_tick_persistent_triggered_by_heartbeat_default(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_tick_with_real_tasks_ignores_persistent(tmp_path):
-    """When tasks exist, tick() uses them normally regardless of persistent flag."""
-    from nutshell.runtime.session import Session
+async def test_tick_with_real_tasks_ignores_session_type(tmp_path):
+    """When tasks exist, tick() uses them normally regardless of session_type."""
+    from nutshell.session_engine.session import Session
 
     provider = MockProvider([("done with task", [])])
     agent = Agent(provider=provider)
@@ -200,7 +214,7 @@ async def test_tick_with_real_tasks_ignores_persistent(tmp_path):
     )
 
     session.tasks_path.write_text("- do something real", encoding="utf-8")
-    write_session_params(session.session_dir, persistent=True, default_task="Check state")
+    write_session_params(session.session_dir, session_type="persistent", default_task="Check state")
 
     result = await session.tick()
     assert result is not None
@@ -219,9 +233,9 @@ async def test_tick_with_real_tasks_ignores_persistent(tmp_path):
 
 def test_session_factory_propagates_entity_params(tmp_path):
     """init_session reads params from agent.yaml and writes them to params.json."""
-    from nutshell.runtime.session_factory import init_session
+    from nutshell.session_engine.factory import init_session
 
-    # Create a minimal entity with params
+    # Create a minimal entity with params (using legacy persistent: true)
     entity_base = tmp_path / "entity"
     entity_dir = entity_base / "test_ent"
     entity_dir.mkdir(parents=True)
@@ -250,14 +264,15 @@ def test_session_factory_propagates_entity_params(tmp_path):
     )
 
     params = read_session_params(sessions_base / "s1")
-    assert params["persistent"] is True
+    # Legacy persistent: true should be converted to session_type: persistent
+    assert params["session_type"] == "persistent"
     assert params["default_task"] == "Hello world"
     assert params["heartbeat_interval"] == 43200
 
 
 def test_session_factory_no_params_key_defaults(tmp_path):
     """init_session without params key in agent.yaml keeps defaults."""
-    from nutshell.runtime.session_factory import init_session
+    from nutshell.session_engine.factory import init_session
 
     entity_base = tmp_path / "entity"
     entity_dir = entity_base / "plain"
@@ -279,5 +294,5 @@ def test_session_factory_no_params_key_defaults(tmp_path):
     )
 
     params = read_session_params(sessions_base / "s2")
-    assert params["persistent"] is False
+    assert params["session_type"] == "default"
     assert params["default_task"] is None

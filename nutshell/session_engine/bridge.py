@@ -12,7 +12,7 @@ Borrows key patterns from claude-code's replBridge architecture:
                       send_message()    — write user_input to context.jsonl
                       send_interrupt()  — write interrupt control event
                       iter_events()     — yield display events with dedup
-                      wait_for_reply()  — poll until matching turn arrives
+                      async_wait_for_reply() — poll until matching turn arrives
 
   interrupt flow  — Frontend writes {"type":"interrupt"} to events.jsonl via
                     send_interrupt(). The session's run_daemon_loop drains any
@@ -92,7 +92,7 @@ class BridgeSession:
     """
 
     def __init__(self, system_dir: Path) -> None:
-        from nutshell.runtime.ipc import FileIPC
+        from nutshell.session_engine.ipc import FileIPC
         self._ipc = FileIPC(system_dir)
         self._seen_ids = BoundedIDSet()   # inbound dedup
         self._posted_ids = BoundedIDSet() # echo dedup
@@ -103,8 +103,8 @@ class BridgeSession:
         """Write a user_input event to context.jsonl. Returns the message ID.
 
         The message ID links the input to the responding turn (user_input_id
-        field). Use wait_for_reply() with this ID to block until the agent
-        finishes.
+        field). Use async_wait_for_reply() with this ID to block until the
+        agent finishes.
         """
         msg_id = str(uuid.uuid4())
         self._ipc.append_context({
@@ -203,70 +203,16 @@ class BridgeSession:
             if not had_events:
                 await asyncio.sleep(poll_interval)
 
-    def wait_for_reply(
-        self,
-        msg_id: str,
-        timeout: float = 120.0,
-        poll_interval: float = 0.5,
-    ) -> str | None:
-        """Block until the agent emits a turn with user_input_id == msg_id.
-
-        Returns the assistant's final text, or None if timeout is reached.
-        Used by CLI and WeChat to implement synchronous request-response.
-
-        Args:
-            msg_id: The ID returned by send_message().
-            timeout: Maximum seconds to wait.
-            poll_interval: How often to poll context.jsonl.
-        """
-        import time
-        deadline = time.monotonic() + timeout
-        offset = self._ipc.context_size()
-
-        while time.monotonic() < deadline:
-            time.sleep(poll_interval)
-            if not self._ipc.context_path.exists():
-                continue
-            with self._ipc.context_path.open("r", encoding="utf-8") as f:
-                f.seek(offset)
-                while True:
-                    line = f.readline()
-                    if not line:
-                        break
-                    offset = f.tell()
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        import json
-                        event = json.loads(line)
-                    except Exception:
-                        continue
-                    if event.get("type") != "turn":
-                        continue
-                    if event.get("user_input_id") != msg_id:
-                        continue
-                    # Found the matching turn — extract final assistant text
-                    for msg in reversed(event.get("messages", [])):
-                        if msg.get("role") == "assistant":
-                            content = msg.get("content", "")
-                            if isinstance(content, str):
-                                return content.strip() or None
-                            text = next(
-                                (b.get("text", "") for b in content
-                                 if isinstance(b, dict) and b.get("type") == "text"),
-                                "",
-                            )
-                            return text.strip() or None
-        return None
-
     async def async_wait_for_reply(
         self,
         msg_id: str,
         timeout: float = 120.0,
         poll_interval: float = 0.5,
     ) -> str | None:
-        """Async version of wait_for_reply for async frontends (WeChat bridge)."""
+        """Async wait until the agent emits a turn with user_input_id == msg_id.
+
+        Returns the assistant's final text, or None if timeout is reached.
+        """
         import json
         import asyncio
         import time
@@ -308,13 +254,3 @@ class BridgeSession:
                             return text.strip() or None
         return None
 
-    # ── Offsets (for SSE resume) ─────────────────────────────────────────────
-
-    def current_offsets(self) -> tuple[int, int]:
-        """Return (context_offset, events_offset) for the current end of both files.
-
-        SSE clients call this to get the resume point before opening a new
-        stream. Passing these as context_since / events_since prevents
-        re-delivery of already-seen events on reconnect.
-        """
-        return self._ipc.context_size(), self._ipc.events_size()

@@ -12,9 +12,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from nutshell.runtime.params import ensure_session_params, write_session_params
-from nutshell.runtime.status import ensure_session_status, write_session_status
-from nutshell.runtime.meta_session import (
+from nutshell.session_engine.params import ensure_session_params, write_session_params
+from nutshell.session_engine.status import ensure_session_status, write_session_status
+from nutshell.session_engine.meta import (
     _meta_is_synced,
     check_meta_alignment,
     ensure_gene_initialized,
@@ -55,8 +55,9 @@ def _create_session_venv(session_dir: Path) -> Path:
 def _load_entity_params(entity_dir: Path) -> dict:
     """Read the ``params`` mapping from an entity's agent.yaml (if any).
 
-    Returns a dict of param overrides (e.g. persistent, default_task,
+    Returns a dict of param overrides (e.g. session_type, default_task,
     heartbeat_interval) that should be written into the session's params.json.
+    Converts legacy ``persistent: true`` to ``session_type: "persistent"``.
     """
     yaml_path = entity_dir / "agent.yaml"
     if not yaml_path.exists():
@@ -66,7 +67,14 @@ def _load_entity_params(entity_dir: Path) -> dict:
         manifest = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     except Exception:
         return {}
-    return dict(manifest.get("params") or {})
+    params = dict(manifest.get("params") or {})
+    # Backward compat: convert persistent bool → session_type
+    if "persistent" in params and "session_type" not in params:
+        if params.pop("persistent"):
+            params["session_type"] = "persistent"
+        else:
+            params.pop("persistent")
+    return params
 
 def init_session(
     session_id: str,

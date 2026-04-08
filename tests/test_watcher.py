@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from nutshell.runtime.status import pid_alive, write_session_status
+from nutshell.session_engine.status import pid_alive, write_session_status
 
 
 # ── pid_alive ─────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ def _make_session(tmp_path: Path, session_id: str, pid: int | None = None, statu
 @pytest.mark.asyncio
 async def test_watcher_skips_session_with_live_pid(tmp_path):
     """Watcher must NOT start a daemon for a session whose pid is alive."""
-    from nutshell.runtime.watcher import SessionWatcher
+    from nutshell.session_engine.watcher import SessionWatcher
 
     sessions_dir = tmp_path / "sessions"
     system_dir = tmp_path / "_sessions"
@@ -75,7 +75,7 @@ async def test_watcher_skips_session_with_live_pid(tmp_path):
 @pytest.mark.asyncio
 async def test_watcher_starts_session_with_dead_pid(tmp_path):
     """Watcher SHOULD start a daemon when pid is absent/dead."""
-    from nutshell.runtime.watcher import SessionWatcher
+    from nutshell.session_engine.watcher import SessionWatcher
 
     sessions_dir = tmp_path / "sessions"
     system_dir = tmp_path / "_sessions"
@@ -100,7 +100,7 @@ async def test_watcher_starts_session_with_dead_pid(tmp_path):
 @pytest.mark.asyncio
 async def test_watcher_skips_stopped_session(tmp_path):
     """Watcher must not restart explicitly stopped sessions."""
-    from nutshell.runtime.watcher import SessionWatcher
+    from nutshell.session_engine.watcher import SessionWatcher
 
     sessions_dir = tmp_path / "sessions"
     system_dir = tmp_path / "_sessions"

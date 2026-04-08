@@ -8,8 +8,8 @@ DEFAULT_PARAMS: dict = {
     "fallback_model": None,     # Optional fallback model if primary fails
     "fallback_provider": None,  # Optional fallback provider if primary fails
     "tool_providers": {"web_search": "brave"},  # web_search: "brave" | "tavily"
-    "persistent": False,    # True → tick() fires even when tasks.md is empty
-    "default_task": None,   # prompt used when persistent=True and tasks.md is empty
+    "session_type": "default",  # "ephemeral" | "default" | "persistent"
+    "default_task": None,   # prompt used when persistent and tasks.md is empty
     "thinking": False,      # True → enable extended thinking for this session
     "thinking_budget": 8000,  # budget_tokens for extended thinking (Anthropic/Kimi only)
     "thinking_effort": "high",  # reasoning effort level (Codex only): none/minimal/low/medium/high/xhigh

@@ -5,8 +5,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from nutshell.runtime.params import read_session_params
-from nutshell.runtime.status import read_session_status, pid_alive as _pid_alive
+from nutshell.session_engine.params import read_session_params
+from nutshell.session_engine.status import read_session_status, pid_alive as _pid_alive
 
 
 def _is_meta_session_id(session_id: str) -> bool:
@@ -61,8 +61,7 @@ def _read_session_info(session_dir: Path, system_dir: Path) -> dict | None:
         "tasks_updated_at": tasks_mtime,
         "heartbeat_interval": status_payload.get("heartbeat_interval", 600.0),
         "default_task": params.get("default_task"),
-        "persistent": bool(params.get("persistent", False)),
-        "persistent": bool(params.get("persistent", False)),
+        "session_type": params.get("session_type", "default"),
         "params": params,
         "alive": pid_alive and status != "stopped",
     }
@@ -97,10 +96,10 @@ def _init_session(
 ) -> None:
     """Initialize a new session directory structure by copying entity content to core/.
 
-    Delegates to nutshell.runtime.session_factory.init_session.
+    Delegates to nutshell.session_engine.factory.init_session.
     `entity` may be a full relative path ('entity/agent') or just a name ('agent').
     """
-    from nutshell.runtime.session_factory import init_session
+    from nutshell.session_engine.factory import init_session
 
     # Resolve entity_name and entity_base from the entity string
     # Web UI historically passes full paths like "entity/agent"

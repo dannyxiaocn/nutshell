@@ -28,7 +28,6 @@ class SessionWatcher:
         self._agent_factory = agent_factory
         self._active: dict[str, asyncio.Task] = {}  # session_id → task
         self._finished: set[str] = set()  # session_ids that have completed
-        self._entity_counts: dict[str, int] = {}  # entity → session count (updated per scan)
 
     async def run(self, stop_event: asyncio.Event) -> None:
         """Main watcher loop. Runs until stop_event is set."""
@@ -73,7 +72,7 @@ class SessionWatcher:
             # Skip already-finished sessions, unless the user explicitly
             # restarted them (status.json status set back to active).
             if session_id in self._finished:
-                from nutshell.runtime.status import read_session_status
+                from nutshell.session_engine.status import read_session_status
                 status_data = read_session_status(system_dir)
                 status = status_data.get("status", "active")
                 if status == "stopped":
@@ -100,7 +99,7 @@ class SessionWatcher:
             except (json.JSONDecodeError, OSError):
                 continue
 
-            from nutshell.runtime.status import read_session_status, write_session_status, pid_alive
+            from nutshell.session_engine.status import read_session_status, write_session_status, pid_alive
             status_data = read_session_status(system_dir)
 
             # Skip sessions whose daemon is already running (e.g. started by
@@ -144,14 +143,14 @@ class SessionWatcher:
         self, session_id: str, system_dir: Path, manifest: dict
     ) -> None:
         """Create a minimal agent from params and run server loop."""
-        from nutshell.runtime.session import Session
-        from nutshell.runtime.ipc import FileIPC
-        from nutshell.runtime.status import read_session_status
-        from nutshell.runtime.params import read_session_params
+        from nutshell.session_engine.session import Session
+        from nutshell.session_engine.ipc import FileIPC
+        from nutshell.session_engine.status import read_session_status
+        from nutshell.session_engine.params import read_session_params
 
         session_dir = self.sessions_dir / session_id
 
-        from nutshell.runtime.meta_session import check_meta_alignment, MetaAlignmentError, get_meta_session_id
+        from nutshell.session_engine.meta import check_meta_alignment, MetaAlignmentError, get_meta_session_id
         entity_name = manifest.get("entity", "")
         meta_session_id = f"{entity_name}_meta" if entity_name else ""
         if entity_name and session_id != meta_session_id:
@@ -164,7 +163,7 @@ class SessionWatcher:
                 print(f"[server]   nutshell meta {e.entity_name} --sync entity-wins  # entity overwrites meta")
                 print(f"[server]   nutshell meta {e.entity_name} --sync meta-wins    # meta updates entity")
                 print(f"[server] Sessions blocked until resolved.")
-                from nutshell.runtime.status import write_session_status
+                from nutshell.session_engine.status import write_session_status
                 write_session_status(system_dir, status="alignment_blocked")
                 return
 
@@ -193,7 +192,7 @@ class SessionWatcher:
         except Exception as exc:
             print(f"[server] Failed to create agent for {session_id}: {exc}")
             # Mark as stopped so the watcher doesn't retry indefinitely
-            from nutshell.runtime.status import write_session_status
+            from nutshell.session_engine.status import write_session_status
             write_session_status(system_dir, status="stopped")
             return
 

@@ -248,8 +248,8 @@ class WeixinBridge:
                 reply = "⚠️ 没有活跃 session"
             else:
                 try:
-                    from nutshell.runtime.status import write_session_status
-                    from nutshell.runtime.ipc import FileIPC
+                    from nutshell.session_engine.status import write_session_status
+                    from nutshell.session_engine.ipc import FileIPC
                     sys_dir = self._sys_dir / self._current_session
                     write_session_status(sys_dir, status="stopped", stopped_at=datetime.now().isoformat())
                     FileIPC(sys_dir).append_event({"type": "status", "value": "heartbeat paused"})
@@ -262,8 +262,8 @@ class WeixinBridge:
                 reply = "⚠️ 没有活跃 session"
             else:
                 try:
-                    from nutshell.runtime.status import write_session_status
-                    from nutshell.runtime.ipc import FileIPC
+                    from nutshell.session_engine.status import write_session_status
+                    from nutshell.session_engine.ipc import FileIPC
                     sys_dir = self._sys_dir / self._current_session
                     write_session_status(sys_dir, status="active", stopped_at=None)
                     FileIPC(sys_dir).append_event({"type": "status", "value": "heartbeat resumed"})
@@ -373,7 +373,7 @@ class WeixinBridge:
             return
 
         async with self._lock:
-            from nutshell.runtime.bridge import BridgeSession
+            from nutshell.session_engine.bridge import BridgeSession
             bridge = BridgeSession(sys_dir)
             msg_id = bridge.send_message(text, caller="human")
             reply = await bridge.async_wait_for_reply(msg_id, timeout=_REPLY_TIMEOUT)

@@ -66,9 +66,23 @@
 
 - [x] **`release_policy` 清除** (commit: 71db1b4)：agent.py + llm_engine/loader.py + entity yaml 全部删除。
 - [ ] **`core/hook.py` 接入 session_engine**：chat() 和 tick() 统一为 hook 传递；接入 on_loop_start/end/tool_done。
-- [ ] **`runtime/` 重命名为 `session_engine/`**：与 llm_engine/tool_engine/skill_engine 命名对齐；更新约 30 处 import。
+- [ ] **`runtime/`中session内容移至 `session_engine/`**：与 llm_engine/tool_engine/skill_engine 命名对齐；更新约 30 处 import。
 - [ ] **`loader.py` 移至 `session_engine/`**：`AgentConfig.from_path()` 属文件 IO，不属于 core 纯计算层。
 - [ ] **`session_type` 三态替换 `persistent` bool**：`session_type: "ephemeral" | "default" | "persistent"`；ephemeral session 在 queue 清空后自动 stop()；spawn_session 支持 session_type 参数。
+
+---
+
+## Module 9 · Skill Engine 深化实现
+
+- [ ] **skill frontmatter 扩展到 Claude Code 兼容子集**：支持 `allowed_tools` / `arguments` / `argument-hint` / `when_to_use` / `context` / `model` 等字段，统一 schema 与解析层。
+- [ ] **skill tool 接入权限与上下文修改**：skill 加载后可临时追加 tool allowlist、thinking/model override，行为接近 Claude Code Skill tool 的 context modifier。
+- [ ] **skill 参数替换语义完善**：从当前 `$ARGUMENTS` + 简单 positional 替换，升级到具名参数、缺省值、引用转义和错误提示。
+- [ ] **skill 资源导入机制**：支持 skill 目录下 `agents/`、`prompts/`、`references/` 等附属文件的标准化发现与注入提示，避免只靠目录扫描。
+- [ ] **skill prompt 导入与持久化策略**：解决 skill 被加载后在多轮对话、history compact、sub-agent/fork 场景中的保留与恢复问题。
+- [ ] **session / entity / user 三级 skill 源**：在当前 entity + session skill 基础上，补用户级 skill 目录与优先级/去重逻辑，向 Claude Code/Codex 的多来源发现靠拢。
+- [ ] **conditional skill activation**：支持按路径模式或工作区上下文激活 skill，减少大 skill catalog 的噪音。
+- [ ] **skill tool observability**：记录 skill load/use 事件到 runtime stats，统计命中率、误触发率、未加载直接执行率。
+- [ ] **skill engine 端到端测试补强**：新增 provider 真实交互模拟，覆盖 skill load、reload、inheritance、sub-agent、history reshape、prompt cache 协同。
 
 ---
 
