@@ -9,9 +9,9 @@
 
 ## 关键设计 / 架构说明
 - 优先使用目录式 skill：`skills/<name>/SKILL.md`；同时兼容历史平铺 `skills/<name>.md`。
-- frontmatter 与正文分离：`name`、`description` 用于目录与激活，正文在真正加载后再注入。
+- frontmatter 与正文分离：`name`、`description`、`when_to_use` 等元数据用于目录与激活，正文在真正加载后再注入。
 - skill 分为两类：
-  - 文件型 skill：只在 prompt 中注入目录项，模型按需通过 bash 读取对应 `SKILL.md` 全文。
+  - 文件型 skill：只在 prompt 中注入目录项，模型按需通过内置 `skill` tool 读取对应 `SKILL.md` 全文。
   - 内联 skill：直接把正文写进 prompt。
 - 这种 progressive disclosure 设计减少默认 prompt 体积，适合 skill 数量较多的实体。
 
@@ -33,7 +33,7 @@ skills = loader.load_dir(Path('skills'))
 from nutshell.skill_engine import build_skills_block
 prompt_block = build_skills_block(skills)
 ```
-作用：把 `list[Skill]` 渲染成 system prompt 片段。
+作用：把 `list[Skill]` 渲染成 system prompt 片段，并要求命中 skill 时优先调用 `skill` tool。
 
 ## 与其他模块的依赖关系
 - 依赖 `nutshell.core.skill.Skill` 与 `nutshell.core.loader.BaseLoader`。

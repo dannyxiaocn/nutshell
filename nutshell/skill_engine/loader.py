@@ -9,20 +9,31 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     """Split YAML frontmatter from body. Returns (metadata_dict, body_str)."""
     if not text.startswith("---"):
         return {}, text
-    parts = text.split("---", 2)
-    if len(parts) < 3:
+
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
         return {}, text
+
+    end_idx: int | None = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+    if end_idx is None:
+        return {}, text
+
+    meta_text = "\n".join(lines[1:end_idx])
+    body = "\n".join(lines[end_idx + 1:]).strip()
     try:
         import yaml
     except ImportError:
         raise ImportError("Install pyyaml to use SkillLoader: pip install pyyaml")
     try:
-        meta = yaml.safe_load(parts[1])
+        meta = yaml.safe_load(meta_text)
     except yaml.YAMLError:
         meta = None
     if not isinstance(meta, dict):
         meta = {}
-    body = parts[2].strip()
     return meta, body
 
 
@@ -32,8 +43,18 @@ def _load_skill_file(path: Path) -> Skill:
     meta, body = _parse_frontmatter(text)
     default_name = path.parent.stem if path.name == "SKILL.md" else path.stem
     name = meta.get("name") or default_name
-    description = meta.get("description") or ""
-    return Skill(name=name, description=description, body=body, location=path)
+    description = str(meta.get("description") or "").strip()
+    when_to_use = str(meta.get("when_to_use") or meta.get("when-to-use") or "").strip()
+    if not description and when_to_use:
+        description = when_to_use
+    return Skill(
+        name=name,
+        description=description,
+        when_to_use=when_to_use,
+        body=body,
+        location=path.resolve(),
+        metadata=meta,
+    )
 
 
 class SkillLoader(BaseLoader[Skill]):

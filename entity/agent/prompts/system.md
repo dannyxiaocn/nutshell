@@ -34,4 +34,5 @@ You have `bash` and can run any installed language or tool — Python, Node.js, 
 All tools and skills are **hot-reloadable**: write the files, call `reload_capabilities`, and use them immediately — no restart needed.
 
 If a task requires a capability you don't have, build it. Create a tool (`.json` + `.sh` pair), reload, and use it.
+If a listed skill matches the task, load it with the `skill` tool before proceeding.
 </tool_creation>

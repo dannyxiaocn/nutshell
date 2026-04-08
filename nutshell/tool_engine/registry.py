@@ -21,8 +21,14 @@ def _make_web_search() -> Callable:
     return _brave_search
 
 
+def _make_skill() -> Callable:
+    from nutshell.tool_engine.executor.skill.skill_tool import create_skill_tool
+    return create_skill_tool()._func
+
+
 _BUILTIN_FACTORIES: dict[str, Callable[[], Callable]] = {
     "bash":       _make_bash,
+    "skill":      _make_skill,
     "web_search": _make_web_search,
 }
 

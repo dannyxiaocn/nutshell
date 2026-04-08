@@ -5,6 +5,7 @@ from typing import Callable
 from nutshell.core.loader import AgentConfig, BaseLoader
 from nutshell.core.agent import Agent
 from nutshell.skill_engine.loader import SkillLoader
+from nutshell.tool_engine.executor.skill.skill_tool import create_skill_tool
 from nutshell.tool_engine.loader import ToolLoader
 
 
@@ -63,17 +64,6 @@ class AgentLoader(BaseLoader[Agent]):
         heartbeat_prompt         = load_prompt_key("heartbeat",       "heartbeat_prompt")
         session_context_template = load_prompt_key("session_context", "session_context_template")
 
-        raw_tools = manifest.get("tools")
-        if raw_tools is None:
-            tools = list(parent.tools) if parent is not None else []
-        else:
-            tool_loader = ToolLoader(impl_registry=self._impl_registry)
-            tools = [
-                tool_loader.load(resolved)
-                for t in (raw_tools or [])
-                if (resolved := resolve_file(t)) is not None
-            ]
-
         raw_skills = manifest.get("skills")
         if raw_skills is None:
             skills = list(parent.skills) if parent is not None else []
@@ -83,6 +73,20 @@ class AgentLoader(BaseLoader[Agent]):
                 for s in (raw_skills or [])
                 if (resolved := resolve_file(s)) is not None
             ]
+
+        raw_tools = manifest.get("tools")
+        if raw_tools is None:
+            tools = list(parent.tools) if parent is not None else []
+        else:
+            tool_loader = ToolLoader(impl_registry=self._impl_registry, skills=skills)
+            tools = [
+                tool_loader.load(resolved)
+                for t in (raw_tools or [])
+                if (resolved := resolve_file(t)) is not None
+            ]
+
+        if any(t.name == "skill" for t in tools):
+            tools = [create_skill_tool(skills) if t.name == "skill" else t for t in tools]
 
         model = manifest.get("model")
         if not model:

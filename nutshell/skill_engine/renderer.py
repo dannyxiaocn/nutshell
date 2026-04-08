@@ -17,22 +17,26 @@ def build_skills_block(skills: list[Skill]) -> str:
 
     parts: list[str] = []
 
-    # File-backed skills → progressive disclosure: catalog only.
+    # File-backed skills → progressive disclosure via the built-in skill tool.
     file_skills = [s for s in skills if s.location is not None]
     if file_skills:
         catalog = ["<available_skills>"]
         for s in file_skills:
+            when_to_use = f"\n    <when_to_use>{s.when_to_use}</when_to_use>" if s.when_to_use else ""
             catalog.append(
                 f"  <skill>\n"
                 f"    <name>{s.name}</name>\n"
                 f"    <description>{s.description}</description>\n"
+                f"{when_to_use}"
                 f"  </skill>"
             )
         catalog.append("</available_skills>")
         parts.append(
             "\n\n# Available Skills\n"
-            "When a task matches a skill's description, read that skill's SKILL.md via bash "
-            "before proceeding.\n\n"
+            "Use the `skill` tool to load a skill before proceeding whenever a task matches "
+            "a listed skill's description.\n"
+            "This is a blocking requirement: do not proceed with matching work until the "
+            "relevant skill has been loaded.\n\n"
             + "\n".join(catalog)
         )
 
