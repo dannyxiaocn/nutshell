@@ -24,13 +24,21 @@ class DummyMessagesAPI:
         return Response()
 
 
-class DummyClient:
+class DummyBetaNamespace:
+    """Mirrors the client.beta.messages namespace used when betas=[...] is set."""
     def __init__(self):
         self.messages = DummyMessagesAPI()
 
 
+class DummyClient:
+    def __init__(self):
+        self.messages = DummyMessagesAPI()
+        self.beta = DummyBetaNamespace()
+
+
 @pytest.mark.asyncio
-async def test_anthropic_thinking_enabled_adds_beta_and_thinking_block():
+async def test_anthropic_thinking_enabled_routes_to_beta_messages():
+    """When thinking=True, calls go to client.beta.messages with betas kwarg."""
     provider = AnthropicProvider(api_key="test")
     provider._client = DummyClient()
 
@@ -43,7 +51,9 @@ async def test_anthropic_thinking_enabled_adds_beta_and_thinking_block():
         thinking_budget=9000,
     )
 
-    call = provider._client.messages.calls[0]
+    # Must land on beta.messages, not regular messages
+    assert provider._client.messages.calls == [], "regular messages should not be called"
+    call = provider._client.beta.messages.calls[0]
     assert call["betas"] == ["interleaved-thinking-2025-05-14"]
     assert call["thinking"] == {"type": "enabled", "budget_tokens": 9000}
     assert call["max_tokens"] >= 10000

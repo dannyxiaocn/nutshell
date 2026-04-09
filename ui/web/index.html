@@ -291,6 +291,7 @@
   let thinkingEl = null;
   let panelPage = 'task';
   let weixinStatus = { status: 'idle', session: null };
+  let editingCardName = null;  // name of the card whose content is in the tasks textarea
 
   if (typeof marked !== 'undefined') {
     marked.setOptions({ breaks: true, gfm: true });
@@ -755,8 +756,9 @@
       const interval = c.interval ? ` · every ${c.interval >= 60 ? Math.round(c.interval/60) + 'm' : c.interval + 's'}` : ' · one-shot';
       return `<div class="task-card"><div class="task-card-header">${escHtml(c.name)}${badge}${interval}</div><div class="task-card-body">${escHtml(c.content || '')}</div></div>`;
     }).join('');
-    // textarea shows first pending card content for quick editing
+    // textarea shows first pending card content for quick editing; track its name for save
     const editable = cards.find(c => c.status === 'pending') || cards[0];
+    editingCardName = editable ? editable.name : null;
     textarea.value = editable ? editable.content || '' : '';
   }
 
@@ -790,10 +792,12 @@
   async function saveTasks() {
     if (!currentSession) return;
     const content = document.getElementById('tasks-textarea').value;
+    // Send name so backend updates the specific card rather than creating a new generic one
+    const body = editingCardName ? { name: editingCardName, content } : { content };
     await fetch(`/api/sessions/${currentSession}/tasks`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(body),
     });
     toggleTasksEdit(false);
     refreshPanelData();
