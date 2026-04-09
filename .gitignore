@@ -7,6 +7,9 @@ pytest-of-*/
 *.egg-info/
 dist/
 build/
+# Exclude Python dist but keep frontend build artifacts
+!ui/web/frontend/dist/
+ui/web/frontend/node_modules/
 .env
 .venv/
 venv/

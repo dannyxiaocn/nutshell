@@ -257,7 +257,7 @@ def migrate_legacy_default_task(session_dir: Path) -> None:
         return
 
     tasks_dir = session_dir / "core" / "tasks"
-    heartbeat_interval = float(params.get("heartbeat_interval") or 600.0)
+    heartbeat_interval = float(params.get("heartbeat_interval") or 7200.0)
     heartbeat = load_card(tasks_dir, "heartbeat")
     if heartbeat is None:
         ensure_heartbeat_card(tasks_dir, interval=heartbeat_interval, content=str(legacy_default_task))

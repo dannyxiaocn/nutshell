@@ -170,7 +170,7 @@ class SessionWatcher:
                 return
 
         # Read heartbeat_interval from core/params.json (source of truth).
-        heartbeat = float(read_session_params(session_dir).get("heartbeat_interval") or 600.0)
+        heartbeat = float(read_session_params(session_dir).get("heartbeat_interval") or 7200.0)
 
         try:
             if self._agent_factory is not None:

@@ -20,7 +20,8 @@ from typing import AsyncIterator
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from nutshell.session_engine.session_params import read_session_params, write_session_params
 from nutshell.session_engine.session_status import write_session_status
@@ -30,6 +31,7 @@ SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
 _DEFAULT_ENTITY = "entity/agent"
 _DEFAULT_PORT = 8080
+_DIST_DIR = Path(__file__).parent / "frontend" / "dist"
 
 _HTML = (Path(__file__).parent / "index.html").read_text(encoding="utf-8")
 
@@ -112,8 +114,15 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
 
     app = FastAPI(title="Nutshell Web UI", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
+    # Serve built frontend assets if dist/ exists
+    if _DIST_DIR.exists():
+        app.mount("/assets", StaticFiles(directory=_DIST_DIR / "assets"), name="assets")
+
     @app.get("/", response_class=HTMLResponse)
     async def index():
+        dist_index = _DIST_DIR / "index.html"
+        if dist_index.exists():
+            return FileResponse(dist_index)
         return _HTML
 
     @app.get("/api/sessions")
@@ -149,7 +158,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
     async def create_session(body: dict):
         session_id = body.get("id") or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         entity = body.get("entity", _DEFAULT_ENTITY)
-        heartbeat = float(body.get("heartbeat", 600.0))
+        heartbeat = float(body.get("heartbeat", 7200.0))
         _init_session(sessions_dir, system_sessions_dir, session_id, entity, heartbeat)
         return {"id": session_id, "entity": entity}
 
@@ -296,7 +305,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
             ends_at = _parse_task_timestamp(body.get("ends_at", existing.ends_at if existing else None), "ends_at")
             _validate_task_schedule(starts_at, ends_at)
             if name == "heartbeat" and interval is None:
-                interval = float(read_session_params(session_dir).get("heartbeat_interval") or 600.0)
+                interval = float(read_session_params(session_dir).get("heartbeat_interval") or 7200.0)
             card = TaskCard(
                 name=name,
                 content=body.get("content", existing.content if existing else ""),
@@ -358,7 +367,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
                 if existing_heartbeat is None:
                     ensure_heartbeat_card(
                         session_dir / "core" / "tasks",
-                        interval=float(params.get("heartbeat_interval") or read_session_params(session_dir).get("heartbeat_interval") or 600.0),
+                        interval=float(params.get("heartbeat_interval") or read_session_params(session_dir).get("heartbeat_interval") or 7200.0),
                         content=str(heartbeat_content),
                     )
                 else:

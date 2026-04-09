@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 DEFAULT_PARAMS: dict = {
-    "heartbeat_interval": 600.0,
+    "heartbeat_interval": 7200.0,
     "model": None,          # None → use agent.yaml default
     "provider": None,       # None → use Anthropic
     "fallback_model": None,     # Optional fallback model if primary fails

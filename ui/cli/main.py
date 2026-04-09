@@ -274,8 +274,8 @@ def _add_new_parser(subparsers) -> None:
                    help="Session ID (default: current timestamp)")
     p.add_argument("--entity", default="agent", metavar="NAME",
                    help="Entity to initialise from (default: agent)")
-    p.add_argument("--heartbeat", type=float, default=600.0,
-                   help="Heartbeat interval in seconds (default: 600)")
+    p.add_argument("--heartbeat", type=float, default=7200.0,
+                   help="Heartbeat interval in seconds (default: 7200)")
     p.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE,
                    help=argparse.SUPPRESS)
     p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE,
