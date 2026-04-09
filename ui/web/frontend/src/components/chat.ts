@@ -8,10 +8,6 @@ export function createChat(): HTMLElement {
   el.id = 'chat';
   el.innerHTML = `
     <div id="messages" class="messages"></div>
-    <div id="thinking-bubble" class="thinking-bubble hidden">
-      <span class="thinking-dots"><span></span><span></span><span></span></span>
-      <span class="thinking-text"></span>
-    </div>
     <div id="chat-input-area" class="chat-input-area">
       <textarea id="chat-input" placeholder="Type a message… (Shift+Enter for newline, Enter to send)" rows="3"></textarea>
       <div class="chat-input-actions">
@@ -22,74 +18,107 @@ export function createChat(): HTMLElement {
   `;
 
   const messages = el.querySelector('#messages') as HTMLDivElement;
-  const thinkingBubble = el.querySelector('#thinking-bubble') as HTMLDivElement;
-  const thinkingText = el.querySelector('.thinking-text') as HTMLSpanElement;
   const inputEl = el.querySelector('#chat-input') as HTMLTextAreaElement;
   const sendBtn = el.querySelector('#btn-send') as HTMLButtonElement;
   const interruptBtn = el.querySelector('#btn-interrupt') as HTMLButtonElement;
 
+  // Streaming bubble lives INSIDE the messages div so it scrolls with the conversation
+  let streamingEl: HTMLDivElement | null = null;
+  let isStreaming = false;
+
+  function getOrCreateStreamingBubble(): HTMLDivElement {
+    if (!streamingEl) {
+      streamingEl = document.createElement('div');
+      streamingEl.className = 'msg msg-agent msg-streaming';
+      streamingEl.innerHTML = `
+        <div class="msg-header">
+          <span class="msg-label">agent</span>
+          <span class="streaming-badge">
+            <span class="streaming-dot"></span><span class="streaming-dot"></span><span class="streaming-dot"></span>
+            <span class="streaming-label">generating…</span>
+          </span>
+        </div>
+        <div class="msg-body msg-streaming-body markdown-body"></div>
+      `;
+      messages.appendChild(streamingEl);
+    }
+    return streamingEl;
+  }
+
+  function removeStreamingBubble() {
+    if (streamingEl) {
+      streamingEl.remove();
+      streamingEl = null;
+    }
+    isStreaming = false;
+  }
+
   function clearMessages() {
+    removeStreamingBubble();
     messages.innerHTML = '';
-    thinkingBubble.classList.add('hidden');
-    thinkingText.textContent = '';
+    isStreaming = false;
+  }
+
+  function scrollToBottom() {
+    messages.scrollTop = messages.scrollHeight;
   }
 
   function appendEvent(event: DisplayEvent) {
     const msgEl = renderEvent(event);
     if (msgEl) {
       messages.appendChild(msgEl);
-      messages.scrollTop = messages.scrollHeight;
+      scrollToBottom();
     }
-  }
-
-  function showThinking(partial?: string) {
-    thinkingBubble.classList.remove('hidden');
-    if (partial) {
-      thinkingText.textContent = partial;
-    } else {
-      thinkingText.textContent = '';
-    }
-    // move bubble after messages
-    el.querySelector('#chat-input-area')?.before(thinkingBubble);
-    thinkingBubble.scrollIntoView({ block: 'nearest' });
-  }
-
-  function hideThinking() {
-    thinkingBubble.classList.add('hidden');
-    thinkingText.textContent = '';
   }
 
   function handleEvent(event: DisplayEvent) {
     switch (event.type) {
       case 'model_status':
         if (event.state === 'running') {
-          showThinking();
+          // Show streaming bubble with dots (no text yet)
+          isStreaming = true;
+          const bubble = getOrCreateStreamingBubble();
+          const body = bubble.querySelector('.msg-streaming-body') as HTMLElement;
+          body.innerHTML = '';
+          scrollToBottom();
           store.modelState = { state: 'running', source: event.source ?? null };
         } else {
-          hideThinking();
+          // Idle: if no agent message came, remove bubble
+          if (isStreaming) removeStreamingBubble();
           store.modelState = { state: 'idle', source: null };
         }
         store.emit('modelState');
         break;
+
       case 'partial_text':
-        showThinking(event.content);
+        // Live-update the streaming bubble body with the thinking text
+        if (!isStreaming) isStreaming = true;
+        {
+          const bubble = getOrCreateStreamingBubble();
+          const body = bubble.querySelector('.msg-streaming-body') as HTMLElement;
+          if (event.content) {
+            body.innerHTML = renderMarkdown(event.content);
+          }
+          scrollToBottom();
+        }
         break;
+
       case 'agent':
-        hideThinking();
+        // Final response: remove streaming bubble, append real message
+        removeStreamingBubble();
         appendEvent(event);
         break;
+
       default:
         appendEvent(event);
     }
   }
 
   // Expose these methods to main.ts
-  (el as HTMLElement & { clearMessages: () => void; appendEvent: (e: DisplayEvent) => void; handleEvent: (e: DisplayEvent) => void })
-    .clearMessages = clearMessages;
-  (el as HTMLElement & { clearMessages: () => void; appendEvent: (e: DisplayEvent) => void; handleEvent: (e: DisplayEvent) => void })
-    .appendEvent = appendEvent;
-  (el as HTMLElement & { clearMessages: () => void; appendEvent: (e: DisplayEvent) => void; handleEvent: (e: DisplayEvent) => void })
-    .handleEvent = handleEvent;
+  type ChatMethods = { clearMessages(): void; appendEvent(e: DisplayEvent): void; handleEvent(e: DisplayEvent): void };
+  (el as HTMLElement & ChatMethods).clearMessages = clearMessages;
+  (el as HTMLElement & ChatMethods).appendEvent = appendEvent;
+  (el as HTMLElement & ChatMethods).handleEvent = handleEvent;
 
   async function sendMessage() {
     const content = inputEl.value.trim();
