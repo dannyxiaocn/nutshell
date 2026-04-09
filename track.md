@@ -65,7 +65,7 @@
 ## Module 8 · Codebase Pruning & Architecture Alignment
 
 - [x] **`release_policy` 清除** (commit: 71db1b4)：agent.py + llm_engine/loader.py + entity yaml 全部删除。
-- [ ] **`core/hook.py` 接入 session_engine**：chat() 和 tick() 统一为 hook 传递；接入 on_loop_start/end/tool_done。
+- [x] **`core/hook.py` 接入 session_engine** (commit: 29f4996)：chat() 和 tick() 统一为 hook 传递；接入 on_loop_start/end/tool_done。
 - [ ] **`runtime/`中session内容移至 `session_engine/`**：与 llm_engine/tool_engine/skill_engine 命名对齐；更新约 30 处 import。
 - [ ] **`loader.py` 移至 `session_engine/`**：`AgentConfig.from_path()` 属文件 IO，不属于 core 纯计算层。
 - [x] **`session_type` 三态替换 `persistent` bool**：`session_type: "ephemeral" | "default" | "persistent"`；ephemeral session 在 queue 清空后自动 stop()。
