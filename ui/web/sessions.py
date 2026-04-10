@@ -68,6 +68,7 @@ def _read_session_info(session_dir: Path, system_dir: Path) -> dict | None:
         "tasks_updated_at": tasks_mtime,
         "heartbeat_interval": status_payload.get("heartbeat_interval", 600.0),
         "session_type": params.get("session_type", "default"),
+        "persistent": params.get("session_type") == "persistent",
         "params": params,
         "alive": pid_alive and status != "stopped",
     }

@@ -56,9 +56,13 @@ export async function attachSession(id: string): Promise<void> {
   store.currentSessionId = id;
   store.emit('currentSession');
 
-  // Clear chat
+  // Clear chat and reset per-session state so panel doesn't show stale data
   getChatEl().clearMessages();
   lastRenderedContextOffset = 0;
+  store.taskCards = [];
+  store.currentParams = null;
+  store.emit('tasks');
+  store.emit('config');
 
   // Load history first, then open SSE from returned offsets
   let contextOffset = 0;
@@ -117,6 +121,14 @@ export async function attachSession(id: string): Promise<void> {
   sseConn.attach(id, contextOffset, eventsOffset, (event: DisplayEvent) => {
     if (store.currentSessionId !== id) return; // stale SSE
     getChatEl().handleEvent(event);
+
+    // Advance lastRenderedContextOffset from the _ctx field embedded in every SSE event.
+    // Without this, visibilitychange would re-fetch events already rendered during live
+    // SSE delivery and duplicate user/agent/tool messages (Problem 1).
+    const evtCtx = (event as any)._ctx;
+    if (typeof evtCtx === 'number' && evtCtx > lastRenderedContextOffset) {
+      lastRenderedContextOffset = evtCtx;
+    }
 
     // Update model state for header / sidebar
     if (event.type === 'model_status') {

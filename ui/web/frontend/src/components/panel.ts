@@ -122,13 +122,14 @@ export function createPanel(): HTMLElement {
     });
 
     el.querySelector('#btn-refresh-tasks')?.addEventListener('click', async () => {
-      if (store.currentSessionId) {
-        const res = await api.getTasks(store.currentSessionId).catch(console.error);
-        if (res) {
-          store.taskCards = res.cards;
-          store.emit('tasks');
-          render();
-        }
+      const sid = store.currentSessionId;
+      if (!sid) return;
+      const res = await api.getTasks(sid).catch(console.error);
+      if (store.currentSessionId !== sid) return; // stale guard (Problem 2)
+      if (res) {
+        store.taskCards = res.cards;
+        store.emit('tasks');
+        render();
       }
     });
 
@@ -149,8 +150,9 @@ export function createPanel(): HTMLElement {
 
     const editor = renderTaskEditor(card, sessionId, async () => {
       editingTask = null;
-      // Refresh tasks
+      // Refresh tasks — guard against stale session (Problem 2)
       const res = await api.getTasks(sessionId).catch(console.error);
+      if (store.currentSessionId !== sessionId) return;
       if (res) {
         store.taskCards = res.cards;
         store.emit('tasks');
@@ -229,6 +231,7 @@ export function createPanel(): HTMLElement {
       try {
         const parsed = JSON.parse(textarea.value) as Params;
         const res = await api.setConfig(sessionId, parsed);
+        if (store.currentSessionId !== sessionId) return; // stale guard (Problem 2)
         store.currentParams = res.params;
         store.emit('config');
         editingConfig = false;

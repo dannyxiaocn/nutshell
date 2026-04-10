@@ -1,174 +1,107 @@
-# Review Findings for `origin/main..HEAD`
+# Active Review Findings for `origin/main..HEAD`
 
 Reviewed range: `origin/main..HEAD`
 
-Scope: local commits not yet pushed to `origin`, excluding unrelated uncommitted changes in the worktree.
+Scope: committed changes only; unrelated uncommitted worktree changes were ignored.
 
-Status legend: ✅ Fixed | ⏳ Deferred
-
----
-
-## 1. ✅ High: `/api/sessions/{session_id}/history` currently crashes on every request
-
-Files:
-- `ui/web/app.py:30`
-
-Details:
-- `get_history()` called `read_session_status(system_dir)` but only `write_session_status` was imported.
-
-Resolution:
-- Added `read_session_status` to the import on line 30: `from nutshell.session_engine.session_status import read_session_status, write_session_status`.
-- Also added early `404` when `system_dir` does not exist.
-- Committed in `b142785` + `f6644f1`.
+Status legend: Open | Deferred
 
 ---
 
-## 2. ✅ High: tab re-attach still loses replies that finished while the tab was hidden
-
-Files:
-- `ui/web/frontend/src/main.ts`
-- `ui/web/app.py`
-- `ui/web/frontend/src/api.ts`
-
-Details:
-- `visibilitychange` only reconnected SSE offsets without rendering new completed events.
-
-Resolution:
-- History endpoint (`app.py`) now accepts `?context_since=N` and returns only events from that byte offset onward.
-- `api.ts` `getHistory(id, contextSince)` passes the param.
-- `main.ts` tracks `lastRenderedContextOffset`; `visibilitychange` fetches `getHistory(id, lastRenderedContextOffset)`, appends the delta events, then calls `reconnectWithOffsets`.
-- Committed in `f6644f1`.
-
----
-
-## 3. ✅ High: session switching is race-prone and can paint or stream the wrong session
+## 1. ✅ High: tab re-attach can duplicate already-rendered turns
 
 Files:
 - `ui/web/frontend/src/main.ts`
 
 Details:
-- Late-resolving history/task/config fetches from a previous `attachSession` call could overwrite the current session's state.
+- `lastRenderedContextOffset` was only updated after initial `/history` load and `visibilitychange` backfill; live SSE delivery never advanced it. On re-focus, `getHistory(id, staleOffset)` returned turns already rendered.
 
 Resolution:
-- Introduced monotonic `attachVersion` counter in `main.ts`. Each `attachSession(id)` increments it and captures `const version = ++attachVersion`. After every `await`, the function bails if `attachVersion !== version`.
-- `sseConn.attach()` is the last side effect, only called after all awaits pass the freshness guard.
-- Periodic task/HUD refreshes also capture and check `store.currentSessionId` before applying results.
-- Committed in `f6644f1`.
+- SSE callback in `attachSession()` now reads `(event as any)._ctx` (embedded in every event payload) and advances `lastRenderedContextOffset = Math.max(last, _ctx)`. `visibilitychange` fetch now always starts from the true last-rendered offset.
 
 ---
 
-## 4. ✅ High: debounced message batching can send text to the wrong session or drop it entirely
-
-Files:
-- `ui/web/frontend/src/components/chat.ts`
-
-Details:
-- `flushPendingMessages()` resolved the destination from `store.currentSessionId` at flush time — switching sessions mid-debounce could redirect the message.
-
-Resolution:
-- Added `pendingSessionId: string | null` captured at enqueue time in `sendMessage()`.
-- `flushPendingMessages()` uses the captured `pendingSessionId`, not `store.currentSessionId`.
-- If `sendMessage()` is called with a different session while a batch is pending, the old batch is flushed immediately to its original session before starting a new batch.
-- Committed in `f6644f1`.
-
----
-
-## 5. ✅ Medium: focus-triggered SSE reconnect can reuse offsets from an old session after a quick switch
+## 2. ✅ Medium: panel can show or write stale task/config state across session switches
 
 Files:
 - `ui/web/frontend/src/main.ts`
-- `ui/web/frontend/src/sse.ts`
+- `ui/web/frontend/src/components/panel.ts`
 
 Details:
-- `visibilitychange` awaited `getHistory(id)` then called `reconnectWithOffsets()` without rechecking the active session.
+- `attachSession()` did not clear `store.taskCards` / `store.currentParams` before switching, so the panel briefly showed the previous session's data. Async refresh/save callbacks in panel.ts lacked stale-session guards.
 
 Resolution:
-- `reconnectWithOffsets(sessionId, ctx, evt)` now takes an explicit `sessionId` and no-ops if it doesn't match the currently attached session (`this.sessionId !== sessionId`).
-- `visibilitychange` checks `store.currentSessionId !== id` after the `await` before calling reconnect.
-- Committed in `f6644f1`.
+- `attachSession()` now sets `store.taskCards = []` and `store.currentParams = null` (with `emit`) immediately at the start, before any `await`.
+- `showTaskEditor` callback, `btn-refresh-tasks` handler, and `showConfigEditor` save callback all check `store.currentSessionId !== sessionId` after their awaits and bail if stale.
 
 ---
 
-## 6. ✅ Medium: multiple `thinking` blocks from one turn are silently truncated in live delivery
+## 3. ✅ Medium: persistent sessions never show persistent tone in the sidebar
 
 Files:
-- `nutshell/runtime/ipc.py`
+- `ui/web/sessions.py`
 
 Details:
-- All thinking blocks from the same turn shared the ID `thinking:{ts}`, so only the first survived `BridgeSession.iter_events()` dedup.
+- `sessionTone()` in `types.ts` read `sess.persistent`, but `sessions.py` never set that field — only `session_type` was returned.
 
 Resolution:
-- Changed to per-block IDs: `thinking:{ts}:{idx}` where `idx` is incremented for each thinking block found across all assistant messages in the turn.
-- Committed in `f6644f1`.
+- Added `"persistent": params.get("session_type") == "persistent"` to the session info dict in `sessions.py`. The `Session` interface already declared `persistent: boolean`; now the backend actually populates it.
 
 ---
 
-## 7. ⏳ Medium: markdown rendering is a stored XSS sink
+## 4. Open Medium: committed pytest suite is red after the web/runtime changes
+
+Files:
+- `tests/porter_system/test_runtime_v1_3_77_ipc.py`
+- `tests/porter_system/test_session_engine_v1_3_77_session_engine.py`
+- `tests/porter_system/test_porter_system_v1_3_77_runner_helpers.py`
+
+Details:
+- `pytest tests/porter_system -q` fails with 3 errors.
+- `test_session_engine_*:58` asserts default heartbeat interval `600.0`; current default is `7200.0`.
+- `test_runtime_*:41` asserts `agent` events have no `id`; they now carry `id = f"turn:{ts}"`.
+- These are test-suite drift issues, not regressions in production behaviour.
+
+Not fixed:
+- Test updates are owned by a dedicated person; not touched here per project policy.
+
+---
+
+## 5. Deferred Medium: markdown rendering is a stored XSS sink
 
 Files:
 - `ui/web/frontend/src/markdown.ts`
 - `ui/web/frontend/src/components/chat.ts`
 
 Details:
-- `renderMarkdown()` returns raw `marked.parse(text)` assigned to `innerHTML` with no sanitization.
+- `renderMarkdown()` returns raw `marked.parse(text)` and multiple message render paths assign that result to `innerHTML` without sanitization.
 
 Deferred:
-- This is a real risk but low urgency for a local/personal-use tool. Fix requires adding `DOMPurify` as a dependency and wrapping all `innerHTML` assignments: `DOMPurify.sanitize(marked.parse(text))`. Deferred to a dedicated security pass.
+- Real risk, but currently lower urgency for a local/personal-use tool. Proper fix is to sanitize rendered HTML before insertion.
 
 ---
 
-## 8. ⏳ Medium: HUD adds avoidable O(file size) and subprocess overhead on every poll
-
-Files:
-- `ui/web/app.py` (HUD endpoint)
-- `ui/web/frontend/src/main.ts`
-
-Details:
-- Every 10s HUD poll runs `git diff --shortstat` subprocess and reads the full `context.jsonl` to find the latest `turn.usage`.
-
-Deferred:
-- Recommended fix: cache git root at app startup; persist latest usage to `status.json` at turn end; reduce polling interval or go event-driven. Deferred — HUD is best-effort and overhead is acceptable for single-user local use.
-
----
-
-## 9. ✅ Medium: renaming a task to an existing name silently overwrites the target task
+## 6. Deferred Medium: HUD still adds avoidable file-scan and subprocess overhead
 
 Files:
 - `ui/web/app.py`
+- `ui/web/frontend/src/main.ts`
 
 Details:
-- `set_tasks()` deleted the old file and saved to the new name without checking if the target already existed.
+- Every 10s HUD poll still resolves git state via subprocess and scans `context.jsonl` backwards to recover the latest turn usage.
 
-Resolution:
-- Added conflict check in `set_tasks()`: when `previous_name != name`, calls `load_card(tasks_dir, name)` first. If a card already exists at the target name, returns `HTTP 409 Conflict` and leaves both files untouched.
-- Committed in `f6644f1`.
+Deferred:
+- Acceptable for now on a single-user local tool, but still worth moving to cached or event-driven data if HUD polling becomes more frequent.
 
 ---
 
-## 10. ⏳ Medium: streaming markdown rendering does full re-parse and DOM replacement on every chunk
+## 7. Deferred Medium: streaming markdown still re-parses and replaces the full DOM on every chunk
 
 Files:
 - `ui/web/frontend/src/components/chat.ts`
 
 Details:
-- `partial_text` handler re-parses the full accumulated text via `renderMarkdown()` and replaces `body.innerHTML` on every chunk.
+- Each `partial_text` chunk re-runs `renderMarkdown()` on the full accumulated text and replaces `body.innerHTML`.
 
 Deferred:
-- Recommended fix: render plain escaped text during streaming; only do a full markdown parse on the final `agent` event. Deferred — acceptable for typical output lengths; will revisit if jank is reported on very long generations.
-
----
-
-## 11. ✅ High: ordinary SSE reconnects replay from stale offsets forever
-
-Files:
-- `ui/web/frontend/src/sse.ts`
-- `ui/web/app.py`
-
-Details:
-- `contextSince`/`eventsSince` were never advanced as events arrived, so every reconnect replayed from the original attach point. Runtime events (`tool`, `status`, `partial_text`, etc.) have no stable `id` and are not deduplicated, causing visible re-renders on every reconnect.
-
-Resolution:
-- `_sse_format()` in `app.py` now embeds `_ctx` and `_evt` byte offsets into every event's JSON payload (alongside the event data, using a shallow copy so the original dict is not mutated).
-- The SSE streaming generator passes `ctx=_ctx, evt=_evt` from `async_iter_events` to `_sse_format`.
-- `sse.ts` reads `data._ctx` and `data._evt` on every received event and updates `this.contextSince`/`this.eventsSince` with `Math.max(...)`. On reconnect, `_connect()` uses these advanced offsets, not the original attach point.
-- Committed in `f6644f1`.
+- This is mostly a performance/jank concern on long generations rather than a correctness bug. A plain-text streaming path with final markdown render would be safer.
