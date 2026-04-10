@@ -42,4 +42,6 @@ msg_id = bridge.send_message("hello")
 - `events.jsonl` stores runtime and UI events only.
 - `watcher.py` skips sessions whose PID is already alive, so it does not race an already-running daemon.
 - Stopped sessions can auto-expire back to active after several hours, depending on watcher/session logic.
+- `ipc.py` `last_running_event_offset()`: returns the byte offset of the last `model_status:running` event so a re-attaching client can replay an in-progress turn. Returns `events_size()` if a subsequent `model_status:idle` is found — this prevents duplicate tool events when the session finished between history fetch and SSE open.
+- Thinking blocks are emitted with per-block IDs (`thinking:{ts}:{idx}`) so multiple thinking blocks from one turn survive dedup in `BridgeSession.iter_events()`.
 
