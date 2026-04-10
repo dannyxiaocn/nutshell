@@ -127,14 +127,18 @@ def _session_tone(info: dict) -> str:
 def _read_all_sessions(
     sessions_base: Path,
     system_base: Path,
+    *,
+    exclude_meta: bool = False,
 ) -> list[dict]:
     """Read all sessions from _sessions/ + sessions/. No server required."""
-    from ui.web.sessions import _read_session_info, _sort_sessions
+    from ui.web.sessions import _read_session_info, _sort_sessions, _is_meta_session_id
     results = []
     if not system_base.is_dir():
         return []
     for system_dir in sorted(system_base.iterdir()):
         if not system_dir.is_dir():
+            continue
+        if exclude_meta and _is_meta_session_id(system_dir.name):
             continue
         session_dir = sessions_base / system_dir.name
         info = _read_session_info(session_dir, system_dir)
@@ -494,7 +498,7 @@ def cmd_log(args) -> int:
     session_id = args.session_id
 
     if not session_id:
-        sessions = _read_all_sessions(args.sessions_base, args.system_base)
+        sessions = _read_all_sessions(args.sessions_base, args.system_base, exclude_meta=True)
         if not sessions:
             print("No sessions found.", file=sys.stderr)
             return 1
@@ -645,7 +649,7 @@ def _add_token_report_parser(subparsers) -> None:
 def cmd_token_report(args) -> int:
     session_id = args.session_id
     if not session_id:
-        sessions = _read_all_sessions(args.sessions_base, args.system_base)
+        sessions = _read_all_sessions(args.sessions_base, args.system_base, exclude_meta=True)
         if not sessions:
             print("No sessions found.", file=sys.stderr)
             return 1
@@ -779,7 +783,7 @@ def cmd_tasks(args) -> int:
 
     session_id = args.session_id
     if not session_id:
-        sessions = _read_all_sessions(args.sessions_base, args.system_base)
+        sessions = _read_all_sessions(args.sessions_base, args.system_base, exclude_meta=True)
         if not sessions:
             print("No sessions found.", file=sys.stderr)
             return 1
@@ -853,7 +857,7 @@ def _prompt_stats_row(label: str, content: str, note: str = "") -> tuple[str, in
 def cmd_prompt_stats(args) -> int:
     session_id = args.session_id
     if not session_id:
-        sessions = _read_all_sessions(args.sessions_base, args.system_base)
+        sessions = _read_all_sessions(args.sessions_base, args.system_base, exclude_meta=True)
         if not sessions:
             print("No sessions found.", file=sys.stderr)
             return 1
@@ -999,6 +1003,9 @@ def cmd_entity(args) -> int:
             parent = None
         elif args.extends:
             parent = args.extends
+        elif args.name:
+            # Non-interactive: -n NAME given but no --extends/--standalone → default to agent
+            parent = "agent"
         else:
             parent = _ask_parent(entity_dir)
         try:

@@ -225,19 +225,24 @@ def cmd_visit(args) -> int:
     sessions_base: Path = args.sessions_base
     system_base: Path = args.system_base
 
-    # Resolve session ID (default to latest)
+    # Resolve session ID (default to most recently active non-meta session)
     if not session_id:
         if not system_base.is_dir():
             print("Error: no sessions found", file=__import__("sys").stderr)
             return 1
-        dirs = sorted(
-            (d.name for d in system_base.iterdir() if d.is_dir()),
-            reverse=True,
-        )
-        if not dirs:
+        from ui.web.sessions import _read_session_info, _sort_sessions, _is_meta_session_id
+        results = []
+        for system_dir in sorted(system_base.iterdir()):
+            if not system_dir.is_dir() or _is_meta_session_id(system_dir.name):
+                continue
+            info = _read_session_info(sessions_base / system_dir.name, system_dir)
+            if info:
+                results.append(info)
+        sorted_sessions = _sort_sessions(results)
+        if not sorted_sessions:
             print("Error: no sessions found", file=__import__("sys").stderr)
             return 1
-        session_id = dirs[0]
+        session_id = sorted_sessions[0]["id"]
 
     # Verify session exists
     sys_dir = system_base / session_id
