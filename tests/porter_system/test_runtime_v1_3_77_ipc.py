@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from nutshell.runtime.ipc import FileIPC, _context_event_to_display
+from nutshell.runtime.ipc import FileIPC, _context_event_to_display, _runtime_event_to_display
 
 
 class IPCUnitTests(unittest.TestCase):
@@ -102,3 +102,17 @@ class IPCUnitTests(unittest.TestCase):
             ipc.events_path.write_text("".join(lines), encoding="utf-8")
 
             self.assertEqual(ipc.last_running_event_offset(), ipc.events_size())
+
+    def test_runtime_hook_events_pass_through(self) -> None:
+        self.assertEqual(
+            _runtime_event_to_display({"type": "tool_done", "name": "bash", "result_len": 5, "ts": "T"}),
+            [{"type": "tool_done", "name": "bash", "result_len": 5, "ts": "T"}],
+        )
+        self.assertEqual(
+            _runtime_event_to_display({"type": "loop_start", "ts": "T"}),
+            [{"type": "loop_start", "ts": "T"}],
+        )
+        self.assertEqual(
+            _runtime_event_to_display({"type": "loop_end", "iterations": 2, "ts": "T"}),
+            [{"type": "loop_end", "iterations": 2, "ts": "T"}],
+        )

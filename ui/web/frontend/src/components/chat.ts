@@ -375,6 +375,37 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
       break;
     }
 
+    case 'tool_done': {
+      div.className = 'msg msg-status';
+      const name = escapeHtml(event.name ?? 'tool');
+      const suffix = typeof event.result_len === 'number' ? ` (${event.result_len} chars)` : '';
+      div.innerHTML = `<em>${name} finished${escapeHtml(suffix)}</em>`;
+      break;
+    }
+
+    case 'loop_start': {
+      div.className = 'msg msg-status';
+      div.innerHTML = `<em>agent loop started</em>`;
+      break;
+    }
+
+    case 'loop_end': {
+      div.className = 'msg msg-status';
+      const parts: string[] = [];
+      if (typeof event.iterations === 'number') parts.push(`${event.iterations} iteration${event.iterations === 1 ? '' : 's'}`);
+      if (event.usage?.input != null || event.usage?.output != null) {
+        const usageParts: string[] = [];
+        if (event.usage.input != null) usageParts.push(`in:${event.usage.input}`);
+        if (event.usage.output != null) usageParts.push(`out:${event.usage.output}`);
+        if (event.usage.cache_read != null) usageParts.push(`cached:${event.usage.cache_read}`);
+        if (event.usage.cache_write != null) usageParts.push(`wrote:${event.usage.cache_write}`);
+        if (usageParts.length) parts.push(usageParts.join(' · '));
+      }
+      const detail = parts.length ? ` (${parts.join(' | ')})` : '';
+      div.innerHTML = `<em>agent loop finished${escapeHtml(detail)}</em>`;
+      break;
+    }
+
     case 'heartbeat_trigger': {
       div.className = 'msg msg-heartbeat-trigger';
       div.innerHTML = `<span>⏱ heartbeat triggered</span><span class="msg-ts">${formatTs(event.ts)}</span>`;

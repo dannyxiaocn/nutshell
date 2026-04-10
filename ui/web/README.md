@@ -43,3 +43,5 @@ The SPA (`frontend/src/`) is a TypeScript + Vite app:
 ## How It Contributes To The Whole System
 
 This directory gives operators a live, streaming view of session activity without introducing a second state model. Everything still comes from the on-disk session files.
+
+- The SSE event stream includes loop lifecycle and tool completion events (`loop_start`, `loop_end`, `tool_done`) in addition to the existing agent text, tool-call, and model-status updates.

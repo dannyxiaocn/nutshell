@@ -17,6 +17,8 @@ Examples:
 
 This keeps porter-managed suites visually separate from feature-local pytest files that developers add during implementation.
 
+Recent runtime/session coverage includes IPC lifecycle assertions for `loop_start`, `loop_end`, `tool_call`, and `tool_done`, so hook-related behavior changes should be validated there before merge.
+
 ## How To Use It
 
 ```bash

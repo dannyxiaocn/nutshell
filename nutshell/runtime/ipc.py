@@ -21,6 +21,9 @@ events.jsonl event types:
   model_status       — {"type": "model_status", "state": "running|idle", "source": "...", "ts": "..."}
   partial_text       — {"type": "partial_text", "content": "...", "ts": "..."}
   tool_call          — {"type": "tool_call", "name": "...", "input": {...}, "ts": "..."}
+  tool_done          — {"type": "tool_done", "name": "...", "result_len": 123, "ts": "..."}
+  loop_start         — {"type": "loop_start", "ts": "..."}
+  loop_end           — {"type": "loop_end", "iterations": 2, "usage": {...}, "ts": "..."}
   heartbeat_trigger  — {"type": "heartbeat_trigger", "ts": "..."}
   heartbeat_finished — {"type": "heartbeat_finished", "ts": "..."}
   status             — {"type": "status", "value": "...", "ts": "..."}
@@ -31,7 +34,8 @@ Display events derived for the UI:
   agent            — from turn last assistant message (context)
   tool             — from turn tool_use blocks (context) OR streaming tool_call (events)
   heartbeat_trigger — from heartbeat_trigger (events) OR old-format turn (context, backward compat)
-  model_status, partial_text, heartbeat_finished, status, error — pass-through (events)
+  model_status, partial_text, tool_done, loop_start, loop_end,
+  heartbeat_finished, status, error — pass-through (events)
 """
 from __future__ import annotations
 import json
@@ -148,7 +152,16 @@ def _runtime_event_to_display(event: dict) -> list[dict]:
     if etype == "tool_call":
         return [{"type": "tool", "name": event.get("name"), "input": event.get("input", {}), "ts": ts}]
 
-    if etype in ("model_status", "heartbeat_trigger", "heartbeat_finished", "status", "error"):
+    if etype in (
+        "model_status",
+        "tool_done",
+        "loop_start",
+        "loop_end",
+        "heartbeat_trigger",
+        "heartbeat_finished",
+        "status",
+        "error",
+    ):
         return [event]
 
     return []
