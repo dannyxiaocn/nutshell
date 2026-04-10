@@ -57,6 +57,8 @@ export interface DisplayEvent {
     cache_read?: number;
     cache_write?: number;
   };
+  result_len?: number;
+  iterations?: number;
   id?: string;
 }
 

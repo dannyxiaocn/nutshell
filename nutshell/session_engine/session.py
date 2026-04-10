@@ -761,7 +761,7 @@ class Session:
         ext = self.on_loop_end
 
         def on_loop_end(result: "AgentResult") -> None:
-            payload: dict = {"type": "loop_end"}
+            payload: dict = {"type": "loop_end", "iterations": result.iterations}
             if result.usage and result.usage.total_tokens > 0:
                 payload["usage"] = result.usage.as_dict()
             self._append_event(payload)

@@ -43,3 +43,4 @@ nutshell chat --entity nutshell_dev "review this repo"
 - Meta sessions are real persistent sessions stored as `sessions/<entity>_meta/` and `_sessions/<entity>_meta/`.
 - If entity config diverges from a synced meta session, child sessions can be blocked with `alignment_blocked` until resolved.
 - `reload_capabilities` is injected at runtime and cannot be overridden from disk.
+- `session.py` composes external `on_loop_start`, `on_loop_end`, and `on_tool_done` hooks with internal IPC logging so `events.jsonl` always records loop lifecycle and tool completion metadata.
