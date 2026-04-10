@@ -15,6 +15,11 @@ export class SSEConnection {
   private eventsSince = 0;
   private closed = false;
 
+  /** Latest context.jsonl byte offset processed by the live SSE stream.
+   * Used by main.ts to keep lastRenderedContextOffset in sync without
+   * needing _ctx to survive the clean-event strip (Bug 1 + Bug 3 interaction). */
+  get latestContextOffset(): number { return this.contextSince; }
+
   attach(sessionId: string, contextSince: number, eventsSince: number, handler: SSEHandler): void {
     this.close();
     this.closed = false;

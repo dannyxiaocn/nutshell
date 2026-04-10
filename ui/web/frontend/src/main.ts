@@ -122,12 +122,12 @@ export async function attachSession(id: string): Promise<void> {
     if (store.currentSessionId !== id) return; // stale SSE
     getChatEl().handleEvent(event);
 
-    // Advance lastRenderedContextOffset from the _ctx field embedded in every SSE event.
-    // Without this, visibilitychange would re-fetch events already rendered during live
-    // SSE delivery and duplicate user/agent/tool messages (Problem 1).
-    const evtCtx = (event as any)._ctx;
-    if (typeof evtCtx === 'number' && evtCtx > lastRenderedContextOffset) {
-      lastRenderedContextOffset = evtCtx;
+    // Advance lastRenderedContextOffset from SSE's internal contextSince tracker.
+    // _ctx is stripped from the event before the handler is called (Bug 3 fix),
+    // so we read the offset via the public getter instead of (event as any)._ctx.
+    const latest = sseConn.latestContextOffset;
+    if (latest > lastRenderedContextOffset) {
+      lastRenderedContextOffset = latest;
     }
 
     // Update model state for header / sidebar
