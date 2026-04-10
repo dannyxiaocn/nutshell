@@ -13,23 +13,35 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
 
 import uvicorn
-import re
-import subprocess
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from nutshell.session_engine.session_params import read_session_params, write_session_params
-from nutshell.session_engine.session_status import read_session_status, write_session_status
-from .sessions import _init_session, _is_meta_session_id, _read_session_info, _sort_sessions
+from nutshell.service import (
+    create_session as service_create_session,
+    delete_session as service_delete_session,
+    get_config as service_get_config,
+    get_history as service_get_history,
+    get_hud as service_get_hud,
+    get_session as service_get_session,
+    get_tasks as service_get_tasks,
+    interrupt_session as service_interrupt_session,
+    is_meta_session as service_is_meta_session,
+    list_sessions as service_list_sessions,
+    send_message as service_send_message,
+    start_session as service_start_session,
+    stop_session as service_stop_session,
+    update_config as service_update_config,
+    upsert_task as service_upsert_task,
+    delete_task as service_delete_task,
+)
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
@@ -125,50 +137,31 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
 
     @app.get("/api/sessions")
     async def list_sessions():
-        if not system_sessions_dir.exists():
-            return []
-        result = []
-        for d in system_sessions_dir.iterdir():
-            if not d.is_dir():
-                continue
-            info = _read_session_info(sessions_dir / d.name, d)
-            if info is not None:
-                result.append(info)
-        return _sort_sessions(result)
+        return service_list_sessions(sessions_dir, system_sessions_dir, exclude_meta=False)
 
     @app.get("/api/sessions/{session_id}")
     async def get_session(session_id: str):
-        system_dir = system_sessions_dir / session_id
-        session_dir = sessions_dir / session_id
-        if not system_dir.exists():
-            raise HTTPException(404, f"Session not found: {session_id}")
-        info = _read_session_info(session_dir, system_dir)
+        info = service_get_session(session_id, sessions_dir, system_sessions_dir)
         if info is None:
             raise HTTPException(404, f"Session not found: {session_id}")
-        params = read_session_params(session_dir)
-        params_view = {**params, "is_meta_session": _is_meta_session_id(session_id)}
-        return {
-            **info,
-            "params": params_view,
-        }
+        params_view = service_get_config(session_id, sessions_dir, system_sessions_dir)
+        return {**info, "params": params_view}
 
     @app.post("/api/sessions")
     async def create_session(body: dict):
         session_id = body.get("id") or (datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "-" + uuid.uuid4().hex[:4])
         entity = body.get("entity", _DEFAULT_ENTITY)
         heartbeat = float(body.get("heartbeat", 7200.0))
-        _init_session(sessions_dir, system_sessions_dir, session_id, entity, heartbeat)
-        return {"id": session_id, "entity": entity}
+        return service_create_session(session_id, entity, heartbeat, sessions_dir, system_sessions_dir)
 
     @app.post("/api/sessions/{session_id}/messages")
     async def send_message(session_id: str, body: dict):
-        from nutshell.runtime.bridge import BridgeSession
-        system_dir = system_sessions_dir / session_id
-        if not system_dir.exists():
-            raise HTTPException(404, f"Session not found: {session_id}")
-        if _is_meta_session_id(session_id):
+        if service_is_meta_session(session_id):
             raise HTTPException(403, "Direct chat with meta sessions is disabled.")
-        msg_id = BridgeSession(system_dir).send_message(body.get("content", ""))
+        try:
+            msg_id = service_send_message(session_id, body.get("content", ""), system_sessions_dir)
+        except FileNotFoundError:
+            raise HTTPException(404, f"Session not found: {session_id}")
         return {"id": msg_id}
 
     @app.post("/api/sessions/{session_id}/interrupt")
@@ -178,11 +171,10 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
         Drains any pending queued inputs and defers the next heartbeat tick.
         In-progress turns run to completion.
         """
-        from nutshell.runtime.bridge import BridgeSession
-        system_dir = system_sessions_dir / session_id
-        if not system_dir.exists():
+        try:
+            service_interrupt_session(session_id, system_sessions_dir)
+        except FileNotFoundError:
             raise HTTPException(404, f"Session not found: {session_id}")
-        BridgeSession(system_dir).send_interrupt()
         return {"ok": True}
 
     @app.get("/api/sessions/{session_id}/events")
@@ -254,236 +246,89 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
 
     @app.post("/api/sessions/{session_id}/stop")
     async def stop_session(session_id: str):
-        from nutshell.runtime.ipc import FileIPC
-        system_dir = system_sessions_dir / session_id
-        if not system_dir.exists():
+        if not service_stop_session(session_id, system_sessions_dir):
             raise HTTPException(404, f"Session not found: {session_id}")
-        write_session_status(system_dir, status="stopped", stopped_at=datetime.now().isoformat())
-        FileIPC(system_dir).append_event(
-            {"type": "status", "value": "heartbeat paused — use ▶ Start to resume"}
-        )
         return {"ok": True}
 
     @app.post("/api/sessions/{session_id}/start")
     async def start_session(session_id: str):
-        from nutshell.runtime.ipc import FileIPC
-        system_dir = system_sessions_dir / session_id
-        if not system_dir.exists():
+        if not service_start_session(session_id, system_sessions_dir):
             raise HTTPException(404, f"Session not found: {session_id}")
-        write_session_status(system_dir, status="active", stopped_at=None)
-        FileIPC(system_dir).append_event({"type": "status", "value": "heartbeat resumed"})
         return {"ok": True}
 
     @app.get("/api/sessions/{session_id}/tasks")
     async def get_tasks(session_id: str):
-        from nutshell.session_engine.task_cards import load_all_cards, migrate_legacy_task_sources
-        session_dir = sessions_dir / session_id
-        if session_dir.exists():
-            migrate_legacy_task_sources(session_dir)
-        tasks_dir = session_dir / "core" / "tasks"
-        cards = sorted(
-            load_all_cards(tasks_dir),
-            key=lambda c: (c.name != "heartbeat", c.name.lower()),
-        )
-        return {"cards": [
-            {
-                "name": c.name,
-                "content": c.content,
-                "interval": c.interval,
-                "starts_at": c.starts_at,
-                "ends_at": c.ends_at,
-                "status": c.status,
-                "last_run_at": c.last_run_at,
-                "created_at": c.created_at,
-            }
-            for c in cards
-        ]}
+        return {"cards": service_get_tasks(session_id, sessions_dir)}
+
 
     @app.put("/api/sessions/{session_id}/tasks")
     async def set_tasks(session_id: str, body: dict):
-        from nutshell.session_engine.task_cards import TaskCard, delete_card, load_card, migrate_legacy_task_sources, save_card
         session_dir = sessions_dir / session_id
         if not session_dir.exists():
             raise HTTPException(404, f"Session not found: {session_id}")
-        migrate_legacy_task_sources(session_dir)
-        tasks_dir = session_dir / "core" / "tasks"
-        tasks_dir.mkdir(parents=True, exist_ok=True)
-        if "name" in body:
-            name = _normalize_task_name(body["name"])
-            previous_name = _normalize_task_name(body.get("previous_name") or name, "Previous task name")
-            existing = load_card(tasks_dir, previous_name)
-            interval = _parse_task_interval(body.get("interval", existing.interval if existing else None))
-            starts_at = _parse_task_timestamp(body.get("starts_at", existing.starts_at if existing else None), "starts_at")
-            ends_at = _parse_task_timestamp(body.get("ends_at", existing.ends_at if existing else None), "ends_at")
-            _validate_task_schedule(starts_at, ends_at)
-            if name == "heartbeat" and interval is None:
-                interval = float(read_session_params(session_dir).get("heartbeat_interval") or 7200.0)
-            card = TaskCard(
-                name=name,
-                content=body.get("content", existing.content if existing else ""),
-                interval=interval,
-                starts_at=starts_at,
-                ends_at=ends_at,
-                status=_parse_task_status(body.get("status", existing.status if existing else "pending")),
-                last_run_at=body.get("last_run_at", existing.last_run_at if existing else None),
-                created_at=body.get("created_at", existing.created_at if existing else datetime.now().isoformat()),
-            )
-            if previous_name != name:
-                if load_card(tasks_dir, name) is not None:
-                    raise HTTPException(409, f"Task '{name}' already exists; choose a different name")
-                delete_card(tasks_dir, previous_name)
-            save_card(tasks_dir, card)
-            if name == "heartbeat" and card.interval is not None:
-                write_session_params(session_dir, heartbeat_interval=card.interval, default_task=None)
-        elif "content" in body:
-            card = TaskCard(name="task", content=body["content"])
-            save_card(tasks_dir, card)
+        payload = dict(body)
+        if "name" in payload:
+            payload["name"] = _normalize_task_name(payload["name"])
+            payload["previous_name"] = _normalize_task_name(payload.get("previous_name") or payload["name"], "Previous task name")
+            if "interval" in payload:
+                payload["interval"] = _parse_task_interval(payload.get("interval"))
+            if "starts_at" in payload:
+                payload["starts_at"] = _parse_task_timestamp(payload.get("starts_at"), "starts_at")
+            if "ends_at" in payload:
+                payload["ends_at"] = _parse_task_timestamp(payload.get("ends_at"), "ends_at")
+            _validate_task_schedule(payload.get("starts_at"), payload.get("ends_at"))
+            if "status" in payload:
+                payload["status"] = _parse_task_status(payload.get("status"))
+        try:
+            service_upsert_task(session_id, sessions_dir, **payload)
+        except FileExistsError as exc:
+            raise HTTPException(409, f"Task '{exc.args[0]}' already exists; choose a different name")
         return {"ok": True}
 
     @app.delete("/api/sessions/{session_id}/tasks/{task_name}")
     async def remove_task(session_id: str, task_name: str):
-        from nutshell.session_engine.task_cards import delete_card, migrate_legacy_task_sources
+        normalized = _normalize_task_name(task_name, "Task name")
         session_dir = sessions_dir / session_id
         if not session_dir.exists():
             raise HTTPException(404, f"Session not found: {session_id}")
-        migrate_legacy_task_sources(session_dir)
-        deleted = delete_card(session_dir / "core" / "tasks", _normalize_task_name(task_name, "Task name"))
-        if not deleted:
+        if not service_delete_task(session_id, normalized, sessions_dir):
             raise HTTPException(404, f"Task not found: {task_name}")
         return {"ok": True}
 
     @app.get("/api/sessions/{session_id}/config")
     async def get_config(session_id: str):
-        session_dir = sessions_dir / session_id
-        system_dir = system_sessions_dir / session_id
-        if not system_dir.exists() or not session_dir.exists():
+        try:
+            return {"params": service_get_config(session_id, sessions_dir, system_sessions_dir)}
+        except FileNotFoundError:
             raise HTTPException(404, f"Session not found: {session_id}")
-        params = read_session_params(session_dir)
-        return {"params": {**params, "is_meta_session": _is_meta_session_id(session_id)}}
+
 
     @app.put("/api/sessions/{session_id}/config")
     async def set_config(session_id: str, body: dict):
-        from nutshell.session_engine.task_cards import ensure_heartbeat_card, load_card, migrate_legacy_task_sources, save_card
-        session_dir = sessions_dir / session_id
-        system_dir = system_sessions_dir / session_id
-        if not system_dir.exists() or not session_dir.exists():
-            raise HTTPException(404, f"Session not found: {session_id}")
         params = body.get("params")
         if not isinstance(params, dict):
             raise HTTPException(400, "Body must include a JSON object in 'params'")
-        params = dict(params)
-        params.pop("is_meta_session", None)
-        migrate_legacy_task_sources(session_dir)
-        if "default_task" in params:
-            heartbeat_content = params.pop("default_task")
-            if heartbeat_content not in (None, ""):
-                existing_heartbeat = load_card(session_dir / "core" / "tasks", "heartbeat")
-                if existing_heartbeat is None:
-                    ensure_heartbeat_card(
-                        session_dir / "core" / "tasks",
-                        interval=float(params.get("heartbeat_interval") or read_session_params(session_dir).get("heartbeat_interval") or 7200.0),
-                        content=str(heartbeat_content),
-                    )
-                else:
-                    existing_heartbeat.content = str(heartbeat_content)
-                    save_card(session_dir / "core" / "tasks", existing_heartbeat)
         if "heartbeat_interval" in params:
-            interval = _parse_task_interval(params["heartbeat_interval"])
-            if interval is not None:
-                heartbeat = load_card(session_dir / "core" / "tasks", "heartbeat")
-                if heartbeat is not None:
-                    heartbeat.interval = interval
-                    save_card(session_dir / "core" / "tasks", heartbeat)
-                elif params.get("session_type") == "persistent":
-                    ensure_heartbeat_card(session_dir / "core" / "tasks", interval=interval)
-        write_session_params(session_dir, **params)
-        saved = read_session_params(session_dir)
-        return {"ok": True, "params": {**saved, "is_meta_session": _is_meta_session_id(session_id)}}
+            params = dict(params)
+            params["heartbeat_interval"] = _parse_task_interval(params["heartbeat_interval"])
+        try:
+            saved = service_update_config(session_id, sessions_dir, system_sessions_dir, params)
+        except FileNotFoundError:
+            raise HTTPException(404, f"Session not found: {session_id}")
+        return {"ok": True, "params": saved}
 
     @app.delete("/api/sessions/{session_id}")
     async def delete_session(session_id: str):
-        system_dir = system_sessions_dir / session_id
-        session_dir = sessions_dir / session_id
-        if not system_dir.exists() and not session_dir.exists():
+        if not service_delete_session(session_id, sessions_dir, system_sessions_dir):
             raise HTTPException(404, f"Session not found: {session_id}")
-        write_session_status(system_dir, status="stopped", pid=None, stopped_at=datetime.now().isoformat())
-        if session_dir.exists():
-            shutil.rmtree(session_dir)
-        if system_dir.exists():
-            shutil.rmtree(system_dir)
         return {"ok": True}
 
     @app.get("/api/sessions/{session_id}/hud")
     async def get_session_hud(session_id: str):
-        """HUD data: cwd, context size, git diff stat, latest token usage."""
-        system_dir = system_sessions_dir / session_id
-        session_dir = sessions_dir / session_id
-        if not system_dir.exists():
-            raise HTTPException(404, f"Session not found: {session_id}")
-
-        # Resolve git root (search upward from sessions_dir parent = project root)
-        project_root = sessions_dir.parent
-        git_root: str | None = None
         try:
-            r = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                cwd=project_root, capture_output=True, text=True, timeout=3,
-            )
-            if r.returncode == 0:
-                git_root = r.stdout.strip()
-        except Exception:
-            pass
-
-        # Git diff stat (staged + unstaged vs HEAD)
-        git_added = git_deleted = git_files = 0
-        if git_root:
-            try:
-                r = subprocess.run(
-                    ["git", "diff", "--shortstat", "HEAD"],
-                    cwd=git_root, capture_output=True, text=True, timeout=3,
-                )
-                if r.stdout:
-                    m = re.search(r"(\d+) files? changed", r.stdout)
-                    if m: git_files = int(m.group(1))
-                    m = re.search(r"(\d+) insertions?\(\+\)", r.stdout)
-                    if m: git_added = int(m.group(1))
-                    m = re.search(r"(\d+) deletions?\(-\)", r.stdout)
-                    if m: git_deleted = int(m.group(1))
-            except Exception:
-                pass
-
-        # Model name from session params
-        params = read_session_params(session_dir) if session_dir.exists() else {}
-        model_name: str | None = params.get("model") or None
-
-        # Context size in bytes
-        from nutshell.runtime.ipc import FileIPC
-        ipc = FileIPC(system_dir)
-        context_bytes = ipc.context_size()
-
-        # Latest token usage from most recent turn
-        latest_usage: dict | None = None
-        if ipc.context_path.exists():
-            try:
-                lines = ipc.context_path.read_bytes().splitlines()
-                for line in reversed(lines):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    ev = json.loads(line)
-                    if ev.get("type") == "turn" and ev.get("usage"):
-                        latest_usage = ev["usage"]
-                        break
-            except Exception:
-                pass
-
-        return {
-            "cwd": git_root or str(project_root),
-            "context_bytes": context_bytes,
-            "model": model_name,
-            "git": {"files": git_files, "added": git_added, "deleted": git_deleted},
-            "usage": latest_usage,
-        }
+            return service_get_hud(session_id, sessions_dir, system_sessions_dir)
+        except FileNotFoundError:
+            raise HTTPException(404, f"Session not found: {session_id}")
 
     @app.get("/api/weixin/status")
     async def weixin_status():

@@ -131,20 +131,8 @@ def _read_all_sessions(
     exclude_meta: bool = False,
 ) -> list[dict]:
     """Read all sessions from _sessions/ + sessions/. No server required."""
-    from ui.web.sessions import _read_session_info, _sort_sessions, _is_meta_session_id
-    results = []
-    if not system_base.is_dir():
-        return []
-    for system_dir in sorted(system_base.iterdir()):
-        if not system_dir.is_dir():
-            continue
-        if exclude_meta and _is_meta_session_id(system_dir.name):
-            continue
-        session_dir = sessions_base / system_dir.name
-        info = _read_session_info(session_dir, system_dir)
-        if info:
-            results.append(info)
-    return _sort_sessions(results)
+    from nutshell.service import list_sessions
+    return list_sessions(sessions_base, system_base, exclude_meta=exclude_meta)
 
 
 # ── Subcommand: chat ──────────────────────────────────────────────────────────
@@ -295,20 +283,14 @@ def _add_new_parser(subparsers) -> None:
 
 
 def cmd_new(args) -> int:
-    from nutshell.session_engine.session_init import init_session
+    from nutshell.service import create_session
     session_id = args.session_id or (datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "-" + uuid.uuid4().hex[:4])
     entity_dir = _REPO_ROOT / "entity" / args.entity
     if not entity_dir.exists():
         print(f"Error: entity '{args.entity}' not found in entity/", file=sys.stderr)
         return 1
     try:
-        init_session(
-            session_id=session_id,
-            entity_name=args.entity,
-            sessions_base=args.sessions_base,
-            system_sessions_base=args.system_base,
-            heartbeat=args.heartbeat,
-        )
+        create_session(session_id, args.entity, args.heartbeat, args.sessions_base, args.system_base)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -362,16 +344,10 @@ def _add_start_parser(subparsers) -> None:
 
 
 def cmd_start(args) -> int:
-    from nutshell.session_engine.session_status import write_session_status
-    system_dir = args.system_base / args.session_id
-    if not (system_dir / "manifest.json").exists():
+    from nutshell.service import start_session
+    if not start_session(args.session_id, args.system_base):
         print(f"Error: session '{args.session_id}' not found", file=sys.stderr)
         return 1
-    write_session_status(system_dir, status="active", stopped_at=None)
-    from nutshell.runtime.ipc import FileIPC
-    FileIPC(system_dir).append_event(
-        {"type": "status", "value": "resumed via CLI"}
-    )
     print(f"Started: {args.session_id}")
     return 0
 
@@ -495,6 +471,7 @@ def _fmt_msg_content(content) -> str:
 
 
 def cmd_log(args) -> int:
+    from nutshell.service import get_log_turns
     session_id = args.session_id
 
     if not session_id:
@@ -505,58 +482,46 @@ def cmd_log(args) -> int:
         session_id = sessions[0]["id"]
 
     context_path = args.system_base / session_id / "context.jsonl"
-    if not context_path.exists():
-        if not (args.system_base / session_id / "manifest.json").exists():
-            print(f"Error: session '{session_id}' not found", file=sys.stderr)
-            return 1
-        print(f"[{session_id}] No conversation history yet.")
-        return 0
-
-    # Parse --since threshold
-    since_ts: float | None = None
     since_raw = getattr(args, "since", None)
     watch_mode = getattr(args, "watch", False)
-
     if watch_mode and since_raw is None:
-        since_raw = "now"  # --watch implies --since now
-
-    if since_raw is not None:
-        since_ts = _parse_since(since_raw)
-
+        since_raw = "now"
     if watch_mode:
-        return _watch_log(args, session_id, context_path, since_ts)
+        return _watch_log(args, session_id, context_path, _parse_since(since_raw))
 
-    # Single-shot mode
-    inputs_by_id, turns = _load_context(context_path)
-
-    if since_ts is not None:
-        turns = [t for t in turns if (_turn_ts(t) or 0) > since_ts]
-
-    # Apply -n limit (only when not using --since)
-    if since_ts is None:
-        turns_to_show = turns[-args.num_turns:]
-    else:
-        turns_to_show = turns  # show ALL turns after --since
+    try:
+        turns_to_show = get_log_turns(session_id, args.system_base, n=None if since_raw else args.num_turns, since=since_raw)
+    except FileNotFoundError:
+        print(f"Error: session '{session_id}' not found", file=sys.stderr)
+        return 1
 
     if not turns_to_show:
-        if since_ts is not None:
+        if not context_path.exists():
+            print(f"[{session_id}] No conversation history yet.")
+        elif since_raw is not None:
             print(f"[{session_id}] No new turns since {since_raw}.")
         else:
-            # Show any unpaired user_inputs
-            recent_inputs = list(inputs_by_id.values())[-args.num_turns:]
-            if recent_inputs:
-                print(f"[{session_id}] — pending (no agent response yet)")
-                print("─" * 60)
-                for inp in recent_inputs:
-                    ts = inp.get("ts", "")[:16].replace("T", " ")
-                    print(f"  USER  {ts}  {inp.get('content', '')}")
-            else:
-                print(f"[{session_id}] No conversation history yet.")
+            print(f"[{session_id}] No conversation history yet.")
         return 0
 
-    print(f"[{session_id}] {len(turns_to_show)} turn(s)" + (f" since {since_raw}" if since_ts else ""))
+    print(f"[{session_id}] {len(turns_to_show)} turn(s)" + (f" since {since_raw}" if since_raw else ""))
     print("─" * 60)
-    _print_turns(turns_to_show, inputs_by_id)
+    for row in turns_to_show:
+        if row["user"]:
+            print(f"  USER  {row['ts']}  {row['user']}")
+        for line in row["agent"]:
+            print(f"  AGENT          {line}")
+        usage = row["usage"]
+        if usage and (usage.get("input") or usage.get("output")):
+            parts = []
+            if usage.get("input"):
+                parts.append(f"↑{usage['input']}")
+            if usage.get("output"):
+                parts.append(f"↓{usage['output']}")
+            if usage.get("cache_read"):
+                parts.append(f"📦{usage['cache_read']}")
+            print(f"         {'  '.join(parts)}")
+        print()
     return 0
 
 
@@ -779,7 +744,7 @@ def _add_tasks_parser(subparsers) -> None:
 
 
 def cmd_tasks(args) -> int:
-    from nutshell.session_engine.task_cards import load_all_cards
+    from nutshell.service import get_tasks
 
     session_id = args.session_id
     if not session_id:
@@ -794,7 +759,7 @@ def cmd_tasks(args) -> int:
         print(f"Error: session '{session_id}' not found", file=sys.stderr)
         return 1
 
-    cards = load_all_cards(tasks_dir)
+    cards = get_tasks(session_id, args.sessions_base)
     print(f"[{session_id}] task cards ({len(cards)})")
     print("─" * 60)
     if not cards:
@@ -806,13 +771,13 @@ def cmd_tasks(args) -> int:
             print("(empty)")
     else:
         for card in cards:
-            interval_str = f"every {card.interval}s" if card.interval else "one-shot"
-            print(f"  [{card.status}] {card.name}  ({interval_str})")
-            if card.last_run_at:
-                print(f"          last run: {card.last_run_at}")
-            for line in card.content.splitlines()[:3]:
+            interval_str = f"every {card['interval']}s" if card['interval'] else "one-shot"
+            print(f"  [{card['status']}] {card['name']}  ({interval_str})")
+            if card['last_run_at']:
+                print(f"          last run: {card['last_run_at']}")
+            for line in card['content'].splitlines()[:3]:
                 print(f"          {line}")
-            if len(card.content.splitlines()) > 3:
+            if len(card['content'].splitlines()) > 3:
                 print(f"          ...")
     return 0
 
@@ -855,6 +820,7 @@ def _prompt_stats_row(label: str, content: str, note: str = "") -> tuple[str, in
 
 
 def cmd_prompt_stats(args) -> int:
+    from nutshell.service import get_prompt_stats
     session_id = args.session_id
     if not session_id:
         sessions = _read_all_sessions(args.sessions_base, args.system_base, exclude_meta=True)
@@ -863,59 +829,13 @@ def cmd_prompt_stats(args) -> int:
             return 1
         session_id = sessions[0]["id"]
 
-    core = args.sessions_base / session_id / "core"
-    if not core.exists():
+    try:
+        stats = get_prompt_stats(session_id, args.sessions_base, args.system_base)
+    except FileNotFoundError:
         print(f"Error: session '{session_id}' not found", file=sys.stderr)
         return 1
 
-    rows: list[tuple] = []  # (label, lines, chars, tokens, note)
-
-    def _read(path: Path) -> str:
-        return path.read_text(encoding="utf-8") if path.exists() else ""
-
-    # ── Static (cached) section ───────────────────────────────────────────────
-    system_content = _read(core / "system.md")
-    rows.append(_prompt_stats_row("system.md", system_content))
-
-    session_content = _read(core / "session.md") or _read(core / "session_context.md")
-    rows.append(_prompt_stats_row("session.md", session_content))
-
-    # ── Dynamic section ───────────────────────────────────────────────────────
-    memory_content = _read(core / "memory.md")
-    rows.append(_prompt_stats_row("memory.md", memory_content))
-
-    mem_dir = core / "memory"
-    if mem_dir.exists():
-        for md_file in sorted(mem_dir.glob("*.md")):
-            content = md_file.read_text(encoding="utf-8")
-            disk_lines = len(content.splitlines())
-            if disk_lines > _MEMORY_LAYER_INLINE_LINES:
-                # truncated in prompt
-                truncated = "\n".join(content.splitlines()[:_MEMORY_LAYER_INLINE_LINES])
-                note = f"truncated ({disk_lines}→{_MEMORY_LAYER_INLINE_LINES} lines)"
-                rows.append(_prompt_stats_row(f"memory/{md_file.stem}", truncated, note))
-            else:
-                rows.append(_prompt_stats_row(f"memory/{md_file.stem}", content))
-
-    # skills: count skills dir entries
-    skills_dir = core / "skills"
-    skill_names: list[str] = []
-    if skills_dir.exists():
-        skill_names = [d.name for d in sorted(skills_dir.iterdir()) if d.is_dir()]
-    # Each skill contributes a catalog line (file-backed = catalog only, ~40 chars each)
-    catalog_chars = sum(40 + len(n) for n in skill_names)
-    skill_note = f"{len(skill_names)} skills (catalog only; bodies loaded on demand)"
-    rows.append((
-        "skills (catalog)",
-        len(skill_names),
-        catalog_chars,
-        max(1, catalog_chars // 4),
-        skill_note,
-    ))
-
-    # ── Heartbeat (separate activation) ──────────────────────────────────────
-    hb_content = _read(core / "heartbeat.md")
-    rows.append(_prompt_stats_row("heartbeat.md *", hb_content, "heartbeat activations only"))
+    rows = [(r["label"], r["lines"], r["chars"], r["tokens"], r["note"]) for r in stats["rows"]]
 
     # ── Render table ──────────────────────────────────────────────────────────
     COL = (34, 7, 8, 8)
