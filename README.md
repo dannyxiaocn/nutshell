@@ -146,3 +146,5 @@ Start here:
 - [docs/nutshell/design.md](docs/nutshell/design.md) — architecture and design principles
 - [docs/nutshell/impl.md](docs/nutshell/impl.md) — implementation details and session lifecycle
 - [docs/entity/design.md](docs/entity/design.md) — entity template system
+- [docs/ui/design.md](docs/ui/design.md) — CLI and Web frontends
+- [docs/tests/design.md](docs/tests/design.md) — test infrastructure

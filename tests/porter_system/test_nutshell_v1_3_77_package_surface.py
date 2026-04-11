@@ -22,6 +22,7 @@ class PackageSurfaceTest(unittest.TestCase):
             "core",
             "llm_engine",
             "runtime",
+            "service",
             "session_engine",
             "skill_engine",
             "tool_engine",
@@ -38,6 +39,7 @@ class PackageSurfaceTest(unittest.TestCase):
             "skill_engine/",
             "session_engine/",
             "runtime/",
+            "service/",
         ]:
             self.assertIn(name, text)
 

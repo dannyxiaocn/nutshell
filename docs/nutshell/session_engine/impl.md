@@ -49,7 +49,7 @@ Recursively walks `extends` chain:
 2. If `extends` → recursively load parent
 3. Resolve prompts: child has key → use it; empty → inherit parent
 4. Resolve tools/skills: `None` → inherit; explicit → resolve from ancestor dirs
-5. Resolve model/provider: child → parent → fallback `claude-sonnet-4-6/anthropic`
+5. Resolve model/provider: child → parent → hardcoded last-resort fallback `claude-sonnet-4-6/anthropic` (only reached when no entity or parent sets a model)
 
 ## Session Types
 

@@ -39,8 +39,10 @@ sessions/<id>/              (agent-visible)
   core/
     system.md, heartbeat.md, session.md
     memory.md, memory/*.md
+    apps/*.md
     params.json
-    tools/*.json, skills/*, tasks/*.md
+    tools/*.json + *.sh
+    skills/*, tasks/*.md
   docs/, playground/, .venv/
 
 _sessions/<id>/             (system-only)
