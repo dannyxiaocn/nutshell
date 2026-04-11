@@ -41,7 +41,7 @@ entity/            built-in agent templates
 tests/             automated coverage for runtime, CLI, providers, tools, porter suites
 ```
 
-Every active subsystem directory has its own `README.md`.
+Detailed documentation for every subsystem lives in [`docs/`](docs/README.md) — each sub-directory mirrors the code structure and contains `design.md`, `impl.md`, and `todo.md`.
 
 ## How It Works
 
@@ -92,9 +92,28 @@ nutshell meta nutshell_dev
 nutshell web
 ```
 
-## Reading Order
+## Documentation
 
-- [nutshell/README.md](/Users/xiaobocheng/agent_core/nutshell/nutshell/README.md)
-- [entity/README.md](/Users/xiaobocheng/agent_core/nutshell/entity/README.md)
-- [ui/README.md](/Users/xiaobocheng/agent_core/nutshell/ui/README.md)
-- [tests/README.md](/Users/xiaobocheng/agent_core/nutshell/tests/README.md)
+All component documentation lives in `docs/`, mirroring the code structure:
+
+```text
+docs/
+  nutshell/           design, impl, todo for the runtime package
+    core/             agent loop, types, provider interface
+    llm_engine/       LLM provider adapters
+    runtime/          watcher, IPC, bridge
+    service/          shared service layer
+    session_engine/   entity → meta → session lifecycle
+    skill_engine/     skill loading and rendering
+    tool_engine/      tool loading and executors
+  entity/             agent templates and inheritance
+  ui/                 CLI and Web frontends
+  tests/              test infrastructure
+```
+
+Start here:
+
+- [docs/README.md](docs/README.md) — documentation system overview
+- [docs/nutshell/design.md](docs/nutshell/design.md) — architecture and design principles
+- [docs/nutshell/impl.md](docs/nutshell/impl.md) — implementation details and session lifecycle
+- [docs/entity/design.md](docs/entity/design.md) — entity template system
