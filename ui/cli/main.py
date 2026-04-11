@@ -471,7 +471,7 @@ def _fmt_msg_content(content) -> str:
 
 
 def cmd_log(args) -> int:
-    from nutshell.service import get_log_turns
+    from nutshell.service import get_log_turns, get_pending_inputs
     session_id = args.session_id
 
     if not session_id:
@@ -491,12 +491,18 @@ def cmd_log(args) -> int:
 
     try:
         turns_to_show = get_log_turns(session_id, args.system_base, n=None if since_raw else args.num_turns, since=since_raw)
+        pending_inputs = get_pending_inputs(session_id, args.system_base, n=args.num_turns) if not turns_to_show and since_raw is None else []
     except FileNotFoundError:
         print(f"Error: session '{session_id}' not found", file=sys.stderr)
         return 1
 
     if not turns_to_show:
-        if not context_path.exists():
+        if pending_inputs:
+            print(f"[{session_id}] — pending (no agent response yet)")
+            print("─" * 60)
+            for row in pending_inputs:
+                print(f"  USER  {row['ts']}  {row['user']}")
+        elif not context_path.exists():
             print(f"[{session_id}] No conversation history yet.")
         elif since_raw is not None:
             print(f"[{session_id}] No new turns since {since_raw}.")
