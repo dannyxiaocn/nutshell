@@ -40,14 +40,17 @@ def get_hud(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -> d
     latest_usage = None
     if ipc.context_path.exists():
         try:
-            for line in reversed(ipc.context_path.read_bytes().splitlines()):
-                line = line.strip()
-                if not line:
-                    continue
-                ev = json.loads(line)
-                if ev.get('type') == 'turn' and ev.get('usage'):
-                    latest_usage = ev['usage']
-                    break
+            with open(ipc.context_path, 'rb') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                        if ev.get('type') == 'turn' and ev.get('usage'):
+                            latest_usage = ev['usage']
+                    except Exception:
+                        continue
         except Exception:
             pass
     return {

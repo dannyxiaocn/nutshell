@@ -11,10 +11,22 @@ def get_history(session_id: str, system_sessions_dir: Path, context_since: int =
     system_dir = system_sessions_dir / session_id
     if not system_dir.exists():
         raise FileNotFoundError(session_id)
-    from nutshell.runtime.bridge import BridgeSession
-    bridge = BridgeSession(system_dir)
-    events, ctx_off, evt_off = bridge.read_history(context_offset=context_since)
-    return {"events": events, "context_offset": ctx_off, "events_offset": evt_off}
+    from nutshell.runtime.ipc import FileIPC
+    from nutshell.runtime.session_status import read_session_status
+
+    ipc = FileIPC(system_dir)
+    events: list[dict] = []
+    context_offset = context_since
+    for event, off in ipc.tail_history(context_since):
+        events.append(event)
+        context_offset = off
+
+    events_offset = ipc.events_size()
+    status_payload = read_session_status(system_dir)
+    if status_payload.get("model_state") == "running":
+        events_offset = ipc.last_running_event_offset()
+
+    return {"events": events, "context_offset": context_offset, "events_offset": events_offset}
 
 
 def _parse_since(value: str) -> float:
@@ -73,7 +85,8 @@ def _load_context(context_path: Path) -> tuple[dict, list]:
         except json.JSONDecodeError:
             continue
         if ev.get('type') == 'user_input':
-            inputs_by_id[ev['id']] = ev
+            if ev.get('id'):
+                inputs_by_id[ev['id']] = ev
         elif ev.get('type') == 'turn':
             turns.append(ev)
     return inputs_by_id, turns
@@ -90,7 +103,7 @@ def get_log_turns(session_id: str, system_sessions_dir: Path, n=None, since=None
     inputs_by_id, turns = _load_context(context_path)
     if since_ts is not None:
         turns = [t for t in turns if (_turn_ts(t) or 0) > since_ts]
-    elif n is not None:
+    elif n is not None and n > 0:
         turns = turns[-n:]
     rows = []
     for turn in turns:
@@ -111,6 +124,24 @@ def get_log_turns(session_id: str, system_sessions_dir: Path, n=None, since=None
             'turn': turn,
         })
     return rows
+
+
+def get_pending_inputs(session_id: str, system_sessions_dir: Path, n=None) -> list[dict]:
+    system_dir = system_sessions_dir / session_id
+    context_path = system_dir / 'context.jsonl'
+    if not (system_dir / 'manifest.json').exists():
+        raise FileNotFoundError(session_id)
+    if not context_path.exists():
+        return []
+    inputs_by_id, turns = _load_context(context_path)
+    matched_inputs = {turn.get('user_input_id') for turn in turns if turn.get('user_input_id')}
+    pending = [ev for ev in inputs_by_id.values() if ev.get('id') not in matched_inputs]
+    if n is not None:
+        pending = pending[-n:]
+    return [{
+        'ts': ev.get('ts', '')[:16].replace('T', ' '),
+        'user': ev.get('content', ''),
+    } for ev in pending]
 
 
 def get_token_report(session_id: str, system_sessions_dir: Path) -> list[dict]:

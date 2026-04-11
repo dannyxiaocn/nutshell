@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
 
 from nutshell.session_engine.session_params import read_session_params
 from nutshell.session_engine.session_status import read_session_status, write_session_status, pid_alive as _pid_alive
+
+
+_SAFE_ID = re.compile(r'^[\w\-]+$')
+
+
+def _validate_session_id(session_id: str) -> None:
+    if not _SAFE_ID.match(session_id):
+        raise ValueError(f"Invalid session_id: {session_id!r}")
 
 
 def is_meta_session(session_id: str) -> bool:
@@ -28,6 +37,7 @@ def _is_stale_stopped(info: dict) -> bool:
 
 
 def get_session(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -> dict | None:
+    _validate_session_id(session_id)
     session_dir = sessions_dir / session_id
     system_dir = system_sessions_dir / session_id
     manifest_path = system_dir / "manifest.json"
@@ -103,6 +113,7 @@ def list_sessions(sessions_dir: Path, system_sessions_dir: Path, exclude_meta: b
 
 
 def create_session(session_id: str, entity: str, heartbeat: float, sessions_dir: Path, system_sessions_dir: Path) -> dict:
+    _validate_session_id(session_id)
     from nutshell.session_engine.session_init import init_session
     entity_path = Path(entity)
     if len(entity_path.parts) >= 2 and entity_path.parts[0] == "entity":
@@ -126,6 +137,7 @@ def create_session(session_id: str, entity: str, heartbeat: float, sessions_dir:
 
 
 def delete_session(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -> bool:
+    _validate_session_id(session_id)
     system_dir = system_sessions_dir / session_id
     session_dir = sessions_dir / session_id
     if not system_dir.exists() and not session_dir.exists():
@@ -139,20 +151,22 @@ def delete_session(session_id: str, sessions_dir: Path, system_sessions_dir: Pat
 
 
 def stop_session(session_id: str, system_sessions_dir: Path) -> bool:
+    _validate_session_id(session_id)
     system_dir = system_sessions_dir / session_id
     if not (system_dir / 'manifest.json').exists():
         return False
     write_session_status(system_dir, status="stopped", pid=None, stopped_at=datetime.now().isoformat())
     from nutshell.runtime.ipc import FileIPC
-    FileIPC(system_dir).append_event({"type": "status", "value": "stopped via service"})
+    FileIPC(system_dir).append_event({"type": "status", "value": "heartbeat paused — use ▶ Start to resume"})
     return True
 
 
 def start_session(session_id: str, system_sessions_dir: Path) -> bool:
+    _validate_session_id(session_id)
     system_dir = system_sessions_dir / session_id
     if not (system_dir / 'manifest.json').exists():
         return False
     write_session_status(system_dir, status="active", stopped_at=None)
     from nutshell.runtime.ipc import FileIPC
-    FileIPC(system_dir).append_event({"type": "status", "value": "resumed via service"})
+    FileIPC(system_dir).append_event({"type": "status", "value": "heartbeat resumed"})
     return True

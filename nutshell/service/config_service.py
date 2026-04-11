@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from nutshell.session_engine.session_params import read_session_params, write_session_params
-from .sessions_service import is_meta_session
+from .sessions_service import _validate_session_id, is_meta_session
 
 
 def get_config(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -> dict:
+    _validate_session_id(session_id)
     session_dir = sessions_dir / session_id
     system_dir = system_sessions_dir / session_id
     if not system_dir.exists() or not session_dir.exists():
@@ -16,6 +17,7 @@ def get_config(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -
 
 
 def update_config(session_id: str, sessions_dir: Path, system_sessions_dir: Path, params: dict) -> dict:
+    _validate_session_id(session_id)
     from nutshell.session_engine.task_cards import ensure_heartbeat_card, load_card, migrate_legacy_task_sources, save_card
     session_dir = sessions_dir / session_id
     system_dir = system_sessions_dir / session_id

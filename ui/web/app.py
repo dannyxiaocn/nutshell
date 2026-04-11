@@ -144,7 +144,10 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
         info = service_get_session(session_id, sessions_dir, system_sessions_dir)
         if info is None:
             raise HTTPException(404, f"Session not found: {session_id}")
-        params_view = service_get_config(session_id, sessions_dir, system_sessions_dir)
+        try:
+            params_view = service_get_config(session_id, sessions_dir, system_sessions_dir)
+        except FileNotFoundError:
+            raise HTTPException(404, f"Session not found: {session_id}")
         return {**info, "params": params_view}
 
     @app.post("/api/sessions")
@@ -217,32 +220,10 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
 
     @app.get("/api/sessions/{session_id}/history")
     async def get_history(session_id: str, context_since: int = 0):
-        from nutshell.runtime.ipc import FileIPC
-        system_dir = system_sessions_dir / session_id
-        if not system_dir.exists():
+        try:
+            return service_get_history(session_id, system_sessions_dir, context_since=context_since)
+        except FileNotFoundError:
             raise HTTPException(404, f"Session not found: {session_id}")
-        ipc = FileIPC(system_dir)
-        events: list[dict] = []
-        context_offset = context_since
-        for event, off in ipc.tail_history(context_since):
-            events.append(event)
-            context_offset = off
-
-        # Default: open SSE from the current end of events.jsonl.
-        # If the agent is actively running, replay from the last model_status:running
-        # event so a re-attaching client immediately sees the in-progress streaming state
-        # (model_status:running + partial_text chunks already emitted).
-        events_offset = ipc.events_size()
-        status_payload = read_session_status(system_dir)
-        if status_payload.get("model_state") == "running":
-            resume = ipc.last_running_event_offset()
-            events_offset = resume  # safe: last_running_event_offset() falls back to events_size()
-
-        return {
-            "events": events,
-            "context_offset": context_offset,
-            "events_offset": events_offset,
-        }
 
     @app.post("/api/sessions/{session_id}/stop")
     async def stop_session(session_id: str):
