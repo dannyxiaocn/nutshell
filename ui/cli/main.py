@@ -315,17 +315,14 @@ def _add_stop_parser(subparsers) -> None:
 
 
 def cmd_stop(args) -> int:
-    from nutshell.session_engine.session_status import write_session_status
-    system_dir = args.system_base / args.session_id
-    if not (system_dir / "manifest.json").exists():
-        print(f"Error: session '{args.session_id}' not found", file=sys.stderr)
+    from nutshell.service import stop_session
+    try:
+        if not stop_session(args.session_id, args.system_base):
+            print(f"Error: session '{args.session_id}' not found", file=sys.stderr)
+            return 1
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
-    write_session_status(system_dir, status="stopped",
-                         stopped_at=datetime.now().isoformat())
-    from nutshell.runtime.ipc import FileIPC
-    FileIPC(system_dir).append_event(
-        {"type": "status", "value": "stopped via CLI"}
-    )
     print(f"Stopped: {args.session_id}")
     return 0
 
@@ -1181,7 +1178,7 @@ def _add_dream_parser(subparsers) -> None:
 def cmd_dream(args) -> int:
     """Send a wake-up message to the entity's meta session to trigger the dream cycle."""
     from nutshell.session_engine.entity_state import get_meta_session_id
-    from nutshell.runtime.ipc import FileIPC
+    from nutshell.service import send_message
 
     meta_id = get_meta_session_id(args.entity)
     sys_dir = args.system_base / meta_id
@@ -1191,8 +1188,7 @@ def cmd_dream(args) -> int:
         print(f"Hint: create a session for entity '{args.entity}' to initialise its meta session.")
         return 1
 
-    ipc = FileIPC(sys_dir)
-    msg_id = ipc.send_message(args.message)
+    msg_id = send_message(meta_id, args.message, args.system_base)
     print(f"Sent to {meta_id}: '{args.message}' (id={msg_id})")
     return 0
 
