@@ -17,100 +17,60 @@ def _load_prompt(path: Path) -> str:
 class AgentLoader(BaseLoader[Agent]):
     """Load a complete Agent from an entity directory containing agent.yaml.
 
-    Supports arbitrarily deep entity inheritance via ``extends`` in agent.yaml.
-    Provider resolution is delegated to ``nutshell.llm_engine.registry``.
+    Each entity is fully self-contained — all prompts, tools, skills, model,
+    and provider are declared explicitly in agent.yaml. There is no inheritance
+    chain at load time. Use ``nutshell entity new --init-from <entity>`` to
+    create a new entity pre-populated from an existing one.
     """
 
     def __init__(self, impl_registry: dict[str, Callable] | None = None) -> None:
         self._impl_registry = impl_registry or {}
 
-    def load(self, path: Path, _stack: tuple[Path, ...] = ()) -> Agent:
+    def load(self, path: Path) -> Agent:
         """Load agent from a directory containing agent.yaml."""
         path = Path(path)
-        if path in _stack:
-            cycle = " -> ".join(p.name for p in (*_stack, path))
-            raise ValueError(f"Entity inheritance cycle detected: {cycle}")
         config = AgentConfig.from_path(path)
         manifest = config.manifest
 
-        parent: Agent | None = None
-        extends = config.extends
-        if extends:
-            candidate = path.parent / extends
-            if not (candidate / "agent.yaml").exists():
-                raise FileNotFoundError(
-                    f"Entity '{path.name}' extends '{extends}' "
-                    f"but parent not found at: {candidate}"
-                )
-            parent = AgentLoader(self._impl_registry).load(candidate, (*_stack, path))
-
-        ancestor_dirs = self._ancestor_dirs(path)
-
         def resolve_file(rel: str) -> Path | None:
-            for d in ancestor_dirs:
-                p = d / rel
-                if p.exists():
-                    return p
-            return None
+            p = path / rel
+            return p if p.exists() else None
 
         child_prompts = manifest.get("prompts") or {}
 
-        def load_prompt_key(key: str, parent_attr: str) -> str:
+        def load_prompt_key(key: str) -> str:
             rel = child_prompts.get(key)
             if rel:
                 p = path / rel
                 return _load_prompt(p) if p.exists() else ""
-            if parent is not None:
-                return getattr(parent, parent_attr) or ""
             return ""
 
-        system_prompt            = load_prompt_key("system",          "system_prompt")
-        heartbeat_prompt         = load_prompt_key("heartbeat",       "heartbeat_prompt")
-        session_context_template = load_prompt_key("session_context", "session_context_template")
+        system_prompt            = load_prompt_key("system")
+        heartbeat_prompt         = load_prompt_key("heartbeat")
+        session_context_template = load_prompt_key("session_context")
 
-        raw_skills = manifest.get("skills")
-        if raw_skills is None:
-            skills = list(parent.skills) if parent is not None else []
-        else:
-            skills = [
-                SkillLoader().load(resolved)
-                for s in (raw_skills or [])
-                if (resolved := resolve_file(s)) is not None
-            ]
+        raw_skills = manifest.get("skills") or []
+        skills = [
+            SkillLoader().load(resolved)
+            for s in raw_skills
+            if (resolved := resolve_file(s)) is not None
+        ]
 
-        raw_tools = manifest.get("tools")
-        if raw_tools is None:
-            tools = list(parent.tools) if parent is not None else []
-        else:
-            tool_loader = ToolLoader(impl_registry=self._impl_registry, skills=skills)
-            tools = [
-                tool_loader.load(resolved)
-                for t in (raw_tools or [])
-                if (resolved := resolve_file(t)) is not None
-            ]
+        raw_tools = manifest.get("tools") or []
+        tool_loader = ToolLoader(impl_registry=self._impl_registry, skills=skills)
+        tools = [
+            tool_loader.load(resolved)
+            for t in raw_tools
+            if (resolved := resolve_file(t)) is not None
+        ]
 
         if any(t.name == "skill" for t in tools):
             tools = [create_skill_tool(skills) if t.name == "skill" else t for t in tools]
 
-        model = manifest.get("model")
-        if not model:
-            model = parent.model if parent is not None else "claude-sonnet-4-6"
-
-        provider_str = manifest.get("provider")
-        if not provider_str and parent is not None:
-            try:
-                from nutshell.llm_engine.registry import provider_name
-                provider_str = provider_name(parent._provider)
-            except Exception:
-                pass
-        provider_str = provider_str or "anthropic"
-
-        fallback_model = manifest.get("fallback_model", "")
-        fallback_provider = manifest.get("fallback_provider", "")
-        if not fallback_model and parent is not None:
-            fallback_model = getattr(parent, "fallback_model", "") or ""
-        if not fallback_provider and parent is not None:
-            fallback_provider = getattr(parent, "_fallback_provider_str", "") or ""
+        model = manifest.get("model") or "claude-sonnet-4-6"
+        provider_str = manifest.get("provider") or "anthropic"
+        fallback_model = manifest.get("fallback_model") or ""
+        fallback_provider = manifest.get("fallback_provider") or ""
 
         agent = Agent(
             system_prompt=system_prompt,
@@ -124,7 +84,6 @@ class AgentLoader(BaseLoader[Agent]):
             fallback_provider=fallback_provider,
         )
 
-        # Delegate provider instantiation to llm_engine — runtime → llm_engine boundary
         try:
             from nutshell.llm_engine.registry import resolve_provider
             agent._provider = resolve_provider(provider_str)
@@ -141,26 +100,3 @@ class AgentLoader(BaseLoader[Agent]):
             if subdir.is_dir() and (subdir / "agent.yaml").exists():
                 agents.append(self.load(subdir))
         return agents
-
-    def _ancestor_dirs(self, path: Path) -> list[Path]:
-        """Return [path, parent, grandparent, ...] by walking the extends chain."""
-        dirs: list[Path] = []
-        seen: set[Path] = set()
-        current = path
-        while True:
-            if current in seen:
-                break
-            seen.add(current)
-            dirs.append(current)
-            try:
-                config = AgentConfig.from_path(current)
-            except Exception:
-                break
-            extends = config.extends
-            if not extends:
-                break
-            parent = current.parent / extends
-            if not (parent / "agent.yaml").exists():
-                break
-            current = parent
-        return dirs

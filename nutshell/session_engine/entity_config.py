@@ -1,31 +1,24 @@
-"""Agent configuration — YAML-based entity manifest and inheritance metadata.
+"""Agent configuration — YAML-based entity manifest.
 
 AgentConfig reads agent.yaml files from disk and provides a typed view
 over entity manifests. Moved from core/ because from_path() does file IO
 and belongs in the session engine, not the core pure-computation layer.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
-
-@dataclass(frozen=True)
-class AgentConfigInheritance:
-    link: list[str] = field(default_factory=list)
-    own: list[str] = field(default_factory=list)
-    append: list[str] = field(default_factory=list)
+from typing import Any  # used in manifest type annotation
 
 
 @dataclass(frozen=True)
 class AgentConfig:
     path: Path
     manifest: dict[str, Any]
-    inheritance: AgentConfigInheritance
 
     @property
-    def extends(self) -> str | None:
-        value = self.manifest.get("extends")
+    def init_from(self) -> str | None:
+        """Name of the entity this was initialized from (documentation only)."""
+        value = self.manifest.get("init_from")
         return str(value) if value else None
 
     @classmethod
@@ -41,17 +34,4 @@ class AgentConfig:
             raise FileNotFoundError(f"agent.yaml not found: {manifest_path}")
 
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-        inheritance = AgentConfigInheritance(
-            link=_string_list(manifest.get("link")),
-            own=_string_list(manifest.get("own")),
-            append=_string_list(manifest.get("append")),
-        )
-        return cls(path=manifest_path.parent, manifest=manifest, inheritance=inheritance)
-
-
-def _string_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if item is not None]
-    return [str(value)]
+        return cls(path=manifest_path.parent, manifest=manifest)

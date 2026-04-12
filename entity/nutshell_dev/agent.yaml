@@ -1,38 +1,31 @@
 name: nutshell_dev
-description: Development assistant with nutshell project context. Extends the default agent with nutshell-specific skills and heartbeat behavior.
+description: Development assistant with nutshell project context.
 version: 1.0.0
-extends: agent
+init_from: agent
+model: gpt-5.4
+provider: codex-oauth
+fallback_model: kimi-for-coding
+fallback_provider: kimi-coding-plan
 max_iterations: 20
-link:
-  - model
-  - provider
-  - fallback_model
-  - fallback_provider
-append:
-  - skills
-own:
-  - name
-  - description
-  - version
-  - release_policy
-  - max_iterations
-  - prompts
-  - meta_session
-  - memory
-  - playground
 
 prompts:
-  system:                        # inherited from agent
-  heartbeat: prompts/heartbeat.md  # autonomous track.md task selection
-  session_context:               # inherited
+  system: prompts/system.md
+  heartbeat: prompts/heartbeat.md
+  session_context: prompts/session.md
 
-tools:    # inherited from agent
+tools:
+  - tools/bash.json
+  - tools/skill.json
+  - tools/web_search.json
 
 skills:
   - skills/nutshell
   - skills/creator-mode
 
+params:
+  thinking: true
+
 meta_session: >-
   This entity instantiates child sessions via sessions/<entity>_meta/, which
-  holds the flattened inherited config plus mutable shared memory/playground
-  state for future sessions.
+  holds the entity config plus mutable shared memory/playground state for
+  future sessions.
