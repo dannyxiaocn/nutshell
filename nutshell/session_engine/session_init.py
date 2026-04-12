@@ -16,7 +16,6 @@ from nutshell.session_engine.session_config import read_config, write_config, en
 from nutshell.session_engine.session_status import ensure_session_status, write_session_status
 from nutshell.session_engine.task_cards import ensure_heartbeat_card
 from nutshell.session_engine.entity_state import (
-    _meta_is_synced,
     ensure_gene_initialized,
     ensure_meta_session,
     get_meta_version,
@@ -150,15 +149,19 @@ def init_session(
     # Config always comes from meta session; meta is initially populated from entity.
     meta_dir = ensure_meta_session(entity_name, s_base=s_base)
     if entity_dir.exists():
-        if not _meta_is_synced(meta_dir):
+        meta_config = meta_dir / 'core' / 'config.yaml'
+        if not meta_config.exists() or not meta_config.read_text(encoding='utf-8').strip():
             populate_meta_from_entity(entity_name, ent_base, s_base)
         ensure_gene_initialized(entity_name, ent_base, s_base)
         start_meta_agent(entity_name, entity_base=ent_base, s_base=s_base, sys_base=sys_base)
 
     meta_core_dir = meta_dir / "core"
-    for fname in ("system.md", "heartbeat.md", "session.md"):
-        src = meta_core_dir / fname
-        _write_if_absent(core_dir / fname, src.read_text(encoding="utf-8") if src.exists() else "")
+    # Copy prompts with new names (task.md, env.md) and fallback to old names (heartbeat.md, session.md)
+    for new_name, old_name in [("system.md", None), ("task.md", "heartbeat.md"), ("env.md", "session.md")]:
+        src = meta_core_dir / new_name
+        if not src.exists() and old_name:
+            src = meta_core_dir / old_name
+        _write_if_absent(core_dir / new_name, src.read_text(encoding="utf-8") if src.exists() else "")
 
     # Copy tool.md from meta or entity (toolhub-based tool list)
     for tool_md_src in (meta_core_dir / "tool.md", entity_dir / "tool.md"):

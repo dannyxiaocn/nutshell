@@ -25,8 +25,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "tool_providers": {"web_search": "brave"},
     "prompts": {
         "system": "system.md",
-        "heartbeat": "heartbeat.md",
-        "session_context": "session.md",
+        "task": "task.md",
+        "env": "env.md",
     },
     "tools": [],
     "skills": [],

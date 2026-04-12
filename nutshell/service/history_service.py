@@ -190,7 +190,7 @@ def get_prompt_stats(session_id: str, sessions_dir: Path, system_sessions_dir: P
         return {'label': label, 'lines': len(content.splitlines()), 'chars': chars, 'tokens': max(1, chars // 4), 'note': note}
     rows = []
     rows.append(_row('system.md', _read(core / 'system.md')))
-    rows.append(_row('session.md', _read(core / 'session.md') or _read(core / 'session_context.md')))
+    rows.append(_row('env.md', _read(core / 'env.md') or _read(core / 'session.md') or _read(core / 'session_context.md')))
     rows.append(_row('memory.md', _read(core / 'memory.md')))
     mem_dir = core / 'memory'
     if mem_dir.exists():
@@ -206,5 +206,5 @@ def get_prompt_stats(session_id: str, sessions_dir: Path, system_sessions_dir: P
     skill_names = [d.name for d in sorted(skills_dir.iterdir()) if d.is_dir()] if skills_dir.exists() else []
     catalog_chars = sum(40 + len(n) for n in skill_names)
     rows.append({'label': 'skills (catalog)', 'lines': len(skill_names), 'chars': catalog_chars, 'tokens': max(1, catalog_chars // 4), 'note': f'{len(skill_names)} skills (catalog only; bodies loaded on demand)'})
-    rows.append(_row('heartbeat.md *', _read(core / 'heartbeat.md'), 'heartbeat activations only'))
+    rows.append(_row('task.md *', _read(core / 'task.md') or _read(core / 'heartbeat.md'), 'task activations only'))
     return {'rows': rows}

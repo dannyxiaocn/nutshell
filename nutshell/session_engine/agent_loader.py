@@ -43,9 +43,10 @@ class AgentLoader(BaseLoader[Agent]):
                 return _load_prompt(p) if p.exists() else ""
             return ""
 
-        system_prompt            = load_prompt_key("system")
-        heartbeat_prompt         = load_prompt_key("heartbeat")
-        session_context_template = load_prompt_key("session_context")
+        system_prompt    = load_prompt_key("system")
+        # New keys with fallback to old keys for backward compat
+        task_prompt      = load_prompt_key("task") or load_prompt_key("heartbeat")
+        env_template     = load_prompt_key("env") or load_prompt_key("session_context")
 
         raw_skills = manifest.get("skills") or []
         skills = [
@@ -76,8 +77,8 @@ class AgentLoader(BaseLoader[Agent]):
             skills=skills,
             model=model,
             max_iterations=manifest.get("max_iterations", 20),
-            heartbeat_prompt=heartbeat_prompt,
-            session_context_template=session_context_template,
+            task_prompt=task_prompt,
+            env_template=env_template,
             fallback_model=fallback_model,
             fallback_provider=fallback_provider,
         )

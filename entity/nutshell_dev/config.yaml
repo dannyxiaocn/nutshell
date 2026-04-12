@@ -12,8 +12,8 @@ tool_providers:
   web_search: brave
 prompts:
   system: prompts/system.md
-  heartbeat: prompts/heartbeat.md
-  session_context: prompts/session.md
+  task: prompts/task.md
+  env: prompts/env.md
 tools:
   - tools/bash.json
   - tools/skill.json

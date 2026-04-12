@@ -43,19 +43,11 @@ def ensure_meta_session(entity_name: str, s_base: Path | None = None) -> Path:
     (core_dir / 'memory').mkdir(exist_ok=True)
     (session_dir / 'docs').mkdir(exist_ok=True)
     (session_dir / 'playground').mkdir(exist_ok=True)
-    for fname in ('system.md', 'heartbeat.md', 'session.md', 'memory.md', 'config.yaml'):
+    for fname in ('system.md', 'task.md', 'env.md', 'memory.md', 'config.yaml'):
         (core_dir / fname).touch(exist_ok=True)
     (core_dir / 'tasks').mkdir(exist_ok=True)
     _create_meta_venv(session_dir)
     return session_dir
-
-
-def _meta_is_synced(meta_dir: Path) -> bool:
-    return (meta_dir / 'core' / '.entity_synced').exists()
-
-
-def _mark_meta_synced(meta_dir: Path, entity_name: str) -> None:
-    (meta_dir / 'core' / '.entity_synced').write_text(entity_name, encoding='utf-8')
 
 
 def _clear_dir_contents(path: Path) -> None:
@@ -211,13 +203,15 @@ def populate_meta_from_entity(
     meta_dir = ensure_meta_session(entity_name, s_base=s_base)
     core_dir = meta_dir / 'core'
 
-    # Copy prompts
-    for src_name, dst_name in [
-        ('prompts/system.md', 'system.md'),
-        ('prompts/heartbeat.md', 'heartbeat.md'),
-        ('prompts/session.md', 'session.md'),
+    # Copy prompts (new names with fallback to old names)
+    for new_src, old_src, dst_name in [
+        ('prompts/system.md', None, 'system.md'),
+        ('prompts/task.md', 'prompts/heartbeat.md', 'task.md'),
+        ('prompts/env.md', 'prompts/session.md', 'env.md'),
     ]:
-        src = entity_dir / src_name
+        src = entity_dir / new_src
+        if not src.exists() and old_src:
+            src = entity_dir / old_src
         if src.exists():
             (core_dir / dst_name).write_text(src.read_text(encoding='utf-8'), encoding='utf-8')
 
@@ -258,8 +252,6 @@ def populate_meta_from_entity(
 
     # Seed version from entity (writes to _sessions/<entity>_meta/status.json)
     _init_meta_version(entity_name, entity_base)
-
-    _mark_meta_synced(meta_dir, entity_name)
 
 
 def sync_from_entity(entity_name: str, entity_base: Path | None = None, s_base: Path | None = None) -> None:
@@ -427,7 +419,7 @@ Keep core/memory.md accurate:
 - Key learnings from archived sessions
 
 ## 3. Sync core updates back to entity (if you improved anything)
-If you updated core/ files (system.md, heartbeat.md, tools/, skills/):
+If you updated core/ files (system.md, task.md, tools/, skills/):
 a. Bump version — update "agent_version" in _sessions/{entity}_meta/status.json
 b. Record — append to _sessions/{entity}_meta/version_history.json:
    {{"version":"X.Y.Z","ts":"<ISO>","note":"<what changed>"}}
@@ -436,8 +428,8 @@ c. Create PR to mecam/entity-update branch:
    cd <repo_root>
    git checkout -B mecam/entity-update
    cp sessions/{entity}_meta/core/system.md entity/{entity}/prompts/system.md
-   cp sessions/{entity}_meta/core/heartbeat.md entity/{entity}/prompts/heartbeat.md
-   cp sessions/{entity}_meta/core/session.md entity/{entity}/prompts/session.md
+   cp sessions/{entity}_meta/core/task.md entity/{entity}/prompts/task.md
+   cp sessions/{entity}_meta/core/env.md entity/{entity}/prompts/env.md
    cp sessions/{entity}_meta/core/tools/*.json entity/{entity}/tools/
    # Update version in entity/{entity}/config.yaml
    git add entity/{entity}/
@@ -506,9 +498,10 @@ def start_meta_agent(
             encoding="utf-8",
         )
 
-    heartbeat_md = core_dir / "heartbeat.md"
-    if not heartbeat_md.read_text(encoding="utf-8").strip():
-        heartbeat_md.write_text(
+    # Write task prompt (new name: task.md; also write heartbeat.md for backward compat)
+    task_md = core_dir / "task.md"
+    if not task_md.read_text(encoding="utf-8").strip():
+        task_md.write_text(
             _META_HEARTBEAT_PROMPT.format(entity=entity_name).strip() + "\n",
             encoding="utf-8",
         )

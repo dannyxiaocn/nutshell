@@ -36,8 +36,8 @@ class Session:
         sessions/<id>/                ← agent-visible
           core/
             system.md               ← system prompt (copied from entity at creation)
-            heartbeat.md            ← heartbeat prompt
-            session.md              ← session paths + operational guide (template)
+            task.md                 ← task wakeup prompt (fallback: heartbeat.md)
+            env.md                  ← session paths + operational guide (fallback: session.md)
             memory.md               ← persistent memory (auto-injected each activation)
             tasks/*.md              ← task cards (YAML frontmatter + content)
             params.json             ← runtime config
@@ -144,14 +144,15 @@ class Session:
 
         # 2. prompts from core/
         system_md = self._read_core_text("system.md")
-        # session.md is the canonical name; fall back to session_context.md for old sessions
-        session_ctx_md = self._read_core_text("session.md") or self._read_core_text("session_context.md")
+        # env.md is the canonical name; fall back to session.md / session_context.md for old sessions
+        env_md = self._read_core_text("env.md") or self._read_core_text("session.md") or self._read_core_text("session_context.md")
 
         self._agent.system_prompt = system_md
-        self._agent.session_context = (
-            session_ctx_md.replace("{session_id}", self._session_id) if session_ctx_md else ""
+        self._agent.env_context = (
+            env_md.replace("{session_id}", self._session_id) if env_md else ""
         )
-        self._agent.heartbeat_prompt = self._read_core_text("heartbeat.md")
+        # task.md is the canonical name; fall back to heartbeat.md for old sessions
+        self._agent.task_prompt = self._read_core_text("task.md") or self._read_core_text("heartbeat.md")
         self._agent.memory = self.memory_path.read_text(encoding="utf-8").strip()
 
         # Extra named memory layers from core/memory/*.md (sorted, non-empty only)
@@ -380,7 +381,7 @@ class Session:
         old_len = len(self._agent._history)
 
         # Build wakeup prompt from task.md template + task info
-        task_prompt = self._agent.heartbeat_prompt  # will be renamed to task_prompt in Phase 3
+        task_prompt = self._agent.task_prompt
         if task_prompt and "{task}" in task_prompt:
             prompt = task_prompt.format(task=task_info)
         else:

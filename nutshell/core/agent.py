@@ -36,8 +36,8 @@ class Agent:
         model: str = _DEFAULT_MODEL,
         provider: Provider | None = None,
         max_iterations: int = 20,
-        heartbeat_prompt: str = "",
-        session_context_template: str = "",
+        task_prompt: str = "",
+        env_template: str = "",
         fallback_model: str = "",
         fallback_provider: str = "",
     ) -> None:
@@ -48,8 +48,8 @@ class Agent:
         self.skills: list[Skill] = skills or []
         self.model = model
         self.max_iterations = max_iterations
-        self.heartbeat_prompt = heartbeat_prompt
-        self.session_context_template = session_context_template
+        self.task_prompt = task_prompt
+        self.env_template = env_template
         self._provider = provider
         self.fallback_model = fallback_model
         self._fallback_provider_str = fallback_provider
@@ -64,7 +64,7 @@ class Agent:
         self.memory_layers: list[tuple[str, str]] = []
         # App notifications from core/apps/*.md, injected as system-prompt block.
         self.app_notifications: list[tuple[str, str]] = []
-        self.session_context: str = ""
+        self.env_context: str = ""
         self.thinking: bool = False
         self.thinking_budget: int = 8000
         self.thinking_effort: str = "high"
@@ -108,8 +108,8 @@ class Agent:
         """
         from nutshell.skill_engine.renderer import build_skills_block
         static_parts = [self.system_prompt] if self.system_prompt else []
-        if self.session_context:
-            static_parts.append("\n\n---\n" + self.session_context)
+        if self.env_context:
+            static_parts.append("\n\n---\n" + self.env_context)
 
         dynamic_parts: list[str] = []
         if self.memory or self.memory_layers:
