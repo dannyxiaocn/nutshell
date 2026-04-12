@@ -1255,8 +1255,8 @@ def cmd_meta(args) -> int:
         if not args.entity:
             print("Error: ENTITY is required for --versions.", file=sys.stderr)
             return 2
-        _DEFAULT_SYSTEM_SESSIONS_BASE = Path(__file__).resolve().parent.parent.parent / "_sessions"
-        sys_base = _DEFAULT_SYSTEM_SESSIONS_BASE
+        # Derive _sessions/ sibling from the sessions_base argument
+        sys_base = args.sessions_base.parent / "_sessions"
         history = get_version_history(args.entity, sys_base=sys_base)
         current = get_meta_version(args.entity, s_base=base)
         if args.as_json:

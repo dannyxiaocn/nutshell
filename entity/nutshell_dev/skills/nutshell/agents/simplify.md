@@ -114,15 +114,14 @@ When done, produce a concise summary:
 Go through every file in these directories:
 
 ```
-nutshell/abstract/
 nutshell/core/
-nutshell/providers/llm/
-nutshell/providers/tool/
+nutshell/llm_engine/
+nutshell/tool_engine/
+nutshell/skill_engine/
+nutshell/session_engine/
 nutshell/runtime/
-nutshell/runtime/loaders/
-nutshell/runtime/tools/
-nutshell/cli/
-nutshell/ui/
+ui/cli/
+ui/web/
 ```
 
 Also check:

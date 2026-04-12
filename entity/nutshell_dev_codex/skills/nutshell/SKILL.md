@@ -26,9 +26,9 @@ nutshell/          runtime implementation
 ui/                CLI and FastAPI/SSE frontend
 entity/            agent templates
 tests/             automated coverage
+docs/              documentation and task boards (docs/nutshell/todo.md)
 README.md          repo-level overview
 pyproject.toml     package metadata and CLI entrypoint
-track.md           project task board
 ```
 
 Important package boundaries:
@@ -122,13 +122,13 @@ pytest tests/ -q
 
 Common high-signal modules:
 
-- `tests/test_tools.py`
-- `tests/test_skill_tool.py`
-- `tests/test_session_capabilities.py`
-- `tests/test_persistent_mode.py`
-- `tests/test_cli_main.py`
-- `tests/runtime/test_meta_session.py`
-- `tests/runtime/test_session_factory.py`
+- `tests/nutshell/tool_engine/`
+- `tests/nutshell/skill_engine/`
+- `tests/nutshell/session_engine/`
+- `tests/nutshell/runtime/test_meta_session.py`
+- `tests/nutshell/runtime/test_session_factory.py`
+- `tests/ui/cli/`
+- `tests/integration/`
 
 ## Documentation Expectations
 

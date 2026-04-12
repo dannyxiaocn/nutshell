@@ -54,9 +54,11 @@ Session-scoped capabilities live in `core/` inside your session directory:
 
 ```bash
 #!/usr/bin/env bash
+# Capture stdin before the heredoc takes it over, then pass via env variable.
+export TOOL_ARGS=$(cat)
 python3 << 'PYEOF'
-import sys, json
-args = json.load(sys.stdin)
+import json, os
+args = json.loads(os.environ['TOOL_ARGS'])
 result = args['arg1'].upper()
 print(result)
 PYEOF

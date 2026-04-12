@@ -114,20 +114,19 @@ def create_entity(name: str, base_dir: Path, init_from: str | None) -> Path:
 
         # Update agent.yaml: set new name and record init_from
         yaml_path = entity_dir / "agent.yaml"
-        try:
-            import yaml as _yaml
-            manifest = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-            manifest["name"] = name
-            manifest["init_from"] = init_from
-            # Strip any old inheritance fields
-            for field in ("extends", "link", "own", "append"):
-                manifest.pop(field, None)
-            yaml_path.write_text(
-                _yaml.dump(manifest, default_flow_style=False, allow_unicode=True, sort_keys=False),
-                encoding="utf-8",
-            )
-        except Exception as exc:
-            print(f"Warning: could not update agent.yaml name field: {exc}", file=sys.stderr)
+        import yaml as _yaml
+        manifest = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        manifest["name"] = name
+        manifest["init_from"] = init_from
+        # Strip any old inheritance fields
+        for field in ("extends", "link", "own", "append"):
+            manifest.pop(field, None)
+        # Note: yaml.dump discards inline comments and may reorder fields.
+        # Acceptable for a one-time scaffold — the entity is self-contained after creation.
+        yaml_path.write_text(
+            _yaml.dump(manifest, default_flow_style=False, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
 
     else:
         # Blank entity

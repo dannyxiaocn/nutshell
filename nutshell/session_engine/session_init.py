@@ -208,7 +208,6 @@ def init_session(
     if meta_version:
         write_session_params(session_dir, agent_version=meta_version)
     # Seed mutable state from meta session, with entity memory as bootstrap fallback.
-    meta_dir = ensure_meta_session(entity_name, s_base=s_base)
     sync_from_entity(entity_name, ent_base, s_base=s_base)
 
     meta_memory = meta_dir / "core" / "memory.md"

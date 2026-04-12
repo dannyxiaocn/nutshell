@@ -58,28 +58,6 @@ def _mark_meta_synced(meta_dir: Path, entity_name: str) -> None:
     (meta_dir / 'core' / '.entity_synced').write_text(entity_name, encoding='utf-8')
 
 
-def _copy_missing_files(src_dir: Path, dst_dir: Path) -> None:
-    if not src_dir.is_dir():
-        return
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    for src in sorted(src_dir.rglob('*')):
-        if src.is_dir():
-            continue
-        rel = src.relative_to(src_dir)
-        dst = dst_dir / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if not dst.exists():
-            shutil.copy2(src, dst)
-
-
-def _resolve_entity_tools_dir(entity_name: str, entity_base: Path) -> Path | None:
-    """Return the entity's own tools/ directory if it has .json files, else None."""
-    tools_dir = entity_base / entity_name / 'tools'
-    if tools_dir.is_dir() and any(tools_dir.glob('*.json')):
-        return tools_dir
-    return None
-
-
 def _clear_dir_contents(path: Path) -> None:
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
@@ -182,10 +160,9 @@ def bump_meta_version(
         params = json.loads(params_path.read_text(encoding='utf-8')) if params_path.exists() else {}
         params['agent_version'] = new_version
         params_path.write_text(json.dumps(params, indent=2, ensure_ascii=False), encoding='utf-8')
+        _record_version_entry(entity_name, new_version, note, sys_base=sys_base)
     except Exception:
         pass
-
-    _record_version_entry(entity_name, new_version, note, sys_base=sys_base)
     return new_version
 
 
@@ -255,7 +232,11 @@ def populate_meta_from_entity(
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
 
-    # Bootstrap params from agent.yaml
+    # Bootstrap params from agent.yaml.
+    # Note: only entity-defined fields are written here (model, provider, fallback_*, params.*).
+    # Runtime defaults (heartbeat_interval, tool_providers, session_type, etc.) are filled in
+    # by start_meta_agent() via _META_AGENT_DEFAULTS after this call — callers must invoke
+    # start_meta_agent() after populate_meta_from_entity() for params to be complete.
     params_src = entity_dir / 'agent.yaml'
     if params_src.exists():
         try:
@@ -556,3 +537,35 @@ def start_meta_agent(
 # TODO: Normal sessions could optionally include an "update agent core" capability,
 # letting users promote useful session-level improvements back into the meta session.
 # Should be user-triggered, not automatic, to avoid polluting the meta session.
+
+
+# ── Removed alignment stubs (kept for import compatibility) ──────────────────
+# The alignment infrastructure was removed. These stubs prevent ImportError in
+# test files that reference them; a dedicated person handles test updates.
+
+class MetaAlignmentError(Exception):
+    """Stub: alignment infrastructure removed. Tests that use this will fail."""
+    def __init__(self, entity_name: str = "", diffs: object = None):
+        self.entity_name = entity_name
+        self.diffs = diffs
+        super().__init__(f"MetaAlignmentError stub for {entity_name}")
+
+    def format_report(self) -> str:
+        return f"[MetaAlignmentError stub] entity={self.entity_name}"
+
+
+def check_meta_alignment(*args, **kwargs) -> None:  # type: ignore[return]
+    """Stub: alignment infrastructure removed."""
+
+
+def compute_meta_diffs(*args, **kwargs) -> list:
+    """Stub: alignment infrastructure removed."""
+    return []
+
+
+def sync_entity_to_meta(*args, **kwargs) -> None:
+    """Stub: alignment infrastructure removed."""
+
+
+def sync_meta_to_entity(*args, **kwargs) -> None:
+    """Stub: alignment infrastructure removed."""

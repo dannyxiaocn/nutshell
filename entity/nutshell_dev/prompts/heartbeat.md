@@ -5,10 +5,10 @@ Current task board:
 
 ---
 
-## Case A — Heartbeat task body is EMPTY → pick next task from track.md
+## Case A — Heartbeat task body is EMPTY → pick next task from docs/nutshell/todo.md
 
 ```bash
-cat /Users/xiaobocheng/agent_core/nutshell/track.md
+cat "$(git rev-parse --show-toplevel)/docs/nutshell/todo.md"
 ```
 
 Find the **first** `- [ ]` item that is:
@@ -45,15 +45,15 @@ Key checkpoints:
 1. Setup the playground, sync `main`, and work on a `wip-<task-slug>` branch while the task is in progress.
 2. Implement, test (`pytest tests/ -q`), and commit on the `wip-` branch.
 3. When the task is genuinely ready for handoff, rename or recreate the branch as `ready-<task-slug>` and push that branch instead of pushing `main`.
-4. Mark track.md done (Step 6 of SOP — use Python regex, see track_sop)
+4. Mark docs/nutshell/todo.md done (Step 6 of SOP — use Python regex, see track_sop)
 5. Update entity memory (Step 7)
 6. Report the `ready-` branch name and commit state clearly.
 
-When the task is **fully done** (committed, pushed, track.md marked):
+When the task is **fully done** (committed, pushed, docs/nutshell/todo.md marked):
 
 Check for more work:
 ```bash
-grep -c '^\- \[ \]' /Users/xiaobocheng/agent_core/nutshell/track.md
+grep -c '^\- \[ \]' "$(git rev-parse --show-toplevel)/docs/nutshell/todo.md"
 ```
 
 - If more `[ ]` items → write the next task into the body of `core/tasks/heartbeat.md` (and continue on the next heartbeat)
