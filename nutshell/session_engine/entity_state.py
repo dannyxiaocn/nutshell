@@ -537,35 +537,3 @@ def start_meta_agent(
 # TODO: Normal sessions could optionally include an "update agent core" capability,
 # letting users promote useful session-level improvements back into the meta session.
 # Should be user-triggered, not automatic, to avoid polluting the meta session.
-
-
-# ── Removed alignment stubs (kept for import compatibility) ──────────────────
-# The alignment infrastructure was removed. These stubs prevent ImportError in
-# test files that reference them; a dedicated person handles test updates.
-
-class MetaAlignmentError(Exception):
-    """Stub: alignment infrastructure removed. Tests that use this will fail."""
-    def __init__(self, entity_name: str = "", diffs: object = None):
-        self.entity_name = entity_name
-        self.diffs = diffs
-        super().__init__(f"MetaAlignmentError stub for {entity_name}")
-
-    def format_report(self) -> str:
-        return f"[MetaAlignmentError stub] entity={self.entity_name}"
-
-
-def check_meta_alignment(*args, **kwargs) -> None:  # type: ignore[return]
-    """Stub: alignment infrastructure removed."""
-
-
-def compute_meta_diffs(*args, **kwargs) -> list:
-    """Stub: alignment infrastructure removed."""
-    return []
-
-
-def sync_entity_to_meta(*args, **kwargs) -> None:
-    """Stub: alignment infrastructure removed."""
-
-
-def sync_meta_to_entity(*args, **kwargs) -> None:
-    """Stub: alignment infrastructure removed."""
