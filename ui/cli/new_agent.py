@@ -5,44 +5,27 @@ Usage (interactive — recommended):
 
 Usage (non-interactive / scripted):
     nutshell-new-agent -n my-agent
-    nutshell-new-agent -n my-agent --extends kimi_core
-    nutshell-new-agent -n my-agent --standalone
+    nutshell-new-agent -n my-agent --init-from agent
     nutshell-new-agent -n my-agent --entity-dir path/to/entity
 
-When run without --extends / --standalone, prompts interactively for the
-parent entity. Available entities are auto-detected from the entity directory.
+When run without --init-from, creates a blank entity with empty prompt files.
+With --init-from <source>, copies all files from the source entity and sets
+the new entity's name in agent.yaml. The copied entity is fully self-contained
+and can be modified freely — there is no live inheritance link.
 """
 from __future__ import annotations
-import argparse
+import shutil
 import sys
 from pathlib import Path
 
 
-# ── YAML templates ────────────────────────────────────────────────────────────
+# ── YAML template ─────────────────────────────────────────────────────────────
 
-_AGENT_YAML_INHERITING = """\
-name: {name}
-description: ""
-extends: {parent}
-release_policy: persistent
-max_iterations: 20
-
-prompts:
-  system:           # inherited from {parent}
-  heartbeat:        # inherited from {parent}
-  session_context:   # inherited from {parent}
-
-tools:    # inherited from {parent}
-
-skills:   # inherited from {parent}
-"""
-
-_AGENT_YAML_STANDALONE = """\
+_AGENT_YAML_EMPTY = """\
 name: {name}
 description: ""
 model: claude-sonnet-4-6
 provider: anthropic
-release_policy: persistent
 max_iterations: 20
 
 prompts:
@@ -50,9 +33,7 @@ prompts:
   heartbeat: prompts/heartbeat.md
   session_context: prompts/session.md
 
-tools:
-  - tools/bash.json
-  - tools/web_search.json
+tools: []
 
 skills: []
 """
@@ -80,17 +61,17 @@ def _ask_name() -> str:
         print("  Name cannot be empty.")
 
 
-def _ask_parent(entity_dir: Path) -> str | None:
-    """Show numbered entity list, return selected entity name or None (standalone)."""
+def _ask_init_from(entity_dir: Path) -> str | None:
+    """Show numbered entity list, return selected entity name or None (blank)."""
     entities = _list_entities(entity_dir)
     default_idx = next((i for i, n in enumerate(entities, 1) if n == "agent"), 1)
 
-    print("\nExtend which entity?")
+    print("\nInitialize from which entity?")
     for i, name in enumerate(entities, 1):
         suffix = "  (default)" if i == default_idx else ""
         print(f"  {i}. {name}{suffix}")
-    standalone_idx = len(entities) + 1
-    print(f"  {standalone_idx}. Standalone (no inheritance)")
+    blank_idx = len(entities) + 1
+    print(f"  {blank_idx}. Blank (empty entity)")
 
     while True:
         raw = input(f"\nChoice [{default_idx}]: ").strip()
@@ -100,80 +81,66 @@ def _ask_parent(entity_dir: Path) -> str | None:
             n = int(raw)
             if 1 <= n <= len(entities):
                 return entities[n - 1]
-            if n == standalone_idx:
+            if n == blank_idx:
                 return None
         except ValueError:
             pass
-        print(f"  Please enter a number between 1 and {standalone_idx}.")
+        print(f"  Please enter a number between 1 and {blank_idx}.")
 
 
 # ── File scaffolding ──────────────────────────────────────────────────────────
 
-def _read_template(template_name: str, entity_dir: Path) -> str | None:
-    """Try to read a file from entity/agent/. Returns None if not found."""
-    candidate = entity_dir / "agent" / template_name
-    if candidate.exists():
-        return candidate.read_text(encoding="utf-8")
-    return None
+def create_entity(name: str, base_dir: Path, init_from: str | None) -> Path:
+    """Create a new entity directory.
 
+    If init_from is given, copies all files from that entity and updates the
+    name in agent.yaml. Otherwise, creates a blank entity with empty prompt
+    files and a minimal agent.yaml.
 
-def create_entity(name: str, base_dir: Path, parent: str | None) -> Path:
+    Returns the path to the created entity directory.
+    """
     entity_dir = base_dir / name
     if entity_dir.exists():
         print(f"Error: entity '{name}' already exists at {entity_dir}", file=sys.stderr)
         sys.exit(1)
 
-    if parent is not None and not (base_dir / parent / "agent.yaml").exists():
-        raise ValueError(f"Parent entity '{parent}' not found in {base_dir}")
+    if init_from is not None:
+        src_dir = base_dir / init_from
+        if not (src_dir / "agent.yaml").exists():
+            raise ValueError(f"Source entity '{init_from}' not found in {base_dir}")
 
-    (entity_dir / "prompts").mkdir(parents=True)
-    (entity_dir / "skills").mkdir()
-    (entity_dir / "tools").mkdir()
+        # Copy entire source entity tree
+        shutil.copytree(src_dir, entity_dir)
 
-    if parent is not None:
-        (entity_dir / "agent.yaml").write_text(
-            _AGENT_YAML_INHERITING.format(name=name, parent=parent),
-            encoding="utf-8",
-        )
-        # Empty placeholder files so the dirs show intent clearly
-        (entity_dir / "skills" / ".gitkeep").write_text(
-            f"# Add skill directories here and list them under `skills:` in agent.yaml.\n",
-            encoding="utf-8",
-        )
-        (entity_dir / "tools" / ".gitkeep").write_text(
-            f"# Add tool JSON files here and list them under `tools:` in agent.yaml.\n",
-            encoding="utf-8",
-        )
-        (entity_dir / "prompts" / ".gitkeep").write_text(
-            f"# Add prompt .md files here and set their paths under `prompts:` in agent.yaml.\n",
-            encoding="utf-8",
-        )
+        # Update agent.yaml: set new name and record init_from
+        yaml_path = entity_dir / "agent.yaml"
+        try:
+            import yaml as _yaml
+            manifest = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+            manifest["name"] = name
+            manifest["init_from"] = init_from
+            # Strip any old inheritance fields
+            for field in ("extends", "link", "own", "append"):
+                manifest.pop(field, None)
+            yaml_path.write_text(
+                _yaml.dump(manifest, default_flow_style=False, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            print(f"Warning: could not update agent.yaml name field: {exc}", file=sys.stderr)
+
     else:
+        # Blank entity
+        (entity_dir / "prompts").mkdir(parents=True)
+        (entity_dir / "skills").mkdir()
+        (entity_dir / "tools").mkdir()
+
         (entity_dir / "agent.yaml").write_text(
-            _AGENT_YAML_STANDALONE.format(name=name),
+            _AGENT_YAML_EMPTY.format(name=name),
             encoding="utf-8",
         )
-        system_md = _read_template("prompts/system.md", base_dir) or "You are a helpful, precise assistant.\n"
-        heartbeat_md = _read_template("prompts/heartbeat.md", base_dir) or (
-            "Heartbeat activation.\n\nCurrent tasks:\n{tasks}\n\n"
-            "Pick up where you left off.\n\n"
-            "If all tasks are done, clear the board via bash then respond: SESSION_FINISHED\n"
-        )
-        session_context_md = _read_template("prompts/session.md", base_dir) or (
-            "## Session Files\n\nYour session directory: `sessions/{session_id}/`\n\n"
-            "- `core/params.json` — model, provider, heartbeat_interval\n"
-            "- `core/tasks/` — task cards (each .md file is a task with YAML frontmatter)\n"
-            "- `core/memory.md` — persistent memory\n"
-            "- `core/skills/` — session-level skills\n"
-            "- `core/tools/` — session-level tools\n"
-        )
-        (entity_dir / "prompts" / "system.md").write_text(system_md, encoding="utf-8")
-        (entity_dir / "prompts" / "heartbeat.md").write_text(heartbeat_md, encoding="utf-8")
-        (entity_dir / "prompts" / "session.md").write_text(session_context_md, encoding="utf-8")
-
-        for tool_file in ["tools/bash.json", "tools/web_search.json"]:
-            content = _read_template(tool_file, base_dir)
-            if content is not None:
-                (entity_dir / tool_file).write_text(content, encoding="utf-8")
+        (entity_dir / "prompts" / "system.md").write_text("", encoding="utf-8")
+        (entity_dir / "prompts" / "heartbeat.md").write_text("", encoding="utf-8")
+        (entity_dir / "prompts" / "session.md").write_text("", encoding="utf-8")
 
     return entity_dir

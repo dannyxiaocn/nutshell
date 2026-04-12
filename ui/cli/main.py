@@ -907,16 +907,16 @@ def _add_entity_parser(subparsers) -> None:
             "Examples:\n"
             "  nutshell entity new                          # interactive\n"
             "  nutshell entity new -n my-agent\n"
-            "  nutshell entity new -n my-agent --extends agent\n"
-            "  nutshell entity new -n my-agent --standalone\n"
+            "  nutshell entity new -n my-agent --init-from agent\n"
+            "  nutshell entity new -n my-agent --blank\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     enew.add_argument("-n", "--name", metavar="NAME", help="Entity name")
-    enew.add_argument("--extends", metavar="PARENT",
-                      help="Parent entity to inherit from (skips picker)")
-    enew.add_argument("--standalone", action="store_true",
-                      help="Create standalone entity with no inheritance")
+    enew.add_argument("--init-from", metavar="SOURCE",
+                      help="Copy all files from this entity (skips picker)")
+    enew.add_argument("--blank", action="store_true",
+                      help="Create a blank entity with empty files")
     enew.add_argument("--entity-dir", default="entity", metavar="DIR",
                       help="Base directory for entities (default: entity/)")
 
@@ -925,26 +925,27 @@ def _add_entity_parser(subparsers) -> None:
 
 def cmd_entity(args) -> int:
     if args.entity_cmd == "new":
-        from ui.cli.new_agent import _ask_name, _ask_parent, create_entity
+        from ui.cli.new_agent import _ask_name, _ask_init_from, create_entity
         entity_dir = Path(args.entity_dir)
         name = args.name or _ask_name()
-        if args.standalone:
-            parent = None
-        elif args.extends:
-            parent = args.extends
+        init_from_arg = getattr(args, "init_from", None)
+        if args.blank:
+            init_from = None
+        elif init_from_arg:
+            init_from = init_from_arg
         elif args.name:
-            # Non-interactive: -n NAME given but no --extends/--standalone → default to agent
-            parent = "agent"
+            # Non-interactive: -n NAME given but no --init-from/--blank → default to agent
+            init_from = "agent"
         else:
-            parent = _ask_parent(entity_dir)
+            init_from = _ask_init_from(entity_dir)
         try:
-            created = create_entity(name, entity_dir, parent)
+            created = create_entity(name, entity_dir, init_from)
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
         print(f"Created: {created}/")
-        if parent:
-            print(f"  (extends '{parent}')")
+        if init_from:
+            print(f"  (initialized from '{init_from}')")
         return 0
 
     return 0

@@ -106,32 +106,6 @@ def _entity_rel_from_meta_path(path: str) -> str:
     return path.removeprefix('core/')
 
 
-def _load_agent_config(entity_name: str, entity_base: Path):
-    from nutshell.session_engine.entity_config import AgentConfig
-
-    entity_dir = entity_base / entity_name
-    if not entity_dir.exists():
-        return None
-    try:
-        return AgentConfig.from_path(entity_dir)
-    except Exception:
-        return None
-
-
-def _inheritance_fields(entity_name: str, entity_base: Path) -> tuple[set[str], set[str]]:
-    config = _load_agent_config(entity_name, entity_base)
-    if config is None:
-        return set(), set()
-    own_fields = set(config.inheritance.own)
-    inherited_fields = set(config.inheritance.link) | set(config.inheritance.append)
-    return own_fields, inherited_fields
-
-
-def _parent_entity_name(entity_name: str, entity_base: Path) -> str | None:
-    config = _load_agent_config(entity_name, entity_base)
-    return config.extends if config is not None else None
-
-
 def _copy_missing_files(src_dir: Path, dst_dir: Path) -> None:
     if not src_dir.is_dir():
         return
@@ -146,52 +120,11 @@ def _copy_missing_files(src_dir: Path, dst_dir: Path) -> None:
             shutil.copy2(src, dst)
 
 
-def _sync_inherited_memory(entity_name: str, entity_base: Path, core_dir: Path) -> None:
-    own_fields, _ = _inheritance_fields(entity_name, entity_base)
-    if 'memory' in own_fields or 'memory.md' in own_fields:
-        return
-    parent_name = _parent_entity_name(entity_name, entity_base)
-    if not parent_name:
-        return
-    parent_dir = entity_base / parent_name
-    parent_memory = parent_dir / 'memory.md'
-    meta_memory = core_dir / 'memory.md'
-    if parent_memory.exists() and not meta_memory.read_text(encoding='utf-8').strip():
-        meta_memory.write_text(parent_memory.read_text(encoding='utf-8'), encoding='utf-8')
-    _copy_missing_files(parent_dir / 'memory', core_dir / 'memory')
-
-
-def _sync_inherited_playground(entity_name: str, entity_base: Path, meta_dir: Path) -> None:
-    own_fields, _ = _inheritance_fields(entity_name, entity_base)
-    if 'playground' in own_fields:
-        return
-    parent_name = _parent_entity_name(entity_name, entity_base)
-    if not parent_name:
-        return
-    parent_dir = entity_base / parent_name
-    _copy_missing_files(parent_dir / 'playground', meta_dir / 'playground')
-
-
 def _resolve_entity_tools_dir(entity_name: str, entity_base: Path) -> Path | None:
-    """Walk the extends chain to find the first entity that has a non-empty tools/ dir."""
-    seen: set[str] = set()
-    current = entity_name
-    while current and current not in seen:
-        seen.add(current)
-        entity_dir = entity_base / current
-        tools_dir = entity_dir / 'tools'
-        if tools_dir.is_dir() and any(tools_dir.glob('*.json')):
-            return tools_dir
-        # Follow extends
-        yaml_path = entity_dir / 'agent.yaml'
-        if not yaml_path.exists():
-            break
-        try:
-            import yaml
-            manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
-            current = manifest.get('extends') or ''
-        except Exception:
-            break
+    """Return the entity's own tools/ directory if it has .json files, else None."""
+    tools_dir = entity_base / entity_name / 'tools'
+    if tools_dir.is_dir() and any(tools_dir.glob('*.json')):
+        return tools_dir
     return None
 
 
@@ -422,7 +355,6 @@ def sync_from_entity(entity_name: str, entity_base: Path | None = None, s_base: 
             dst_file = meta_memory_dir / src_file.name
             if not dst_file.exists():
                 shutil.copy2(src_file, dst_file)
-    _sync_inherited_memory(entity_name, entity_root, core_dir)
 
     entity_playground_dir = entity_dir / 'playground'
     if entity_playground_dir.is_dir():
@@ -436,29 +368,22 @@ def sync_from_entity(entity_name: str, entity_base: Path | None = None, s_base: 
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             if not dst_path.exists():
                 shutil.copy2(src_path, dst_path)
-    _sync_inherited_playground(entity_name, entity_root, meta_dir)
 
 
 def _load_gene_commands(entity_name: str, entity_base: Path | None = None) -> list[str]:
-    """Read the ``gene`` list from agent.yaml, walking the extends chain."""
+    """Read the ``gene`` list from the entity's own agent.yaml."""
     entity_root = entity_base or (_REPO_ROOT / 'entity')
-    seen: set[str] = set()
-    current = entity_name
-    while current and current not in seen:
-        seen.add(current)
-        entity_dir = entity_root / current
-        yaml_path = entity_dir / 'agent.yaml'
-        if not yaml_path.exists():
-            break
-        try:
-            import yaml
-            manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
-        except Exception:
-            break
+    yaml_path = entity_root / entity_name / 'agent.yaml'
+    if not yaml_path.exists():
+        return []
+    try:
+        import yaml
+        manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
         gene = manifest.get('gene')
         if gene and isinstance(gene, list):
             return [str(cmd) for cmd in gene]
-        current = manifest.get('extends') or ''
+    except Exception:
+        pass
     return []
 
 
