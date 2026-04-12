@@ -55,7 +55,7 @@ def get_session(session_id: str, sessions_dir: Path, system_sessions_dir: Path) 
     from nutshell.session_engine.task_cards import has_pending_cards
     tasks_dir = session_dir / "core" / "tasks"
     has_tasks = has_pending_cards(tasks_dir)
-    cards_mtimes = [f.stat().st_mtime for f in tasks_dir.glob("*.md")] if tasks_dir.is_dir() else []
+    cards_mtimes = [f.stat().st_mtime for f in list(tasks_dir.glob("*.json")) + list(tasks_dir.glob("*.md"))] if tasks_dir.is_dir() else []
     tasks_mtime = datetime.fromtimestamp(max(cards_mtimes)).isoformat() if cards_mtimes else None
     pid_alive = _pid_alive(status_payload.get("pid"))
     status = status_payload.get("status", "active")

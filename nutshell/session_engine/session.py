@@ -13,8 +13,7 @@ from nutshell.core.tool import Tool
 from nutshell.core.types import AgentResult
 from nutshell.session_engine.session_config import read_config, write_config, ensure_config
 from nutshell.session_engine.task_cards import (
-    _DEFAULT_HEARTBEAT_CONTENT,
-    TaskCard, clear_all_cards, ensure_heartbeat_card, has_pending_cards,
+    TaskCard, clear_all_cards, has_pending_cards,
     load_all_cards, load_due_cards, migrate_legacy_task_sources, save_card,
 )
 from nutshell.llm_engine.registry import provider_name, resolve_provider
@@ -364,17 +363,8 @@ class Session:
 
         If no card is provided, picks the first due card from core/tasks/.
         Returns None if no card is due.
-
-        For persistent sessions, a recurring "heartbeat" card is auto-created
-        during session init and fires on its own interval.
         """
-        cfg = read_config(self.session_dir)
         migrate_legacy_task_sources(self.session_dir)
-        if self._resolve_session_type(cfg) == "persistent":
-            ensure_heartbeat_card(
-                self.tasks_dir,
-                interval=float(cfg.get("heartbeat_interval") or self._heartbeat_interval),
-            )
         if card is None:
             due = load_due_cards(self.tasks_dir)
             if due:
@@ -382,29 +372,25 @@ class Session:
             else:
                 return None
 
-        triggered_by = "heartbeat" if card.name == "heartbeat" else f"task:{card.name}"
-        tasks_content = card.content or (_DEFAULT_HEARTBEAT_CONTENT if card.name == "heartbeat" else "")
-        card_label = card.name
+        triggered_by = f"task:{card.name}"
+        task_info = card.description or card.name
 
         # Snapshot history so we can roll back if SESSION_FINISHED
         history_snapshot = list(self._agent._history)
         old_len = len(self._agent._history)
 
-        heartbeat_instructions = self._agent.heartbeat_prompt
-        if heartbeat_instructions and "{tasks}" in heartbeat_instructions:
-            prompt = heartbeat_instructions.format(tasks=tasks_content)
+        # Build wakeup prompt from task.md template + task info
+        task_prompt = self._agent.heartbeat_prompt  # will be renamed to task_prompt in Phase 3
+        if task_prompt and "{task}" in task_prompt:
+            prompt = task_prompt.format(task=task_info)
         else:
-            prompt_prefix = "Heartbeat activation." if card.name == "heartbeat" else f"Task activation: {card_label}"
-            prompt = f"{prompt_prefix}\n\n{tasks_content}"
-            if heartbeat_instructions:
-                prompt += f"\n\n{heartbeat_instructions}"
+            prompt = f"Task wakeup: {card.name}\n\n{task_info}"
+            if task_prompt:
+                prompt += f"\n\n{task_prompt}"
 
         trigger_ts = datetime.now().isoformat()
-        if card.name == "heartbeat":
-            self._append_event({"type": "heartbeat_trigger", "ts": trigger_ts})
-        else:
-            self._append_event({"type": "task_trigger", "card": card.name, "ts": trigger_ts})
-        card.mark_running()
+        self._append_event({"type": "task_wakeup", "card": card.name, "ts": trigger_ts})
+        card.mark_working()
         save_card(self.tasks_dir, card)
         self._set_model_status("running", triggered_by)
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
@@ -421,8 +407,7 @@ class Session:
                     on_loop_end=self._make_loop_end_callback(),
                 )
         except BaseException:
-            # Revert card to pending on failure
-            card.status = "pending"
+            card.mark_paused()
             save_card(self.tasks_dir, card)
             self._set_model_status("idle", triggered_by)
             raise
@@ -430,31 +415,21 @@ class Session:
             on_chunk.flush()
 
         if SESSION_FINISHED in result.content:
-            # Clear all task cards, prune history
             clear_all_cards(self.tasks_dir)
             self._agent._history = history_snapshot
-            if card.name == "heartbeat":
-                self._append_event({"type": "heartbeat_finished", "ts": trigger_ts})
-            else:
-                self._append_event({"type": "task_finished", "card": card.name})
+            self._append_event({"type": "task_finished", "card": card.name, "ts": trigger_ts})
         else:
-            # Mark card done (recurring → pending with updated last_run_at; one-shot → completed)
-            card.mark_done()
+            card.mark_finished()
             save_card(self.tasks_dir, card)
 
-            # Replace verbose task/heartbeat prompt in history with a compact marker
+            # Replace verbose task prompt in history with a compact marker
             new_msgs = self._agent._history[old_len:]
             if new_msgs and new_msgs[0].role == "user":
                 from nutshell.core.types import Message as _Msg
-                marker = (
-                    f"[Heartbeat {trigger_ts}]"
-                    if card.name == "heartbeat"
-                    else f"[Task:{card.name} {trigger_ts}]"
-                )
+                marker = f"[Task:{card.name} {trigger_ts}]"
                 new_msgs = [_Msg(role="user", content=marker), *new_msgs[1:]]
                 self._agent._history = history_snapshot + new_msgs
 
-            # Only log to context if session is still active
             if not self.is_stopped():
                 turn: dict = {
                     "type": "turn",
@@ -533,14 +508,7 @@ class Session:
         # Reset stale "running" state from a previous crash
         write_session_status(self.system_dir, model_state="idle", model_source="system")
 
-        # Ensure persistent sessions have a heartbeat task card
-        params = read_config(self.session_dir)
         migrate_legacy_task_sources(self.session_dir)
-        if self._resolve_session_type(params) == "persistent":
-            ensure_heartbeat_card(
-                self.tasks_dir,
-                interval=float(params.get("heartbeat_interval") or self._heartbeat_interval),
-            )
 
         # Notify if meta session has a newer version than this session.
         self._emit_version_notice_if_stale()
