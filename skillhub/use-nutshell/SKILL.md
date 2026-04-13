@@ -147,6 +147,6 @@ nutshell repo-dev ~/projects/my-app -m "Add unit tests for the parser"
 
 **Check all agent activity:**
 ```bash
-nutshell sessions    # list all sessions with status
-nutshell tasks       # show task board for latest session
+nutshell sessions              # list all sessions with status
+nutshell tasks <SESSION_ID>    # inspect a specific session's task board
 ```
