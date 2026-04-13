@@ -46,12 +46,13 @@ def _ensure_server_running(
 ) -> None:
     """Start nutshell-server in daemon mode if not already running."""
     from nutshell.runtime.server import _is_server_running, _start_daemon
-    if _is_server_running():
+    sys_dir = system_sessions_dir or _DEFAULT_SYSTEM_BASE
+    if _is_server_running(sys_dir):
         return
     print("Starting nutshell server...")
     _start_daemon(
         sessions_dir=sessions_dir or _DEFAULT_SESSIONS_BASE,
-        system_sessions_dir=system_sessions_dir or _DEFAULT_SYSTEM_BASE,
+        system_sessions_dir=sys_dir,
     )
 
 

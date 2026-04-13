@@ -25,43 +25,51 @@ from pathlib import Path
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
 _REPO_ROOT = Path(__file__).parent.parent.parent
-_PID_FILE = _SYSTEM_SESSIONS_DIR / "server.pid"
-_LOG_FILE = _SYSTEM_SESSIONS_DIR / "server.log"
 
 
 # ── PID file helpers ──────────────────────────────────────────────────────────
 
-def _write_pid() -> None:
-    _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _PID_FILE.write_text(str(os.getpid()))
+def _pid_file(system_dir: Path | None = None) -> Path:
+    return (system_dir or _SYSTEM_SESSIONS_DIR) / "server.pid"
 
 
-def _read_pid() -> int | None:
-    if not _PID_FILE.exists():
+def _log_file(system_dir: Path | None = None) -> Path:
+    return (system_dir or _SYSTEM_SESSIONS_DIR) / "server.log"
+
+
+def _write_pid(system_dir: Path | None = None) -> None:
+    pf = _pid_file(system_dir)
+    pf.parent.mkdir(parents=True, exist_ok=True)
+    pf.write_text(str(os.getpid()))
+
+
+def _read_pid(system_dir: Path | None = None) -> int | None:
+    pf = _pid_file(system_dir)
+    if not pf.exists():
         return None
     try:
-        return int(_PID_FILE.read_text().strip())
+        return int(pf.read_text().strip())
     except (ValueError, OSError):
         return None
 
 
-def _clear_pid() -> None:
+def _clear_pid(system_dir: Path | None = None) -> None:
     try:
-        _PID_FILE.unlink(missing_ok=True)
+        _pid_file(system_dir).unlink(missing_ok=True)
     except OSError:
         pass
 
 
-def _is_server_running() -> int | None:
+def _is_server_running(system_dir: Path | None = None) -> int | None:
     """Return PID if server is running, None otherwise."""
-    pid = _read_pid()
+    pid = _read_pid(system_dir)
     if pid is None:
         return None
     try:
         os.kill(pid, 0)  # signal 0 = check existence
         return pid
     except (ProcessLookupError, PermissionError):
-        _clear_pid()
+        _clear_pid(system_dir)
         return None
 
 
@@ -77,12 +85,12 @@ async def _run(sessions_dir: Path, system_sessions_dir: Path) -> None:
     loop.add_signal_handler(signal.SIGINT, stop_event.set)
     loop.add_signal_handler(signal.SIGTERM, stop_event.set)
 
-    _write_pid()
+    _write_pid(system_sessions_dir)
     print(f"nutshell server started (pid={os.getpid()}). sessions dir: {sessions_dir.absolute()}")
     try:
         await watcher.run(stop_event)
     finally:
-        _clear_pid()
+        _clear_pid(system_sessions_dir)
     print("nutshell server stopped.")
 
 
@@ -96,7 +104,7 @@ def _start_foreground(sessions_dir: Path, system_sessions_dir: Path) -> int:
 
 def _start_daemon(sessions_dir: Path, system_sessions_dir: Path) -> int:
     """Launch server as a background daemon process."""
-    existing = _is_server_running()
+    existing = _is_server_running(system_sessions_dir)
     if existing:
         print(f"nutshell server already running (pid={existing}).")
         return 0
@@ -107,11 +115,12 @@ def _start_daemon(sessions_dir: Path, system_sessions_dir: Path) -> int:
     # Launch a detached subprocess running this module in foreground mode
     cmd = [
         sys.executable, "-m", "nutshell.runtime.server",
-        "start", "--foreground",
+        "--foreground",
         "--sessions-dir", str(sessions_dir),
         "--system-sessions-dir", str(system_sessions_dir),
     ]
-    log_fh = open(_LOG_FILE, "a")
+    lf = _log_file(system_sessions_dir)
+    log_fh = open(lf, "a")
     proc = subprocess.Popen(
         cmd,
         stdout=log_fh,
@@ -125,10 +134,10 @@ def _start_daemon(sessions_dir: Path, system_sessions_dir: Path) -> int:
     # Wait briefly to confirm it started
     time.sleep(0.5)
     if proc.poll() is not None:
-        print(f"Error: server exited immediately (code={proc.returncode}). Check {_LOG_FILE}")
+        print(f"Error: server exited immediately (code={proc.returncode}). Check {lf}")
         return 1
 
-    print(f"nutshell server started in background (pid={proc.pid}). Log: {_LOG_FILE}")
+    print(f"nutshell server started in background (pid={proc.pid}). Log: {lf}")
     return 0
 
 
@@ -146,8 +155,13 @@ def _cmd_start(args) -> int:
     return _start_daemon(sessions_dir, system_sessions_dir)
 
 
+def _system_dir_from_args(args) -> Path:
+    return Path(getattr(args, "system_sessions_dir", str(_SYSTEM_SESSIONS_DIR)))
+
+
 def _cmd_stop(args) -> int:
-    pid = _is_server_running()
+    sdir = _system_dir_from_args(args)
+    pid = _is_server_running(sdir)
     if pid is None:
         print("nutshell server is not running.")
         return 0
@@ -155,7 +169,7 @@ def _cmd_stop(args) -> int:
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
-        _clear_pid()
+        _clear_pid(sdir)
         print("Server already stopped.")
         return 0
     # Wait for graceful shutdown
@@ -164,7 +178,7 @@ def _cmd_stop(args) -> int:
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
-            _clear_pid()
+            _clear_pid(sdir)
             print("Server stopped.")
             return 0
     print(f"Warning: server (pid={pid}) did not stop within 10s. Sending SIGKILL...")
@@ -172,13 +186,14 @@ def _cmd_stop(args) -> int:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    _clear_pid()
+    _clear_pid(sdir)
     print("Server killed.")
     return 0
 
 
 def _cmd_status(args) -> int:
-    pid = _is_server_running()
+    sdir = _system_dir_from_args(args)
+    pid = _is_server_running(sdir)
     if pid:
         print(f"nutshell server is running (pid={pid}).")
     else:
@@ -202,13 +217,7 @@ def _cmd_update(args) -> int:
     print("Package reinstalled.")
 
     print("Restarting server...")
-    # Build a namespace with the fields _cmd_start expects
-    start_args = argparse.Namespace(
-        sessions_dir=str(SESSIONS_DIR),
-        system_sessions_dir=str(_SYSTEM_SESSIONS_DIR),
-        foreground=False,
-    )
-    return _cmd_start(start_args)
+    return _cmd_start(args)
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
@@ -234,37 +243,39 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    # Top-level --foreground for convenience (nutshell-server --foreground)
-    parser.add_argument("--foreground", action="store_true", help="Run in foreground (don't daemonize)")
+    # All flags live on the top-level parser so they work with or without
+    # an explicit subcommand (e.g. `nutshell-server --foreground` and
+    # `nutshell-server start --foreground` both work).
+    parser.add_argument("--foreground", action="store_true",
+                        help="Run in foreground (don't daemonize)")
     _add_dir_args(parser)
+    parser.set_defaults(func=None)
 
     subparsers = parser.add_subparsers(dest="command")
-
-    # start (default)
-    p_start = subparsers.add_parser("start", allow_abbrev=False, help="Start the server (default)")
-    _add_dir_args(p_start)
-    p_start.add_argument("--foreground", action="store_true", help="Run in foreground (don't daemonize)")
-    p_start.set_defaults(func=_cmd_start)
-
-    # stop
-    p_stop = subparsers.add_parser("stop", allow_abbrev=False, help="Stop the running server")
-    p_stop.set_defaults(func=_cmd_stop)
-
-    # status
-    p_status = subparsers.add_parser("status", allow_abbrev=False, help="Show server status")
-    p_status.set_defaults(func=_cmd_status)
-
-    # update
-    p_update = subparsers.add_parser("update", allow_abbrev=False, help="Reinstall package and restart server")
-    p_update.set_defaults(func=_cmd_update)
+    subparsers.add_parser("start", allow_abbrev=False,
+                          help="Start the server (default)")
+    subparsers.add_parser("stop", allow_abbrev=False,
+                          help="Stop the running server")
+    subparsers.add_parser("status", allow_abbrev=False,
+                          help="Show server status")
+    subparsers.add_parser("update", allow_abbrev=False,
+                          help="Reinstall package and restart server")
 
     args = parser.parse_args()
 
-    # Default to 'start' if no subcommand given — use top-level args directly
-    if args.command is None:
-        args.func = _cmd_start
-
-    sys.exit(args.func(args))
+    # Map subcommand (or default) to handler
+    _COMMANDS = {
+        None: _cmd_start,
+        "start": _cmd_start,
+        "stop": _cmd_stop,
+        "status": _cmd_status,
+        "update": _cmd_update,
+    }
+    handler = _COMMANDS.get(args.command)
+    if handler is None:
+        parser.print_help()
+        sys.exit(1)
+    sys.exit(handler(args))
 
 
 if __name__ == "__main__":
