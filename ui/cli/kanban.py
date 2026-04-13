@@ -27,13 +27,13 @@ def build_kanban(
         content = ""
         if len(cards) == 1 and cards[0].name == "migrated_task" and cards[0].interval is None:
             # Preserve legacy tasks.md output shape after one-time migration.
-            content = cards[0].content
+            content = cards[0].description
         else:
             # Build summary: one line per card
             lines = []
             for card in cards:
                 interval_str = f"every {card.interval}s" if card.interval else "one-shot"
-                lines.append(f"[{card.status}] {card.name} ({interval_str}): {card.content[:60]}")
+                lines.append(f"[{card.status}] {card.name} ({interval_str}): {card.description[:60]}")
             content = "\n".join(lines)
         if not content:
             legacy_tasks = tasks_dir.parent / "tasks.md"

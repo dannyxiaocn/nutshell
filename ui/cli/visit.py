@@ -107,7 +107,7 @@ def _read_tasks(tasks_path: Path) -> str:
     lines = []
     for card in cards:
         interval_str = f"every {card.interval}s" if card.interval else "one-shot"
-        lines.append(f"[{card.status}] {card.name} ({interval_str}): {card.content[:80]}")
+        lines.append(f"[{card.status}] {card.name} ({interval_str}): {card.description[:80]}")
     return "\n".join(lines)
 
 

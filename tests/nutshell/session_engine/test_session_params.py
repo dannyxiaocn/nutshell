@@ -20,14 +20,21 @@ class SessionParamsUnitTests(unittest.TestCase):
 
         self.assertEqual(params, DEFAULT_PARAMS)
 
-    def test_invalid_heartbeat_interval_is_sanitized(self) -> None:
+    def test_default_params_has_expected_keys(self) -> None:
+        """DEFAULT_PARAMS has model, provider, thinking, tool_providers."""
+        self.assertIn("model", DEFAULT_PARAMS)
+        self.assertIn("provider", DEFAULT_PARAMS)
+        self.assertIn("thinking", DEFAULT_PARAMS)
+        self.assertIn("tool_providers", DEFAULT_PARAMS)
+
+    def test_read_params_merges_with_defaults(self) -> None:
         with TemporaryDirectory() as td:
             session_dir = Path(td)
             path = params_path(session_dir)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"heartbeat_interval": "bad"}), encoding="utf-8")
+            path.write_text(json.dumps({"model": "gpt-4"}), encoding="utf-8")
 
             params = read_session_params(session_dir)
 
-        self.assertEqual(params["heartbeat_interval"], DEFAULT_PARAMS["heartbeat_interval"])
-
+        self.assertEqual(params["model"], "gpt-4")
+        self.assertEqual(params["thinking"], DEFAULT_PARAMS["thinking"])

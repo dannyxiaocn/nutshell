@@ -12,35 +12,37 @@ from unittest.mock import patch
 from nutshell.core.agent import Agent
 from nutshell.runtime.ipc import FileIPC
 from nutshell.session_engine.entity_config import AgentConfig
-from nutshell.session_engine.session_init import _load_entity_params, init_session
-from nutshell.session_engine.session_params import read_session_params, write_session_params
+from nutshell.session_engine.session_init import init_session
+from nutshell.session_engine.session_config import read_config, write_config
+from nutshell.session_engine.session_params import read_session_params
 from nutshell.session_engine.session import Session
 from nutshell.session_engine.session_status import ensure_session_status, read_session_status, write_session_status
 
 
 class SessionEngineTest(unittest.TestCase):
-    def test_agent_config_reads_init_from_field(self) -> None:
+    def test_agent_config_reads_manifest_fields(self) -> None:
         with TemporaryDirectory() as tmp:
             entity_dir = Path(tmp) / "demo"
             entity_dir.mkdir()
-            (entity_dir / "agent.yaml").write_text(
-                "name: demo\ninit_from: agent\nmodel: claude-sonnet-4-6\n",
+            (entity_dir / "config.yaml").write_text(
+                "name: demo\nmodel: claude-sonnet-4-6\nprovider: anthropic\n",
                 encoding="utf-8",
             )
             config = AgentConfig.from_path(entity_dir)
-        self.assertEqual(config.init_from, "agent")
+        self.assertEqual(config.manifest["name"], "demo")
+        self.assertEqual(config.manifest["model"], "claude-sonnet-4-6")
 
-    def test_load_entity_params_converts_legacy_persistent_flag(self) -> None:
+    def test_agent_config_fallback_to_agent_yaml(self) -> None:
+        """AgentConfig falls back to agent.yaml when config.yaml is absent."""
         with TemporaryDirectory() as tmp:
             entity_dir = Path(tmp) / "demo"
             entity_dir.mkdir()
             (entity_dir / "agent.yaml").write_text(
-                "params:\n  persistent: true\n  default_task: keep working\n",
+                "name: demo\nmodel: claude-sonnet-4-6\n",
                 encoding="utf-8",
             )
-            params = _load_entity_params(entity_dir)
-        self.assertEqual(params["session_type"], "persistent")
-        self.assertEqual(params["default_task"], "keep working")
+            config = AgentConfig.from_path(entity_dir)
+        self.assertEqual(config.manifest["name"], "demo")
 
     def test_session_params_fall_back_on_corrupt_json(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -48,17 +50,29 @@ class SessionEngineTest(unittest.TestCase):
             (session_dir / "core").mkdir(parents=True)
             (session_dir / "core" / "params.json").write_text("{not json", encoding="utf-8")
             params = read_session_params(session_dir)
-        self.assertEqual(params["heartbeat_interval"], 7200.0)
+        # Should get defaults — key fields exist
+        self.assertIn("model", params)
+        self.assertIn("provider", params)
 
-    def test_session_params_reset_invalid_heartbeat_interval_to_default(self) -> None:
+    def test_session_config_read_write_roundtrip(self) -> None:
         with TemporaryDirectory() as tmp:
             session_dir = Path(tmp) / "session"
             (session_dir / "core").mkdir(parents=True)
-            write_session_params(session_dir, heartbeat_interval=0)
+            write_config(session_dir, model="gpt-4", thinking=True)
+            cfg = read_config(session_dir)
+        self.assertEqual(cfg["model"], "gpt-4")
+        self.assertTrue(cfg["thinking"])
 
-            params = read_session_params(session_dir)
-
-        self.assertEqual(params["heartbeat_interval"], 7200.0)
+    def test_session_config_fallback_to_legacy_params(self) -> None:
+        """read_config falls back to params.json when config.yaml is absent."""
+        with TemporaryDirectory() as tmp:
+            session_dir = Path(tmp) / "session"
+            (session_dir / "core").mkdir(parents=True)
+            (session_dir / "core" / "params.json").write_text(
+                json.dumps({"model": "gpt-3.5"}), encoding="utf-8"
+            )
+            cfg = read_config(session_dir)
+        self.assertEqual(cfg["model"], "gpt-3.5")
 
     def test_session_status_round_trips_updates(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -80,18 +94,24 @@ class SessionEngineTest(unittest.TestCase):
             meta_dir = sessions_base / "demo_meta"
 
             (entity_dir / "prompts").mkdir(parents=True)
-            (entity_dir / "agent.yaml").write_text(
-                "name: demo\nprovider: anthropic\nmodel: claude-sonnet-4-6\nparams:\n  heartbeat_interval: 42\n",
+            (entity_dir / "config.yaml").write_text(
+                "name: demo\nprovider: anthropic\nmodel: claude-sonnet-4-6\n",
                 encoding="utf-8",
             )
+            (entity_dir / "prompts" / "system.md").write_text("sys", encoding="utf-8")
+            (entity_dir / "prompts" / "task.md").write_text("task", encoding="utf-8")
+            (entity_dir / "prompts" / "env.md").write_text("env", encoding="utf-8")
 
             (meta_dir / "core" / "tools").mkdir(parents=True)
             (meta_dir / "core" / "skills" / "alpha").mkdir(parents=True)
             (meta_dir / "core" / "memory").mkdir(parents=True)
             (meta_dir / "playground").mkdir(parents=True)
             (meta_dir / "core" / "system.md").write_text("sys", encoding="utf-8")
-            (meta_dir / "core" / "heartbeat.md").write_text("beat", encoding="utf-8")
-            (meta_dir / "core" / "session.md").write_text("sess", encoding="utf-8")
+            (meta_dir / "core" / "task.md").write_text("task", encoding="utf-8")
+            (meta_dir / "core" / "env.md").write_text("env", encoding="utf-8")
+            (meta_dir / "core" / "config.yaml").write_text(
+                "name: demo\nmodel: claude-sonnet-4-6\n", encoding="utf-8"
+            )
             (meta_dir / "core" / "memory.md").write_text("meta memory", encoding="utf-8")
             (meta_dir / "core" / "memory" / "layer.md").write_text("layer", encoding="utf-8")
             (meta_dir / "core" / "tools" / "bash.json").write_text(
@@ -109,7 +129,7 @@ class SessionEngineTest(unittest.TestCase):
             with patch("nutshell.session_engine.session_init._create_session_venv", side_effect=fake_create_session_venv), patch(
                 "nutshell.session_engine.session_init.ensure_meta_session",
                 side_effect=lambda *args, **kwargs: meta_dir,
-            ), patch("nutshell.session_engine.session_init._meta_is_synced", return_value=True), patch(
+            ), patch(
                 "nutshell.session_engine.session_init.ensure_gene_initialized"
             ), patch(
                 "nutshell.session_engine.session_init.start_meta_agent"
@@ -124,13 +144,15 @@ class SessionEngineTest(unittest.TestCase):
 
             core_dir = sessions_base / "s1" / "core"
             self.assertEqual((core_dir / "system.md").read_text(encoding="utf-8"), "sys")
+            self.assertEqual((core_dir / "task.md").read_text(encoding="utf-8"), "task")
+            self.assertEqual((core_dir / "env.md").read_text(encoding="utf-8"), "env")
             self.assertEqual((core_dir / "memory.md").read_text(encoding="utf-8"), "meta memory")
             self.assertTrue((core_dir / "memory" / "layer.md").exists())
             self.assertTrue((core_dir / "tools" / "bash.json").exists())
             self.assertTrue((core_dir / "skills" / "alpha" / "SKILL.md").exists())
             self.assertTrue((sessions_base / "s1" / "playground" / "seed.txt").exists())
-            params = read_session_params(sessions_base / "s1")
-            self.assertEqual(params["heartbeat_interval"], 42)
+            # Config should be copied
+            self.assertTrue((core_dir / "config.yaml").exists())
 
     def test_run_daemon_loop_auto_expires_timezone_aware_stopped_session(self) -> None:
         with TemporaryDirectory() as tmp:

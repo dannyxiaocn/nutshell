@@ -9,7 +9,7 @@ from nutshell.session_engine.agent_loader import AgentLoader
 from conftest import REPO_ROOT
 
 ENTITY_ROOT = REPO_ROOT / "entity"
-ACTIVE_ENTITIES = ["agent", "nutshell_dev", "nutshell_dev_codex"]
+ACTIVE_ENTITIES = ["agent", "nutshell_dev"]
 
 
 DOCS_ROOT = REPO_ROOT / "docs" / "entity"
@@ -26,7 +26,7 @@ class EntityUnitTests(unittest.TestCase):
             self.assertTrue((entity_docs / "impl.md").exists(), f"missing impl.md for {entity}")
             self.assertTrue((entity_docs / "todo.md").exists(), f"missing todo.md for {entity}")
 
-    def test_active_entities_load_without_inheritance_errors(self) -> None:
+    def test_active_entities_load_without_errors(self) -> None:
         loader = AgentLoader()
         for entity in ACTIVE_ENTITIES:
             agent = loader.load(ENTITY_ROOT / entity)

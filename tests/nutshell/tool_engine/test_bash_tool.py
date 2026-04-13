@@ -1,19 +1,40 @@
-"""Tests for the built-in bash tool."""
+"""Tests for the built-in bash tool (now in toolhub/bash/)."""
 import pytest
-from nutshell.tool_engine.executor.terminal.bash_terminal import create_bash_tool
-from nutshell.tool_engine.executor.terminal.shell_terminal import ShellExecutor
+from toolhub.bash.executor import BashExecutor
 from nutshell.tool_engine.loader import ToolLoader
 from nutshell.core.tool import Tool
 
 
-def test_create_bash_tool_returns_tool():
-    t = create_bash_tool()
-    assert isinstance(t, Tool)
-    assert t.name == "bash"
+def _make_bash_tool(**kwargs) -> Tool:
+    """Create a bash Tool from the toolhub executor."""
+    executor = BashExecutor(**kwargs)
+
+    async def _impl(**kw) -> str:
+        return await executor.execute(**kw)
+
+    return Tool(
+        name="bash",
+        description="Run a bash command",
+        func=_impl,
+        schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "timeout": {"type": "number"},
+                "workdir": {"type": "string"},
+                "pty": {"type": "boolean"},
+            },
+            "required": ["command"],
+        },
+    )
+
+
+def test_bash_executor_is_importable():
+    assert BashExecutor is not None
 
 
 def test_bash_tool_schema():
-    t = create_bash_tool()
+    t = _make_bash_tool()
     props = t.schema["properties"]
     assert "command" in props
     assert "timeout" in props
@@ -24,7 +45,7 @@ def test_bash_tool_schema():
 
 @pytest.mark.asyncio
 async def test_basic_echo():
-    t = create_bash_tool()
+    t = _make_bash_tool()
     result = await t.execute(command="echo hello")
     assert "hello" in result
     assert "[exit 0]" in result
@@ -32,7 +53,7 @@ async def test_basic_echo():
 
 @pytest.mark.asyncio
 async def test_stderr_merged():
-    t = create_bash_tool()
+    t = _make_bash_tool()
     result = await t.execute(command="echo err >&2")
     assert "err" in result
     assert "[exit 0]" in result
@@ -40,42 +61,42 @@ async def test_stderr_merged():
 
 @pytest.mark.asyncio
 async def test_nonzero_exit_code():
-    t = create_bash_tool()
+    t = _make_bash_tool()
     result = await t.execute(command="exit 7")
     assert "[exit 7]" in result
 
 
 @pytest.mark.asyncio
 async def test_timeout():
-    t = create_bash_tool()
+    t = _make_bash_tool()
     result = await t.execute(command="sleep 60", timeout=0.3)
     assert "timed out" in result.lower()
 
 
 @pytest.mark.asyncio
 async def test_workdir(tmp_path):
-    t = create_bash_tool()
+    t = _make_bash_tool()
     result = await t.execute(command="pwd", workdir=str(tmp_path))
     assert str(tmp_path) in result
 
 
 @pytest.mark.asyncio
 async def test_output_truncation():
-    t = create_bash_tool(max_output=50)
+    t = _make_bash_tool(max_output=50)
     result = await t.execute(command="python3 -c \"print('x' * 200)\"")
     assert "truncated" in result
 
 
 @pytest.mark.asyncio
 async def test_factory_default_workdir(tmp_path):
-    t = create_bash_tool(workdir=str(tmp_path))
+    t = _make_bash_tool(workdir=str(tmp_path))
     result = await t.execute(command="pwd")
     assert str(tmp_path) in result
 
 
 @pytest.mark.asyncio
 async def test_pty_basic():
-    t = create_bash_tool()
+    t = _make_bash_tool()
     result = await t.execute(command="echo pty-hello", pty=True)
     if "[pty unavailable" in result:
         pytest.skip("PTY not available in this environment")
@@ -85,7 +106,7 @@ async def test_pty_basic():
 
 @pytest.mark.asyncio
 async def test_pty_exit_code():
-    t = create_bash_tool()
+    t = _make_bash_tool()
     result = await t.execute(command="exit 3", pty=True)
     if "[pty unavailable" in result:
         pytest.skip("PTY not available in this environment")
@@ -94,7 +115,7 @@ async def test_pty_exit_code():
 
 @pytest.mark.asyncio
 async def test_pty_timeout():
-    t = create_bash_tool()
+    t = _make_bash_tool()
     result = await t.execute(command="sleep 60", timeout=0.3, pty=True)
     if "[pty unavailable" in result:
         pytest.skip("PTY not available in this environment")
@@ -104,7 +125,7 @@ async def test_pty_timeout():
 # ── ToolLoader default_workdir ─────────────────────────────────────────────────
 
 def test_toolloader_bash_uses_default_workdir(tmp_path):
-    """ToolLoader.default_workdir is passed to BashExecutor."""
+    """ToolLoader.load() for bash tool uses default_workdir."""
     import json
     bash_json = tmp_path / "tools" / "bash.json"
     bash_json.parent.mkdir()
@@ -118,7 +139,6 @@ def test_toolloader_bash_uses_default_workdir(tmp_path):
     loader = ToolLoader(default_workdir=str(workdir))
     tool = loader.load(bash_json)
     assert tool.name == "bash"
-    # BashExecutor stores workdir; verify it uses it when invoked
     import asyncio
     result = asyncio.run(tool.execute(command="pwd"))
     assert str(workdir) in result
@@ -130,7 +150,6 @@ def test_toolloader_shell_uses_default_workdir(tmp_path):
     tools_dir = tmp_path / "tools"
     tools_dir.mkdir()
 
-    # Write a shell tool that prints its working directory
     sh = tools_dir / "show_pwd.sh"
     sh.write_text("#!/usr/bin/env bash\npwd\n")
     sh.chmod(0o755)

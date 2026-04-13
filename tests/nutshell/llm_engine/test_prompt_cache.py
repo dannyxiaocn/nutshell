@@ -165,7 +165,7 @@ def _make_agent(system_prompt="", session_context="", memory="", memory_layers=N
     from nutshell.core.agent import Agent
     a = Agent.__new__(Agent)
     a.system_prompt = system_prompt
-    a.session_context = session_context
+    a.env_context = session_context
     a.memory = memory
     a.memory_layers = memory_layers or []
     a.app_notifications = []

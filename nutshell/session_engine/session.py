@@ -198,11 +198,11 @@ class Session:
             tool_md_path = self.core_dir / "tool.md"
             if tool_md_path.exists():
                 tools = loader.load_from_tool_md(tool_md_path)
+                # Also load agent-created tools from core/tools/ (.json+.sh pairs)
+                tools.extend(loader.load_local_tools(self.core_dir / "tools"))
             else:
-                # Legacy fallback: load from core/tools/*.json
+                # Legacy fallback: load from core/tools/*.json (handles .sh too)
                 tools = loader.load_dir(self.core_dir / "tools")
-            # Also load agent-created tools from core/tools/
-            tools.extend(loader.load_local_tools(self.core_dir / "tools"))
         except (FileNotFoundError, PermissionError):
             tools = []
         except Exception as e:

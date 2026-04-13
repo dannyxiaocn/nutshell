@@ -779,11 +779,12 @@ def cmd_tasks(args) -> int:
         for card in cards:
             interval_str = f"every {card['interval']}s" if card['interval'] else "one-shot"
             print(f"  [{card['status']}] {card['name']}  ({interval_str})")
-            if card['last_run_at']:
-                print(f"          last run: {card['last_run_at']}")
-            for line in card['content'].splitlines()[:3]:
+            if card.get('last_finished_at'):
+                print(f"          last finished: {card['last_finished_at']}")
+            desc = card.get('description', '')
+            for line in desc.splitlines()[:3]:
                 print(f"          {line}")
-            if len(card['content'].splitlines()) > 3:
+            if len(desc.splitlines()) > 3:
                 print(f"          ...")
     return 0
 

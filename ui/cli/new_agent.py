@@ -34,8 +34,8 @@ tool_providers:
   web_search: brave
 prompts:
   system: prompts/system.md
-  heartbeat: prompts/heartbeat.md
-  session_context: prompts/session.md
+  task: prompts/task.md
+  env: prompts/env.md
 tools: []
 skills: []
 """
@@ -152,7 +152,7 @@ def create_entity(name: str, base_dir: Path, init_from: str | None) -> Path:
             encoding="utf-8",
         )
         (entity_dir / "prompts" / "system.md").write_text("", encoding="utf-8")
-        (entity_dir / "prompts" / "heartbeat.md").write_text("", encoding="utf-8")
-        (entity_dir / "prompts" / "session.md").write_text("", encoding="utf-8")
+        (entity_dir / "prompts" / "task.md").write_text("", encoding="utf-8")
+        (entity_dir / "prompts" / "env.md").write_text("", encoding="utf-8")
 
     return entity_dir

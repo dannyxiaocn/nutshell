@@ -18,11 +18,11 @@ def _seed_entity(tmp_path: Path):
     (ent / 'tools').mkdir()
     (ent / 'skills' / 'alpha').mkdir(parents=True)
     (ent / 'prompts' / 'system.md').write_text('sys v1\n', encoding='utf-8')
-    (ent / 'prompts' / 'heartbeat.md').write_text('beat\n', encoding='utf-8')
-    (ent / 'prompts' / 'session.md').write_text('sess\n', encoding='utf-8')
+    (ent / 'prompts' / 'task.md').write_text('task\n', encoding='utf-8')
+    (ent / 'prompts' / 'env.md').write_text('env\n', encoding='utf-8')
     (ent / 'tools' / 'bash.json').write_text('{"name":"bash","description":"x","input_schema":{"type":"object"}}\n', encoding='utf-8')
     (ent / 'skills' / 'alpha' / 'SKILL.md').write_text('# alpha\n', encoding='utf-8')
-    (ent / 'agent.yaml').write_text('name: demo\nmodel: m1\nprovider: p1\n', encoding='utf-8')
+    (ent / 'config.yaml').write_text('name: demo\nmodel: m1\nprovider: p1\n', encoding='utf-8')
     return entity_base
 
 
@@ -53,9 +53,11 @@ def test_sync_from_entity_bootstraps_memory_when_empty(tmp_path, monkeypatch):
 def test_populate_meta_copies_entity_content(tmp_path, monkeypatch):
     entity_base = _seed_entity(tmp_path)
     monkeypatch.setattr('nutshell.session_engine.entity_state._SESSIONS_DIR', tmp_path / 'sessions')
+    monkeypatch.setattr('nutshell.session_engine.entity_state._SYSTEM_SESSIONS_DIR', tmp_path / '_sessions')
     populate_meta_from_entity('demo', entity_base)
     meta_dir = get_meta_dir('demo')
-    assert (meta_dir / 'core' / '.entity_synced').exists()
+    # config.yaml should be copied (replaces .entity_synced mechanism)
+    assert (meta_dir / 'core' / 'config.yaml').exists()
     assert (meta_dir / 'core' / 'system.md').read_text(encoding='utf-8') == 'sys v1\n'
     assert (meta_dir / 'core' / 'tools' / 'bash.json').exists()
     assert (meta_dir / 'core' / 'skills' / 'alpha' / 'SKILL.md').exists()

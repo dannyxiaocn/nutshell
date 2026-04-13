@@ -224,7 +224,8 @@ def _parse_legacy_md_card(path: Path) -> TaskCard:
         body = raw[m.end():]
         try:
             import yaml
-            meta = yaml.safe_load(m.group(1)) or {}
+            parsed = yaml.safe_load(m.group(1))
+            meta = parsed if isinstance(parsed, dict) else {}
         except Exception:
             meta = {}
 

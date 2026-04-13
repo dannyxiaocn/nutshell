@@ -133,13 +133,14 @@ class TestChatFlush:
 class TestTickFlush:
     def test_tick_flushes_remaining_text(self, tmp_path):
         """tick() must flush remaining buffered text after agent.run()."""
+        from nutshell.session_engine.task_cards import TaskCard, save_card
         short_text = "y" * 50
         provider = MockProvider([(short_text, [])])
         agent = Agent(provider=provider, model="test",
-                      heartbeat_prompt="do stuff\n{tasks}")
+                      task_prompt="do stuff\n{task}")
         session = make_session(tmp_path, agent)
-        # Write tasks so tick() actually runs
-        session.tasks_path.write_text("- test task\n", encoding="utf-8")
+        # Write a task card so tick() actually runs
+        save_card(session.tasks_dir, TaskCard(name="test", description="test task", interval=600))
         asyncio.run(session.tick())
         events = [e for e in read_events(session) if e["type"] == "partial_text"]
         assert len(events) >= 1
