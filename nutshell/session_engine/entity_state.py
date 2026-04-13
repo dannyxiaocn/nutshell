@@ -43,19 +43,11 @@ def ensure_meta_session(entity_name: str, s_base: Path | None = None) -> Path:
     (core_dir / 'memory').mkdir(exist_ok=True)
     (session_dir / 'docs').mkdir(exist_ok=True)
     (session_dir / 'playground').mkdir(exist_ok=True)
-    for fname in ('system.md', 'heartbeat.md', 'session.md', 'memory.md'):
+    for fname in ('system.md', 'task.md', 'env.md', 'memory.md', 'config.yaml'):
         (core_dir / fname).touch(exist_ok=True)
     (core_dir / 'tasks').mkdir(exist_ok=True)
     _create_meta_venv(session_dir)
     return session_dir
-
-
-def _meta_is_synced(meta_dir: Path) -> bool:
-    return (meta_dir / 'core' / '.entity_synced').exists()
-
-
-def _mark_meta_synced(meta_dir: Path, entity_name: str) -> None:
-    (meta_dir / 'core' / '.entity_synced').write_text(entity_name, encoding='utf-8')
 
 
 def _clear_dir_contents(path: Path) -> None:
@@ -81,41 +73,53 @@ def _increment_version(version: str) -> str:
         return version + ".1"
 
 
-def _init_meta_version(entity_name: str, entity_base: Path | None = None, s_base: Path | None = None) -> None:
-    """Seed agent_version in meta session params from entity's agent.yaml (first-time only)."""
-    entity_root = entity_base or (_REPO_ROOT / 'entity')
-    yaml_path = entity_root / entity_name / 'agent.yaml'
-    version = "1.0.0"
-    if yaml_path.exists():
-        try:
-            import yaml
-            manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
-            v = manifest.get('version')
-            if v:
-                version = str(v)
-        except Exception:
-            pass
+def _init_meta_version(
+    entity_name: str,
+    entity_base: Path | None = None,
+    sys_base: Path | None = None,
+) -> None:
+    """Seed agent_version in status.json from entity's config.yaml (first-time only)."""
+    from nutshell.session_engine.session_status import read_session_status, write_session_status
 
-    meta_dir = get_meta_dir(entity_name, s_base=s_base)
-    params_path = meta_dir / 'core' / 'params.json'
+    entity_root = entity_base or (_REPO_ROOT / 'entity')
+    version = "1.0.0"
+
+    # Try config.yaml first, fall back to legacy agent.yaml
+    config_yaml = entity_root / entity_name / 'config.yaml'
+    agent_yaml = entity_root / entity_name / 'agent.yaml'
+    for yaml_path in (config_yaml, agent_yaml):
+        if yaml_path.exists():
+            try:
+                import yaml
+                manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
+                v = manifest.get('version')
+                if v:
+                    version = str(v)
+                    break
+            except Exception:
+                pass
+
+    system_base = sys_base or _SYSTEM_SESSIONS_DIR
+    system_dir = system_base / get_meta_session_id(entity_name)
     try:
-        params = json.loads(params_path.read_text(encoding='utf-8')) if params_path.exists() else {}
-        if 'agent_version' not in params:
-            params['agent_version'] = version
-            params_path.write_text(json.dumps(params, indent=2, ensure_ascii=False), encoding='utf-8')
+        status = read_session_status(system_dir)
+        if 'agent_version' not in status or status.get('agent_version') is None:
+            write_session_status(system_dir, agent_version=version)
     except Exception:
         pass
 
 
-def get_meta_version(entity_name: str, s_base: Path | None = None) -> str | None:
-    """Return the current agent_version from meta session params, or None."""
-    meta_dir = get_meta_dir(entity_name, s_base=s_base)
-    params_path = meta_dir / 'core' / 'params.json'
-    if not params_path.exists():
+def get_meta_version(entity_name: str, sys_base: Path | None = None) -> str | None:
+    """Return the current agent_version from status.json, or None."""
+    from nutshell.session_engine.session_status import read_session_status
+
+    system_base = sys_base or _SYSTEM_SESSIONS_DIR
+    system_dir = system_base / get_meta_session_id(entity_name)
+    if not (system_dir / "status.json").exists():
         return None
     try:
-        params = json.loads(params_path.read_text(encoding='utf-8'))
-        return params.get('agent_version')
+        status = read_session_status(system_dir)
+        return status.get('agent_version')
     except Exception:
         return None
 
@@ -143,7 +147,6 @@ def _record_version_entry(
 def bump_meta_version(
     entity_name: str,
     note: str = "",
-    s_base: Path | None = None,
     sys_base: Path | None = None,
 ) -> str:
     """Increment meta session's agent_version, record in version history.
@@ -151,15 +154,15 @@ def bump_meta_version(
     Returns the new version string. Called by the meta agent or CLI when
     the meta session's core content is meaningfully updated.
     """
-    current = get_meta_version(entity_name, s_base=s_base) or "1.0.0"
+    from nutshell.session_engine.session_status import write_session_status
+
+    current = get_meta_version(entity_name, sys_base=sys_base) or "1.0.0"
     new_version = _increment_version(current)
 
-    meta_dir = get_meta_dir(entity_name, s_base=s_base)
-    params_path = meta_dir / 'core' / 'params.json'
+    system_base = sys_base or _SYSTEM_SESSIONS_DIR
+    system_dir = system_base / get_meta_session_id(entity_name)
     try:
-        params = json.loads(params_path.read_text(encoding='utf-8')) if params_path.exists() else {}
-        params['agent_version'] = new_version
-        params_path.write_text(json.dumps(params, indent=2, ensure_ascii=False), encoding='utf-8')
+        write_session_status(system_dir, agent_version=new_version)
         _record_version_entry(entity_name, new_version, note, sys_base=sys_base)
     except Exception:
         pass
@@ -184,6 +187,7 @@ def populate_meta_from_entity(
     entity_name: str,
     entity_base: Path | None = None,
     s_base: Path | None = None,
+    sys_base: Path | None = None,
 ) -> None:
     """Copy entity content into meta session core. Called once at meta creation.
 
@@ -200,17 +204,24 @@ def populate_meta_from_entity(
     meta_dir = ensure_meta_session(entity_name, s_base=s_base)
     core_dir = meta_dir / 'core'
 
-    # Copy prompts
-    for src_name, dst_name in [
-        ('prompts/system.md', 'system.md'),
-        ('prompts/heartbeat.md', 'heartbeat.md'),
-        ('prompts/session.md', 'session.md'),
+    # Copy prompts (new names with fallback to old names)
+    for new_src, old_src, dst_name in [
+        ('prompts/system.md', None, 'system.md'),
+        ('prompts/task.md', 'prompts/heartbeat.md', 'task.md'),
+        ('prompts/env.md', 'prompts/session.md', 'env.md'),
     ]:
-        src = entity_dir / src_name
+        src = entity_dir / new_src
+        if not src.exists() and old_src:
+            src = entity_dir / old_src
         if src.exists():
             (core_dir / dst_name).write_text(src.read_text(encoding='utf-8'), encoding='utf-8')
 
-    # Copy tools
+    # Copy tool.md (toolhub-based tool list)
+    tool_md = entity_dir / 'tool.md'
+    if tool_md.exists():
+        (core_dir / 'tool.md').write_text(tool_md.read_text(encoding='utf-8'), encoding='utf-8')
+
+    # Copy tools (legacy JSON + agent-created shell tools)
     dst_tools = core_dir / 'tools'
     _clear_dir_contents(dst_tools)
     src_tools = entity_dir / 'tools'
@@ -232,34 +243,15 @@ def populate_meta_from_entity(
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
 
-    # Bootstrap params from agent.yaml.
-    # Note: only entity-defined fields are written here (model, provider, fallback_*, params.*).
-    # Runtime defaults (heartbeat_interval, tool_providers, session_type, etc.) are filled in
-    # by start_meta_agent() via _META_AGENT_DEFAULTS after this call — callers must invoke
-    # start_meta_agent() after populate_meta_from_entity() for params to be complete.
-    params_src = entity_dir / 'agent.yaml'
-    if params_src.exists():
-        try:
-            import yaml
-            manifest = yaml.safe_load(params_src.read_text(encoding='utf-8')) or {}
-            params = dict(manifest.get('params') or {})
-            if manifest.get('model'):
-                params['model'] = manifest['model']
-            if manifest.get('provider'):
-                params['provider'] = manifest['provider']
-            if manifest.get('fallback_model'):
-                params['fallback_model'] = manifest['fallback_model']
-            if manifest.get('fallback_provider'):
-                params['fallback_provider'] = manifest['fallback_provider']
-            params_path = core_dir / 'params.json'
-            params_path.write_text(json.dumps(params, indent=2, ensure_ascii=False), encoding='utf-8')
-        except Exception:
-            pass
+    # Copy entity's config.yaml into meta session core/.
+    # config.yaml already contains everything (model, provider, thinking, tools, skills, prompts).
+    # start_meta_agent() ensures basic config exists after this call.
+    entity_config = entity_dir / 'config.yaml'
+    if entity_config.exists():
+        shutil.copy2(entity_config, core_dir / 'config.yaml')
 
-    # Seed version from entity
-    _init_meta_version(entity_name, entity_base, s_base)
-
-    _mark_meta_synced(meta_dir, entity_name)
+    # Seed version from entity (writes to _sessions/<entity>_meta/status.json)
+    _init_meta_version(entity_name, entity_base, sys_base=sys_base)
 
 
 def sync_from_entity(entity_name: str, entity_base: Path | None = None, s_base: Path | None = None) -> None:
@@ -302,19 +294,23 @@ def sync_from_entity(entity_name: str, entity_base: Path | None = None, s_base: 
 
 
 def _load_gene_commands(entity_name: str, entity_base: Path | None = None) -> list[str]:
-    """Read the ``gene`` list from the entity's own agent.yaml."""
+    """Read the ``gene`` list from the entity's config.yaml (falls back to agent.yaml)."""
     entity_root = entity_base or (_REPO_ROOT / 'entity')
-    yaml_path = entity_root / entity_name / 'agent.yaml'
-    if not yaml_path.exists():
-        return []
-    try:
-        import yaml
-        manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
-        gene = manifest.get('gene')
-        if gene and isinstance(gene, list):
-            return [str(cmd) for cmd in gene]
-    except Exception:
-        pass
+    entity_dir = entity_root / entity_name
+
+    # Try config.yaml first, fall back to legacy agent.yaml
+    for fname in ('config.yaml', 'agent.yaml'):
+        yaml_path = entity_dir / fname
+        if not yaml_path.exists():
+            continue
+        try:
+            import yaml
+            manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
+            gene = manifest.get('gene')
+            if gene and isinstance(gene, list):
+                return [str(cmd) for cmd in gene]
+        except Exception:
+            pass
     return []
 
 
@@ -389,9 +385,9 @@ _META_SYSTEM_PROMPT = """You are the meta-agent for entity '{entity}'. You are t
 - You evolve independently — entity/{entity}/ is downstream of you
 
 ## Version Management
-Your version is stored in core/params.json as "agent_version".
+Your version is stored in _sessions/{entity}_meta/status.json as "agent_version".
 When you make meaningful improvements to core/:
-1. Edit core/params.json — increment the patch version (e.g. "1.0.0" → "1.0.1")
+1. Use the CLI or bump the version in _sessions/{entity}_meta/status.json (e.g. "1.0.0" → "1.0.1")
 2. Append to _sessions/{entity}_meta/version_history.json:
    {{"version": "X.Y.Z", "ts": "<ISO timestamp>", "note": "what changed"}}
 3. Open a PR to sync changes back to entity/{entity}/ (see heartbeat for steps)
@@ -423,8 +419,8 @@ Keep core/memory.md accurate:
 - Key learnings from archived sessions
 
 ## 3. Sync core updates back to entity (if you improved anything)
-If you updated core/ files (system.md, heartbeat.md, tools/, skills/):
-a. Bump version — edit core/params.json, increment "agent_version"
+If you updated core/ files (system.md, task.md, tools/, skills/):
+a. Bump version — update "agent_version" in _sessions/{entity}_meta/status.json
 b. Record — append to _sessions/{entity}_meta/version_history.json:
    {{"version":"X.Y.Z","ts":"<ISO>","note":"<what changed>"}}
 c. Create PR to mecam/entity-update branch:
@@ -432,10 +428,10 @@ c. Create PR to mecam/entity-update branch:
    cd <repo_root>
    git checkout -B mecam/entity-update
    cp sessions/{entity}_meta/core/system.md entity/{entity}/prompts/system.md
-   cp sessions/{entity}_meta/core/heartbeat.md entity/{entity}/prompts/heartbeat.md
-   cp sessions/{entity}_meta/core/session.md entity/{entity}/prompts/session.md
+   cp sessions/{entity}_meta/core/task.md entity/{entity}/prompts/task.md
+   cp sessions/{entity}_meta/core/env.md entity/{entity}/prompts/env.md
    cp sessions/{entity}_meta/core/tools/*.json entity/{entity}/tools/
-   # Update version in entity/{entity}/agent.yaml
+   # Update version in entity/{entity}/config.yaml
    git add entity/{entity}/
    git commit -m "meta: update entity {entity} vX.Y.Z"
    gh pr create --title "Entity update: {entity} vX.Y.Z" --base main --head mecam/entity-update --body "Automated update from meta-agent dream cycle."
@@ -445,13 +441,6 @@ Be intelligent — consider context and importance, not just mechanical rules.
 
 # TODO: more efficient tools for learning what to update (session diff summaries, change detection)
 """
-
-_META_AGENT_DEFAULTS = {
-    "session_type": "persistent",
-    "heartbeat_interval": 21600,
-    "default_task": "Dream: review and process all child sessions for this entity",
-}
-
 
 def start_meta_agent(
     entity_name: str,
@@ -465,8 +454,8 @@ def start_meta_agent(
     Returns the system dir path (_sessions/<entity>_meta/).
     """
     from nutshell.session_engine.session_status import ensure_session_status
-    from nutshell.session_engine.session_params import read_session_params, write_session_params
-    from nutshell.session_engine.task_cards import ensure_heartbeat_card, migrate_legacy_default_task
+    from nutshell.session_engine.session_config import ensure_config
+    from nutshell.session_engine.task_cards import ensure_card, migrate_legacy_task_sources
 
     sessions_base = s_base or _SESSIONS_DIR
     system_base = sys_base or _SYSTEM_SESSIONS_DIR
@@ -502,27 +491,24 @@ def start_meta_agent(
             encoding="utf-8",
         )
 
-    heartbeat_md = core_dir / "heartbeat.md"
-    if not heartbeat_md.read_text(encoding="utf-8").strip():
-        heartbeat_md.write_text(
+    task_md = core_dir / "task.md"
+    if not task_md.read_text(encoding="utf-8").strip():
+        task_md.write_text(
             _META_HEARTBEAT_PROMPT.format(entity=entity_name).strip() + "\n",
             encoding="utf-8",
         )
 
-    current_params = read_session_params(meta_dir)
-    updates: dict = {}
-    for key, default_val in _META_AGENT_DEFAULTS.items():
-        if current_params.get(key) in (None, False, 0, ""):
-            updates[key] = default_val
-    if updates:
-        write_session_params(meta_dir, **updates)
-    params_after = read_session_params(meta_dir)
-    ensure_heartbeat_card(
+    # Ensure basic config exists
+    ensure_config(meta_dir)
+
+    # Create meta task card (6-hour recurring cycle)
+    ensure_card(
         core_dir / "tasks",
-        interval=float(params_after.get("heartbeat_interval") or _META_AGENT_DEFAULTS["heartbeat_interval"]),
-        content=params_after.get("default_task"),
+        name="meta",
+        interval=21600.0,
+        description="Dream: review and process all child sessions for this entity",
     )
-    migrate_legacy_default_task(meta_dir)
+    migrate_legacy_task_sources(meta_dir)
 
     return system_dir
 

@@ -9,7 +9,6 @@ DOCS_DIR = REPO_ROOT / "docs" / "entity"
 ACTIVE_ENTITIES = [
     "agent",
     "nutshell_dev",
-    "nutshell_dev_codex",
 ]
 
 

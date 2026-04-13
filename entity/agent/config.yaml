@@ -1,0 +1,22 @@
+name: agent
+description: A general-purpose assistant with basic capabilities.
+model: gpt-5.4
+provider: codex-oauth
+fallback_model: kimi-for-coding
+fallback_provider: kimi-coding-plan
+max_iterations: 20
+thinking: true
+thinking_budget: 8000
+thinking_effort: high
+tool_providers:
+  web_search: brave
+prompts:
+  system: prompts/system.md
+  task: prompts/task.md
+  env: prompts/env.md
+tools:
+  - tools/bash.json
+  - tools/skill.json
+  - tools/web_search.json
+skills:
+  - skills/creator-mode

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from nutshell.session_engine.session_params import read_session_params, write_session_params
+from nutshell.session_engine.session_params import read_session_params
 from nutshell.session_engine.task_cards import TaskCard, save_card
 from ui.web.app import create_app
 from ui.web.sessions import _is_stale_stopped
@@ -117,44 +117,40 @@ class WebUnitTests(unittest.TestCase):
             self.assertFalse(tasks_md.exists(), "tasks.md should be removed after migration")
             cards = resp.json()["cards"]
             self.assertEqual(len(cards), 1)
-            self.assertEqual(cards[0]["content"], "legacy task content")
+            self.assertEqual(cards[0]["description"], "legacy task content")
 
-    def test_get_tasks_migrates_legacy_default_task_into_heartbeat_card(self) -> None:
+    def test_get_tasks_returns_task_cards_with_new_schema(self) -> None:
+        """GET /tasks returns task cards with new field names (description, last_finished_at)."""
         with TemporaryDirectory() as td:
             root = _make_session(Path(td))
-            write_session_params(
-                root / "sessions" / "test-session",
-                session_type="persistent",
-                default_task="check inbox",
-                heartbeat_interval=300,
-            )
+            tasks_dir = root / "sessions" / "test-session" / "core" / "tasks"
+            save_card(tasks_dir, TaskCard(name="duty", description="check inbox", interval=300))
             app = create_app(root / "sessions", root / "_sessions")
             with TestClient(app) as client:
                 resp = client.get("/api/sessions/test-session/tasks")
             self.assertEqual(resp.status_code, 200)
             cards = resp.json()["cards"]
-            heartbeat = next(c for c in cards if c["name"] == "heartbeat")
-            self.assertEqual(heartbeat["content"], "check inbox")
-            self.assertEqual(heartbeat["interval"], 300)
-            self.assertIsNone(read_session_params(root / "sessions" / "test-session")["default_task"])
+            duty = next(c for c in cards if c["name"] == "duty")
+            self.assertEqual(duty["description"], "check inbox")
+            self.assertEqual(duty["interval"], 300)
 
     def test_put_tasks_by_name_creates_named_card(self) -> None:
-        """PUT /tasks with {name, content} should create/update the named card."""
+        """PUT /tasks with {name, description} should create/update the named card."""
         with TemporaryDirectory() as td:
             root = _make_session(Path(td))
             app = create_app(root / "sessions", root / "_sessions")
             with TestClient(app) as client:
                 put_resp = client.put(
                     "/api/sessions/test-session/tasks",
-                    json={"name": "heartbeat", "content": "check messages"},
+                    json={"name": "duty", "description": "check messages"},
                 )
                 self.assertEqual(put_resp.status_code, 200)
                 get_resp = client.get("/api/sessions/test-session/tasks")
             cards = get_resp.json()["cards"]
             names = [c["name"] for c in cards]
-            self.assertIn("heartbeat", names)
-            card = next(c for c in cards if c["name"] == "heartbeat")
-            self.assertEqual(card["content"], "check messages")
+            self.assertIn("duty", names)
+            card = next(c for c in cards if c["name"] == "duty")
+            self.assertEqual(card["description"], "check messages")
 
     def test_put_tasks_by_name_updates_existing_card_not_duplicates(self) -> None:
         """Saving a card by name overwrites it, does not create a second card."""
@@ -162,13 +158,13 @@ class WebUnitTests(unittest.TestCase):
             root = _make_session(Path(td))
             app = create_app(root / "sessions", root / "_sessions")
             with TestClient(app) as client:
-                client.put("/api/sessions/test-session/tasks", json={"name": "heartbeat", "content": "v1"})
-                client.put("/api/sessions/test-session/tasks", json={"name": "heartbeat", "content": "v2"})
+                client.put("/api/sessions/test-session/tasks", json={"name": "duty", "description": "v1"})
+                client.put("/api/sessions/test-session/tasks", json={"name": "duty", "description": "v2"})
                 get_resp = client.get("/api/sessions/test-session/tasks")
             cards = get_resp.json()["cards"]
-            heartbeat_cards = [c for c in cards if c["name"] == "heartbeat"]
-            self.assertEqual(len(heartbeat_cards), 1, "second PUT must update, not duplicate")
-            self.assertEqual(heartbeat_cards[0]["content"], "v2")
+            duty_cards = [c for c in cards if c["name"] == "duty"]
+            self.assertEqual(len(duty_cards), 1, "second PUT must update, not duplicate")
+            self.assertEqual(duty_cards[0]["description"], "v2")
 
     def test_put_tasks_by_name_preserves_existing_metadata(self) -> None:
         """Editing an existing recurring card must not wipe its scheduling metadata."""
@@ -178,11 +174,11 @@ class WebUnitTests(unittest.TestCase):
             save_card(
                 tasks_dir,
                 TaskCard(
-                    name="heartbeat",
-                    content="v1",
+                    name="duty",
+                    description="v1",
                     interval=600,
                     status="paused",
-                    last_run_at="2026-04-09T10:00:00",
+                    last_finished_at="2026-04-09T10:00:00",
                     created_at="2026-04-08T09:00:00",
                 ),
             )
@@ -190,19 +186,19 @@ class WebUnitTests(unittest.TestCase):
             with TestClient(app) as client:
                 put_resp = client.put(
                     "/api/sessions/test-session/tasks",
-                    json={"name": "heartbeat", "content": "v2"},
+                    json={"name": "duty", "description": "v2"},
                 )
                 self.assertEqual(put_resp.status_code, 200)
                 get_resp = client.get("/api/sessions/test-session/tasks")
 
-            card = next(c for c in get_resp.json()["cards"] if c["name"] == "heartbeat")
-            self.assertEqual(card["content"], "v2")
+            card = next(c for c in get_resp.json()["cards"] if c["name"] == "duty")
+            self.assertEqual(card["description"], "v2")
             self.assertEqual(card["interval"], 600)
             self.assertEqual(card["status"], "paused")
-            self.assertEqual(card["last_run_at"], "2026-04-09T10:00:00")
+            self.assertEqual(card["last_finished_at"], "2026-04-09T10:00:00")
             self.assertEqual(card["created_at"], "2026-04-08T09:00:00")
 
-    def test_put_tasks_by_name_updates_schedule_fields_and_syncs_heartbeat_interval(self) -> None:
+    def test_put_tasks_by_name_updates_interval(self) -> None:
         with TemporaryDirectory() as td:
             root = _make_session(Path(td))
             app = create_app(root / "sessions", root / "_sessions")
@@ -210,30 +206,25 @@ class WebUnitTests(unittest.TestCase):
                 resp = client.put(
                     "/api/sessions/test-session/tasks",
                     json={
-                        "name": "heartbeat",
-                        "content": "check messages",
+                        "name": "duty",
+                        "description": "check messages",
                         "interval": 900,
-                        "starts_at": "2026-04-10T09:00:00",
-                        "ends_at": "2026-04-10T18:00:00",
                     },
                 )
                 self.assertEqual(resp.status_code, 200)
                 cards = client.get("/api/sessions/test-session/tasks").json()["cards"]
-            heartbeat = next(c for c in cards if c["name"] == "heartbeat")
-            self.assertEqual(heartbeat["interval"], 900)
-            self.assertEqual(heartbeat["starts_at"], "2026-04-10T09:00:00")
-            self.assertEqual(heartbeat["ends_at"], "2026-04-10T18:00:00")
-            self.assertEqual(read_session_params(root / "sessions" / "test-session")["heartbeat_interval"], 900)
+            duty = next(c for c in cards if c["name"] == "duty")
+            self.assertEqual(duty["interval"], 900)
 
     def test_put_tasks_can_rename_card(self) -> None:
         with TemporaryDirectory() as td:
             root = _make_session(Path(td))
             app = create_app(root / "sessions", root / "_sessions")
             with TestClient(app) as client:
-                client.put("/api/sessions/test-session/tasks", json={"name": "followup", "content": "v1"})
+                client.put("/api/sessions/test-session/tasks", json={"name": "followup", "description": "v1"})
                 resp = client.put(
                     "/api/sessions/test-session/tasks",
-                    json={"previous_name": "followup", "name": "followup-next", "content": "v2"},
+                    json={"previous_name": "followup", "name": "followup-next", "description": "v2"},
                 )
                 self.assertEqual(resp.status_code, 200)
                 cards = client.get("/api/sessions/test-session/tasks").json()["cards"]
@@ -244,17 +235,18 @@ class WebUnitTests(unittest.TestCase):
             root = _make_session(Path(td))
             app = create_app(root / "sessions", root / "_sessions")
             with TestClient(app) as client:
-                client.put("/api/sessions/test-session/tasks", json={"name": "followup", "content": "v1"})
+                client.put("/api/sessions/test-session/tasks", json={"name": "followup", "description": "v1"})
                 resp = client.put(
                     "/api/sessions/test-session/tasks",
-                    json={"previous_name": "followup", "name": "bad/name", "content": "v2"},
+                    json={"previous_name": "followup", "name": "bad/name", "description": "v2"},
                 )
                 self.assertEqual(resp.status_code, 400)
                 cards = client.get("/api/sessions/test-session/tasks").json()["cards"]
             self.assertEqual({c["name"] for c in cards}, {"followup"})
-            self.assertEqual(cards[0]["content"], "v1")
+            self.assertEqual(cards[0]["description"], "v1")
 
     def test_put_tasks_rejects_invalid_schedule_window(self) -> None:
+        """starts_at/ends_at validation still works for backward compat."""
         with TemporaryDirectory() as td:
             root = _make_session(Path(td))
             app = create_app(root / "sessions", root / "_sessions")
@@ -263,7 +255,7 @@ class WebUnitTests(unittest.TestCase):
                     "/api/sessions/test-session/tasks",
                     json={
                         "name": "followup",
-                        "content": "v1",
+                        "description": "v1",
                         "starts_at": "2026-04-10T18:00:00",
                         "ends_at": "2026-04-10T09:00:00",
                     },
@@ -275,7 +267,7 @@ class WebUnitTests(unittest.TestCase):
             root = _make_session(Path(td))
             app = create_app(root / "sessions", root / "_sessions")
             with TestClient(app) as client:
-                client.put("/api/sessions/test-session/tasks", json={"name": "cleanup", "content": "do it"})
+                client.put("/api/sessions/test-session/tasks", json={"name": "cleanup", "description": "do it"})
                 delete_resp = client.delete("/api/sessions/test-session/tasks/cleanup")
                 self.assertEqual(delete_resp.status_code, 200)
                 cards = client.get("/api/sessions/test-session/tasks").json()["cards"]

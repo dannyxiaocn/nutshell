@@ -2,7 +2,7 @@
 - Agent-created (session-scoped) tools in sessions/<id>/core/tools/
 - Session skills in sessions/<id>/core/skills/
 - Memory injection from sessions/<id>/core/memory.md
-- Tool-provider switching via params.json tool_providers
+- Tool-provider switching via config.yaml tool_providers
 - No duplication on repeated capability reloads
 """
 import json
@@ -13,7 +13,7 @@ from nutshell.core.provider import Provider
 from nutshell.core.agent import Agent
 from nutshell.core.skill import Skill
 from nutshell.core.tool import tool
-from nutshell.session_engine.session_params import write_session_params
+from nutshell.session_engine.session_config import write_config
 from nutshell.session_engine.session import Session
 from nutshell.session_engine.task_cards import TaskCard, save_card
 
@@ -33,11 +33,11 @@ def make_session(tmp_path: Path, agent: Agent, session_id: str = "test") -> Sess
     session = Session(agent, session_id=session_id, base_dir=tmp_path, system_base=system_base)
     # Pre-populate core/ prompt files that _load_session_capabilities reads
     (session.core_dir / "system.md").write_text(agent.system_prompt or "", encoding="utf-8")
-    (session.core_dir / "heartbeat.md").write_text(
-        getattr(agent, "heartbeat_prompt", "") or "", encoding="utf-8"
+    (session.core_dir / "task.md").write_text(
+        getattr(agent, "task_prompt", "") or "", encoding="utf-8"
     )
-    (session.core_dir / "session.md").write_text(
-        getattr(agent, "session_context_template", "") or "", encoding="utf-8"
+    (session.core_dir / "env.md").write_text(
+        getattr(agent, "env_template", "") or "", encoding="utf-8"
     )
     return session
 
@@ -72,25 +72,25 @@ def test_session_tool_added(tmp_path):
     assert "my_new_tool" in names
 
 
-def test_session_tool_overrides_entity_tool(tmp_path):
-    """Session tool with same name replaces the original tool."""
-    @tool(description="original description")
-    def my_tool() -> str:
-        return "original"
-
-    agent = Agent(system_prompt="Base", tools=[my_tool], provider=MockProvider([]))
+def test_session_tool_updated_on_reload(tmp_path):
+    """Updating a session tool's JSON updates it on next _load_session_capabilities."""
+    agent = Agent(system_prompt="Base", provider=MockProvider([]))
     session = make_session(tmp_path, agent)
 
-    # First load to populate core/tools/ with original
-    session._load_session_capabilities()
-
-    # Now override with a new description
-    write_tool_files(session.core_dir / "tools", "my_tool", description="overridden description")
+    write_tool_files(session.core_dir / "tools", "my_tool", description="first description")
     session._load_session_capabilities()
 
     matching = [t for t in agent.tools if t.name == "my_tool"]
     assert len(matching) == 1
-    assert matching[0].description == "overridden description"
+    assert matching[0].description == "first description"
+
+    # Update the tool description
+    write_tool_files(session.core_dir / "tools", "my_tool", description="updated description")
+    session._load_session_capabilities()
+
+    matching = [t for t in agent.tools if t.name == "my_tool"]
+    assert len(matching) == 1
+    assert matching[0].description == "updated description"
 
 
 @pytest.mark.asyncio
@@ -400,7 +400,7 @@ def test_memory_layers_removed_on_next_reload(tmp_path):
 # ── Tool-provider override ────────────────────────────────────────────────────
 
 def test_tool_provider_override_switches_impl(tmp_path, monkeypatch):
-    """params.json tool_providers field replaces the tool's implementation callable."""
+    """config.yaml tool_providers field replaces the tool's implementation callable."""
     import nutshell.tool_engine.registry as _registry
 
     call_log: list[str] = []
@@ -430,7 +430,7 @@ def test_tool_provider_override_switches_impl(tmp_path, monkeypatch):
     }
     (session.core_dir / "tools" / "web_search.json").write_text(json.dumps(tool_schema))
 
-    write_session_params(session.session_dir, tool_providers={"web_search": "tavily"})
+    write_config(session.session_dir, tool_providers={"web_search": "tavily"})
     session._load_session_capabilities()
 
     ws = next(t for t in agent.tools if t.name == "web_search")
@@ -468,7 +468,7 @@ def test_tool_provider_unknown_keeps_original_impl(tmp_path, monkeypatch):
     sh.write_text('#!/bin/bash\necho "shell result"')
     sh.chmod(0o755)
 
-    write_session_params(session.session_dir, tool_providers={"custom_search": "nonexistent"})
+    write_config(session.session_dir, tool_providers={"custom_search": "nonexistent"})
     session._load_session_capabilities()
 
     ws = next(t for t in agent.tools if t.name == "custom_search")
@@ -477,23 +477,22 @@ def test_tool_provider_unknown_keeps_original_impl(tmp_path, monkeypatch):
     assert "shell result" in result
 
 
-# ── Heartbeat history pruning ──────────────────────────────────────────────────
+# ── Task history pruning ──────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_heartbeat_replaces_prompt_with_compact_marker(tmp_path):
-    """After a heartbeat activation, the verbose prompt is replaced with a compact marker."""
+async def test_task_replaces_prompt_with_compact_marker(tmp_path):
+    """After a task activation, the verbose prompt is replaced with a compact marker."""
     from nutshell.core.types import AgentResult
 
-    # MockProvider.complete() returns (content_str, [ToolCall])
     responses = [("Making progress", [])]
     provider = MockProvider(iter(responses))
     agent = Agent(system_prompt="sys", provider=provider)
     session = make_session(tmp_path, agent)
 
-    # Write the recurring heartbeat card so a real heartbeat activation fires.
-    save_card(session.tasks_dir, TaskCard(name="heartbeat", content="- [ ] Do something", interval=600))
-    (session.core_dir / "heartbeat.md").write_text(
-        "Heartbeat activation.\n\nCurrent tasks:\n{tasks}", encoding="utf-8"
+    # Write the recurring task card so a real task activation fires.
+    save_card(session.tasks_dir, TaskCard(name="duty", description="- [ ] Do something", interval=600))
+    (session.core_dir / "task.md").write_text(
+        "Task wakeup.\n\nCurrent tasks:\n{task}", encoding="utf-8"
     )
     session._load_session_capabilities()
 
@@ -502,24 +501,24 @@ async def test_heartbeat_replaces_prompt_with_compact_marker(tmp_path):
     # History should have 2 messages: compact marker + assistant response
     history = agent._history
     assert len(history) >= 2
-    # First new message should be compact marker, not verbose heartbeat prompt
+    # First new message should be compact marker, not verbose prompt
     user_msgs = [m for m in history if m.role == "user"]
     assert user_msgs, "No user message in history"
-    assert user_msgs[-1].content.startswith("[Heartbeat "), (
+    assert user_msgs[-1].content.startswith("[Task:"), (
         f"Expected compact marker, got: {user_msgs[-1].content!r}"
     )
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_compact_marker_recognized_by_reshape_history(tmp_path):
-    """_reshape_history drops compact [Heartbeat ...] markers like full prompts."""
+async def test_task_compact_marker_recognized_by_reshape_history(tmp_path):
+    """_reshape_history drops compact [Task:...] markers like full prompts."""
     from nutshell.core.types import Message
 
     agent = Agent(system_prompt="sys", provider=MockProvider(iter([])))
     session = make_session(tmp_path, agent)
 
     # Simulate an orphaned compact marker at end of history
-    agent._history = [Message(role="user", content="[Heartbeat 2026-01-01T00:00:00]")]
+    agent._history = [Message(role="user", content="[Task:duty 2026-01-01T00:00:00]")]
 
     result = session._reshape_history("new user message")
     assert result == "new user message"
@@ -543,11 +542,8 @@ def test_render_memory_layer_long_truncated():
     content = "\n".join(lines)
     result = Agent._render_memory_layer("bigfile", content)
     assert "## Memory: bigfile" in result
-    # First lines present
     assert "line 0" in result
-    # Lines beyond limit absent
     assert f"line {Agent._MEMORY_LAYER_INLINE_LINES + 5}" not in result
-    # Truncation hint with count and bash path present
     assert "omitted" in result
     assert "cat core/memory/bigfile.md" in result
 

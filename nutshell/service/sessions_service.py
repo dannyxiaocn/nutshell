@@ -6,7 +6,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from nutshell.session_engine.session_params import read_session_params
+from nutshell.session_engine.session_config import read_config
 from nutshell.session_engine.session_status import read_session_status, write_session_status, pid_alive as _pid_alive
 
 
@@ -51,11 +51,11 @@ def get_session(session_id: str, sessions_dir: Path, system_sessions_dir: Path) 
         from nutshell.session_engine.task_cards import migrate_legacy_task_sources
         migrate_legacy_task_sources(session_dir)
     status_payload = read_session_status(system_dir)
-    params = read_session_params(session_dir) if session_dir.exists() else {}
+    params = read_config(session_dir) if session_dir.exists() else {}
     from nutshell.session_engine.task_cards import has_pending_cards
     tasks_dir = session_dir / "core" / "tasks"
     has_tasks = has_pending_cards(tasks_dir)
-    cards_mtimes = [f.stat().st_mtime for f in tasks_dir.glob("*.md")] if tasks_dir.is_dir() else []
+    cards_mtimes = [f.stat().st_mtime for f in list(tasks_dir.glob("*.json")) + list(tasks_dir.glob("*.md"))] if tasks_dir.is_dir() else []
     tasks_mtime = datetime.fromtimestamp(max(cards_mtimes)).isoformat() if cards_mtimes else None
     pid_alive = _pid_alive(status_payload.get("pid"))
     status = status_payload.get("status", "active")
@@ -63,7 +63,6 @@ def get_session(session_id: str, sessions_dir: Path, system_sessions_dir: Path) 
         "id": session_id,
         "entity": manifest.get("entity", "?"),
         "created_at": manifest.get("created_at", ""),
-        "heartbeat": manifest.get("heartbeat", 10.0),
         "pid_alive": pid_alive,
         "status": status,
         "has_tasks": has_tasks,
@@ -73,9 +72,6 @@ def get_session(session_id: str, sessions_dir: Path, system_sessions_dir: Path) 
         "updated_at": status_payload.get("updated_at"),
         "stopped_at": status_payload.get("stopped_at"),
         "tasks_updated_at": tasks_mtime,
-        "heartbeat_interval": status_payload.get("heartbeat_interval", 600.0),
-        "session_type": params.get("session_type", "default"),
-        "persistent": params.get("session_type") == "persistent",
         "params": params,
         "alive": pid_alive and status != "stopped",
     }
@@ -112,7 +108,8 @@ def list_sessions(sessions_dir: Path, system_sessions_dir: Path, exclude_meta: b
     return sort_sessions(result)
 
 
-def create_session(session_id: str, entity: str, heartbeat: float, sessions_dir: Path, system_sessions_dir: Path) -> dict:
+def create_session(session_id: str, entity: str, sessions_dir: Path, system_sessions_dir: Path, **_kwargs) -> dict:
+    """Create a new session. Accepts legacy heartbeat= kwarg for backward compat (ignored)."""
     _validate_session_id(session_id)
     from nutshell.session_engine.session_init import init_session
     entity_path = Path(entity)
@@ -131,7 +128,6 @@ def create_session(session_id: str, entity: str, heartbeat: float, sessions_dir:
         sessions_base=sessions_dir,
         system_sessions_base=system_sessions_dir,
         entity_base=entity_base,
-        heartbeat=heartbeat,
     )
     return {"id": session_id, "entity": entity}
 

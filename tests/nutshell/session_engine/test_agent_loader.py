@@ -15,7 +15,8 @@ class AgentLoaderUnitTests(unittest.TestCase):
             entity_dir = root / "myagent"
             (entity_dir / "prompts").mkdir(parents=True)
             (entity_dir / "prompts" / "system.md").write_text("system prompt", encoding="utf-8")
-            (entity_dir / "agent.yaml").write_text(
+            # Use config.yaml (new name)
+            (entity_dir / "config.yaml").write_text(
                 "name: myagent\nmodel: claude-sonnet-4-6\nprovider: anthropic\nprompts:\n  system: prompts/system.md\ntools: []\nskills: []\n",
                 encoding="utf-8",
             )
@@ -23,7 +24,8 @@ class AgentLoaderUnitTests(unittest.TestCase):
         self.assertEqual(agent.system_prompt, "system prompt")
         self.assertEqual(agent.model, "claude-sonnet-4-6")
 
-    def test_load_falls_back_to_default_model_when_absent(self) -> None:
+    def test_load_falls_back_to_agent_yaml(self) -> None:
+        """AgentLoader loads from legacy agent.yaml when config.yaml is absent."""
         with TemporaryDirectory() as td:
             root = Path(td)
             entity_dir = root / "minimal"
@@ -31,3 +33,22 @@ class AgentLoaderUnitTests(unittest.TestCase):
             (entity_dir / "agent.yaml").write_text("name: minimal\n", encoding="utf-8")
             agent = AgentLoader().load(entity_dir)
         self.assertEqual(agent.model, "claude-sonnet-4-6")
+
+    def test_load_with_task_and_env_prompts(self) -> None:
+        """AgentLoader reads new task + env prompt keys from config.yaml."""
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            entity_dir = root / "full"
+            (entity_dir / "prompts").mkdir(parents=True)
+            (entity_dir / "prompts" / "system.md").write_text("sys", encoding="utf-8")
+            (entity_dir / "prompts" / "task.md").write_text("task prompt", encoding="utf-8")
+            (entity_dir / "prompts" / "env.md").write_text("env template", encoding="utf-8")
+            (entity_dir / "config.yaml").write_text(
+                "name: full\nmodel: claude-sonnet-4-6\nprovider: anthropic\n"
+                "prompts:\n  system: prompts/system.md\n  task: prompts/task.md\n  env: prompts/env.md\n"
+                "tools: []\nskills: []\n",
+                encoding="utf-8",
+            )
+            agent = AgentLoader().load(entity_dir)
+        self.assertEqual(agent.task_prompt, "task prompt")
+        self.assertEqual(agent.env_template, "env template")

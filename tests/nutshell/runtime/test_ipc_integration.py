@@ -261,7 +261,7 @@ async def test_session_chat_composes_hook_events_with_external_callbacks(tmp_pat
 
 @pytest.mark.asyncio
 async def test_session_tick_emits_hook_events_and_preserves_turn_flags(tmp_path):
-    """tick() streams heartbeat trigger, tool lifecycle, and pre-trigger metadata together."""
+    """tick() streams task trigger, tool lifecycle, and pre-trigger metadata together."""
     provider = MockProvider(
         [
             (
@@ -269,7 +269,7 @@ async def test_session_tick_emits_hook_events_and_preserves_turn_flags(tmp_path)
                 [ToolCall(id="tc-1", name="echo_tool", input={"text": "beat"})],
                 TokenUsage(input_tokens=4, output_tokens=1),
             ),
-            ("heartbeat done", [], TokenUsage(input_tokens=6, output_tokens=3)),
+            ("task done", [], TokenUsage(input_tokens=6, output_tokens=3)),
         ]
     )
 
@@ -282,7 +282,7 @@ async def test_session_tick_emits_hook_events_and_preserves_turn_flags(tmp_path)
     session._load_session_capabilities = lambda: None
     session._ipc = FileIPC(session.system_dir)
 
-    result = await session.tick(TaskCard(name="heartbeat", content="stay alive", interval=60))
+    result = await session.tick(TaskCard(name="duty", description="stay alive", interval=60))
 
     runtime_events = read_jsonl(session.system_dir / "events.jsonl")
     context_events = read_jsonl(session.system_dir / "context.jsonl")
@@ -290,7 +290,7 @@ async def test_session_tick_emits_hook_events_and_preserves_turn_flags(tmp_path)
     assert result is not None
     assert result.iterations == 2
     assert [e["type"] for e in runtime_events] == [
-        "heartbeat_trigger",
+        "task_wakeup",
         "model_status",
         "loop_start",
         "tool_call",
@@ -300,7 +300,7 @@ async def test_session_tick_emits_hook_events_and_preserves_turn_flags(tmp_path)
     ]
     assert runtime_events[5]["iterations"] == 2
 
-    assert context_events[0]["triggered_by"] == "heartbeat"
+    assert context_events[0]["triggered_by"] == "task:duty"
     assert context_events[0]["pre_triggered"] is True
     assert context_events[0]["has_streaming_tools"] is True
     assert context_events[0]["usage"] == {"input": 10, "output": 4, "cache_read": 0, "cache_write": 0}

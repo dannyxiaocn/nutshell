@@ -88,7 +88,7 @@ def test_build_kanban_preserves_legacy_text_for_migrated_task_card(tmp_path):
     sessions_base, _ = _seed_session(tmp_path, "s3-migrated")
     save_card(
         sessions_base / "s3-migrated" / "core" / "tasks",
-        TaskCard(name="migrated_task", content="- [ ] task A", interval=None),
+        TaskCard(name="migrated_task", description="- [ ] task A", interval=None),
     )
     fake_sessions = [{"id": "s3-migrated", "entity": "agent", "status": "active", "model_state": "idle"}]
     entries = build_kanban(fake_sessions, sessions_base)

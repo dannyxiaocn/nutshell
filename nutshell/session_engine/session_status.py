@@ -10,12 +10,12 @@ from typing import Any
 # All runtime/dynamic state lives here.
 DEFAULT_SESSION_STATUS: dict[str, Any] = {
     "model_state": "idle",        # "running" | "idle"
-    "model_source": "system",     # "user" | "heartbeat" | "system"
+    "model_source": "system",     # "user" | "task" | "system"
     "updated_at": None,
     "last_run_at": None,          # ISO timestamp of last model run completion
     "pid": None,                  # Daemon process PID (int | None)
     "status": "active",           # "active" | "stopped"
-    "heartbeat_interval": None,   # Mirror of params.json heartbeat_interval (for UI/watcher)
+    "agent_version": None,        # Copied from meta session; used to detect stale sessions
 }
 
 

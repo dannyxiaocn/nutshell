@@ -63,7 +63,6 @@ class ToolEngineTest(unittest.IsolatedAsyncioTestCase):
             script.write_text("#!/bin/sh\nprintf 'shell tool'\n", encoding="utf-8")
             tool = ToolLoader(default_workdir=tmp).load(path)
         self.assertEqual(tool.name, "echo")
-        self.assertEqual(tool._func.__name__, "echo")
 
     async def test_skill_tool_renders_arguments_and_related_files(self) -> None:
         with TemporaryDirectory() as tmp:

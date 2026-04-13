@@ -23,12 +23,12 @@ class FullSystemTest(unittest.TestCase):
             meta_dir = sessions_base / "demo_meta"
 
             (entity_dir / "prompts").mkdir(parents=True)
-            (entity_dir / "agent.yaml").write_text("name: demo\nprovider: anthropic\n", encoding="utf-8")
+            (entity_dir / "config.yaml").write_text("name: demo\nprovider: anthropic\n", encoding="utf-8")
             (meta_dir / "core" / "tools").mkdir(parents=True)
             (meta_dir / "core" / "skills").mkdir(parents=True)
             (meta_dir / "core" / "memory").mkdir(parents=True)
             (meta_dir / "playground").mkdir(parents=True)
-            for name, content in [("system.md", "sys"), ("heartbeat.md", "beat"), ("session.md", "sess"), ("memory.md", "memory")]:
+            for name, content in [("system.md", "sys"), ("task.md", "task"), ("env.md", "env"), ("memory.md", "memory"), ("config.yaml", "name: demo\n")]:
                 (meta_dir / "core" / name).write_text(content, encoding="utf-8")
 
             def fake_create_session_venv(session_dir: Path) -> Path:
@@ -39,7 +39,7 @@ class FullSystemTest(unittest.TestCase):
             with patch("nutshell.session_engine.session_init._create_session_venv", side_effect=fake_create_session_venv), patch(
                 "nutshell.session_engine.session_init.ensure_meta_session",
                 side_effect=lambda *args, **kwargs: meta_dir,
-            ), patch("nutshell.session_engine.session_init._meta_is_synced", return_value=True), patch(
+            ), patch(
                 "nutshell.session_engine.session_init.ensure_gene_initialized"
             ), patch(
                 "nutshell.session_engine.session_init.start_meta_agent"

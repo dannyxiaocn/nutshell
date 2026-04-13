@@ -12,11 +12,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from nutshell.session_engine.session_params import ensure_session_params, write_session_params
+from nutshell.session_engine.session_config import read_config, write_config, ensure_config
 from nutshell.session_engine.session_status import ensure_session_status, write_session_status
-from nutshell.session_engine.task_cards import ensure_heartbeat_card
+from nutshell.session_engine.task_cards import ensure_card
 from nutshell.session_engine.entity_state import (
-    _meta_is_synced,
     ensure_gene_initialized,
     ensure_meta_session,
     get_meta_version,
@@ -64,32 +63,6 @@ def _create_session_venv(session_dir: Path) -> Path:
     return venv_path
 
 
-def _load_entity_params(entity_dir: Path) -> dict:
-    """Read the ``params`` mapping from an entity's agent.yaml (if any).
-
-    Returns a dict of param overrides (e.g. session_type, heartbeat_task,
-    heartbeat_interval) that should be written into the session's params.json.
-    Converts legacy ``persistent: true`` to ``session_type: "persistent"``.
-    """
-    yaml_path = entity_dir / "agent.yaml"
-    if not yaml_path.exists():
-        return {}
-    try:
-        import yaml
-        manifest = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
-    params = dict(manifest.get("params") or {})
-    # Backward compat: convert persistent bool → session_type
-    if "persistent" in params and "session_type" not in params:
-        if params.pop("persistent"):
-            params["session_type"] = "persistent"
-        else:
-            params.pop("persistent")
-    if "default_task" in params and "heartbeat_task" not in params:
-        params["heartbeat_task"] = params["default_task"]
-    return params
-
 def init_session(
     session_id: str,
     entity_name: str,
@@ -97,8 +70,8 @@ def init_session(
     sessions_base: Path | None = None,
     system_sessions_base: Path | None = None,
     entity_base: Path | None = None,
-    heartbeat: float = 600.0,
     initial_message: str | None = None,
+    **_kwargs,  # absorb legacy heartbeat= for backward compat
 ) -> str:
     """Create a new session on disk from an entity, ready for the server to pick up.
 
@@ -110,7 +83,6 @@ def init_session(
         sessions_base:       Root of agent-visible sessions/ directory.
         system_sessions_base: Root of _sessions/ directory.
         entity_base:         Root of entity/ directory.
-        heartbeat:           Heartbeat interval in seconds (default: 600).
         initial_message:     Optional first user message to write to context.jsonl.
     """
     s_base = sessions_base or _DEFAULT_SESSIONS_BASE
@@ -149,25 +121,30 @@ def init_session(
 
     entity_dir = ent_base / entity_name
 
-    # Load entity-level param overrides (persistent, heartbeat task seed, etc.)
-    entity_params = _load_entity_params(entity_dir)
-    effective_heartbeat = entity_params.pop("heartbeat_interval", None) or heartbeat
-    heartbeat_task_content = entity_params.pop("heartbeat_task", None)
-    entity_params.pop("default_task", None)
-
     # Config always comes from meta session; meta is initially populated from entity.
     meta_dir = ensure_meta_session(entity_name, s_base=s_base)
     if entity_dir.exists():
-        if not _meta_is_synced(meta_dir):
+        meta_config = meta_dir / 'core' / 'config.yaml'
+        if not meta_config.exists() or not meta_config.read_text(encoding='utf-8').strip():
             populate_meta_from_entity(entity_name, ent_base, s_base)
         ensure_gene_initialized(entity_name, ent_base, s_base)
         start_meta_agent(entity_name, entity_base=ent_base, s_base=s_base, sys_base=sys_base)
 
     meta_core_dir = meta_dir / "core"
-    for fname in ("system.md", "heartbeat.md", "session.md"):
-        src = meta_core_dir / fname
-        _write_if_absent(core_dir / fname, src.read_text(encoding="utf-8") if src.exists() else "")
+    # Copy prompts with new names (task.md, env.md) and fallback to old names (heartbeat.md, session.md)
+    for new_name, old_name in [("system.md", None), ("task.md", "heartbeat.md"), ("env.md", "session.md")]:
+        src = meta_core_dir / new_name
+        if not src.exists() and old_name:
+            src = meta_core_dir / old_name
+        _write_if_absent(core_dir / new_name, src.read_text(encoding="utf-8") if src.exists() else "")
 
+    # Copy tool.md from meta or entity (toolhub-based tool list)
+    for tool_md_src in (meta_core_dir / "tool.md", entity_dir / "tool.md"):
+        if tool_md_src.exists():
+            _write_if_absent(core_dir / "tool.md", tool_md_src.read_text(encoding="utf-8"))
+            break
+
+    # Legacy: copy tool JSON files from meta for backward compat
     meta_tools_dir = meta_core_dir / "tools"
     if meta_tools_dir.is_dir():
         for src in sorted(meta_tools_dir.glob('*.json')):
@@ -187,26 +164,23 @@ def init_session(
                 if not dst.exists():
                     shutil.copy2(src, dst)
 
-    if not (core_dir / "params.json").exists():
-        try:
-            import yaml
-            manifest = yaml.safe_load((entity_dir / 'agent.yaml').read_text(encoding='utf-8')) if (entity_dir / 'agent.yaml').exists() else {}
-        except Exception:
-            manifest = {}
-        extra: dict = {}
-        if manifest.get('fallback_model'):
-            extra['fallback_model'] = manifest['fallback_model']
-        if manifest.get('fallback_provider'):
-            extra['fallback_provider'] = manifest['fallback_provider']
-        model = manifest.get('model')
-        provider = manifest.get('provider') or 'anthropic'
-        write_session_params(session_dir, heartbeat_interval=effective_heartbeat, model=model, provider=provider, **extra, **entity_params)
-    else:
-        write_session_params(session_dir, heartbeat_interval=effective_heartbeat, **entity_params)
-    # Record meta version in session params so staleness can be detected later.
-    meta_version = get_meta_version(entity_name, s_base=s_base)
+    # Copy config.yaml from meta (or entity) into session core/.
+    meta_config_path = meta_core_dir / "config.yaml"
+    session_config_path = core_dir / "config.yaml"
+    if not session_config_path.exists():
+        if meta_config_path.exists():
+            shutil.copy2(meta_config_path, session_config_path)
+        else:
+            # No meta config yet — bootstrap from entity config.yaml
+            entity_config_path = entity_dir / "config.yaml"
+            if entity_config_path.exists():
+                shutil.copy2(entity_config_path, session_config_path)
+            else:
+                ensure_config(session_dir)
+    # Record meta version in status.json so staleness can be detected later.
+    meta_version = get_meta_version(entity_name, sys_base=sys_base)
     if meta_version:
-        write_session_params(session_dir, agent_version=meta_version)
+        write_session_status(system_dir, agent_version=meta_version)
     # Seed mutable state from meta session, with entity memory as bootstrap fallback.
     sync_from_entity(entity_name, ent_base, s_base=s_base)
 
@@ -243,18 +217,20 @@ def init_session(
             if not dst_path.exists():
                 shutil.copy2(src_path, dst_path)
 
-    # Create task cards directory; seed heartbeat card for persistent sessions
+    # Create task cards directory; seed duty card if config defines one
     tasks_dir = core_dir / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
-    if entity_params.get("session_type") == "persistent":
-        ensure_heartbeat_card(
+    session_cfg = read_config(session_dir)
+    duty = session_cfg.get("duty")
+    if isinstance(duty, dict) and duty.get("interval"):
+        ensure_card(
             tasks_dir,
-            interval=effective_heartbeat,
-            content=heartbeat_task_content,
+            name="duty",
+            interval=float(duty["interval"]),
+            description=duty.get("description", ""),
         )
 
     ensure_session_status(system_dir)
-    write_session_status(system_dir, heartbeat_interval=effective_heartbeat)
 
     # Write optional initial message
     if initial_message:

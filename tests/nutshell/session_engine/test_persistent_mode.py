@@ -1,22 +1,20 @@
-"""Tests for session_type feature (ephemeral / default / persistent).
+"""Tests for task-based session tick (replaces old persistent mode tests).
 
 Covers:
-  - params.py: session_type and default_task fields
-  - session.py tick(): persistent mode fires with default_task when tasks empty
-  - session.py tick(): default mode skips when tasks empty (existing behaviour)
-  - session.py _resolve_session_type(): backward compat for persistent bool
-  - session_factory: entity params (session_type, default_task) propagate to params.json
+  - session_config.py: duty field in config
+  - session.py tick(): task card fires and writes triggered_by='task:<name>'
+  - session.py tick(): returns None when no due cards
+  - session_init: duty config propagates to task cards
 """
 
 import json
 import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 from nutshell.core.agent import Agent
 from nutshell.core.types import AgentResult, TokenUsage, ToolCall
-from nutshell.session_engine.session_params import DEFAULT_PARAMS, read_session_params, write_session_params
-from nutshell.session_engine.task_cards import TaskCard, load_card, save_card
+from nutshell.session_engine.session_config import read_config, write_config
+from nutshell.session_engine.task_cards import TaskCard, load_card, save_card, ensure_card
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -35,60 +33,33 @@ class MockProvider:
         return (r[0], r[1], r[2] if len(r) > 2 else TokenUsage())
 
 
-# ── params.py — session_type field ──────────────────────────────────
+# ── session_config — duty field ────────────────────────────────���─
 
 
-def test_default_params_has_session_type():
-    """DEFAULT_PARAMS includes session_type='default'."""
-    assert "session_type" in DEFAULT_PARAMS
-    assert DEFAULT_PARAMS["session_type"] == "default"
+def test_config_has_duty_field():
+    """DEFAULT_CONFIG includes duty=None."""
+    from nutshell.session_engine.session_config import DEFAULT_CONFIG
+    assert "duty" in DEFAULT_CONFIG
+    assert DEFAULT_CONFIG["duty"] is None
 
 
-def test_default_params_has_default_task():
-    """DEFAULT_PARAMS includes default_task=None."""
-    assert "default_task" in DEFAULT_PARAMS
-    assert DEFAULT_PARAMS["default_task"] is None
-
-
-def test_read_params_session_type_defaults(tmp_path):
-    """read_session_params returns session_type='default' when params.json is empty."""
+def test_write_read_config_duty(tmp_path):
+    """write_config persists duty; read returns it."""
     session_dir = tmp_path / "session"
     core = session_dir / "core"
     core.mkdir(parents=True)
-    (core / "params.json").write_text("{}", encoding="utf-8")
-    params = read_session_params(session_dir)
-    assert params["session_type"] == "default"
-    assert params["default_task"] is None
+    write_config(session_dir, duty={"interval": 3600, "description": "Check mail"})
+    cfg = read_config(session_dir)
+    assert cfg["duty"]["interval"] == 3600
+    assert cfg["duty"]["description"] == "Check mail"
 
 
-def test_write_read_session_type_params(tmp_path):
-    """write_session_params persists session_type + default_task; read returns them."""
-    session_dir = tmp_path / "session"
-    write_session_params(session_dir, session_type="persistent", default_task="Check mail")
-    params = read_session_params(session_dir)
-    assert params["session_type"] == "persistent"
-    assert params["default_task"] == "Check mail"
-
-
-# ── _resolve_session_type backward compat ────────────────────────
-
-
-def test_resolve_session_type_backward_compat():
-    """_resolve_session_type converts old persistent=True to 'persistent'."""
-    from nutshell.session_engine.session import Session
-    assert Session._resolve_session_type({"persistent": True}) == "persistent"
-    assert Session._resolve_session_type({"persistent": False}) == "default"
-    assert Session._resolve_session_type({}) == "default"
-    assert Session._resolve_session_type({"session_type": "ephemeral"}) == "ephemeral"
-    assert Session._resolve_session_type({"session_type": "persistent"}) == "persistent"
-
-
-# ── session.py tick() — persistent mode ───────────────────────────
+# ── session.py tick() — task-based mode ──────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_tick_skips_when_default_and_empty_tasks(tmp_path):
-    """tick() returns None when tasks empty and session_type='default'."""
+async def test_tick_returns_none_when_no_due_cards(tmp_path):
+    """tick() returns None when no task cards are due."""
     from nutshell.session_engine.session import Session
 
     provider = MockProvider([("should not be called", [])])
@@ -96,84 +67,44 @@ async def test_tick_skips_when_default_and_empty_tasks(tmp_path):
 
     session = Session(
         agent,
-        session_id="test-non-persistent",
+        session_id="test-no-tasks",
         base_dir=tmp_path / "sessions",
         system_base=tmp_path / "_sessions",
     )
-    assert not session.tasks_path.exists()
-    assert list(session.tasks_dir.glob("*.md")) == []
-
-    result = await session.tick(load_card(session.tasks_dir, "real"))
+    result = await session.tick()
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_tick_migrates_default_task_into_heartbeat_card_when_persistent(tmp_path):
-    """Legacy default_task is migrated into the heartbeat card and runs from there."""
+async def test_tick_fires_due_task_card(tmp_path):
+    """tick() picks up a due task card and runs it."""
     from nutshell.session_engine.session import Session
 
-    provider = MockProvider([("All clear, nothing to do.", [])])
+    provider = MockProvider([("Task done.", [])])
     agent = Agent(provider=provider)
 
     session = Session(
         agent,
-        session_id="test-persistent",
-        base_dir=tmp_path / "sessions",
-        system_base=tmp_path / "_sessions",
-    )
-    assert not session.tasks_path.exists()
-
-    write_session_params(
-        session.session_dir,
-        session_type="persistent",
-        default_task="Check incoming messages.",
-    )
-
-    result = await session.tick(load_card(session.tasks_dir, "real"))
-    assert result is not None
-    assert result.content == "All clear, nothing to do."
-    heartbeat = load_card(session.tasks_dir, "heartbeat")
-    assert heartbeat is not None
-    assert heartbeat.content == "Check incoming messages."
-
-
-@pytest.mark.asyncio
-async def test_tick_persistent_uses_builtin_fallback_when_no_default_task(tmp_path):
-    """tick() uses built-in fallback prompt when session_type='persistent' but default_task is None."""
-    from nutshell.session_engine.session import Session
-
-    captured_prompts: list[str] = []
-    original_run = Agent.run
-
-    async def capturing_run(self, message, **kwargs):
-        captured_prompts.append(message)
-        return AgentResult(content="resting", iterations=1, usage=TokenUsage())
-
-    provider = MockProvider([])  # won't be used — we monkeypatch run()
-    agent = Agent(provider=provider)
-
-    session = Session(
-        agent,
-        session_id="test-persistent-fallback",
+        session_id="test-task-fire",
         base_dir=tmp_path / "sessions",
         system_base=tmp_path / "_sessions",
     )
 
-    write_session_params(session.session_dir, session_type="persistent", default_task=None)
-
-    # Monkeypatch agent.run to capture the prompt
-    agent.run = lambda msg, **kw: capturing_run(agent, msg, **kw)
+    save_card(session.tasks_dir, TaskCard(name="check", description="Check state", interval=600))
 
     result = await session.tick()
     assert result is not None
-    assert len(captured_prompts) == 1
-    # Should contain the fallback prompt text
-    assert "Check for incoming messages" in captured_prompts[0]
+    assert result.content == "Task done."
+
+    # Card should be marked paused (recurring) after finish
+    card = load_card(session.tasks_dir, "check")
+    assert card.status == "paused"
+    assert card.last_finished_at is not None
 
 
 @pytest.mark.asyncio
-async def test_tick_persistent_triggered_by_heartbeat(tmp_path):
-    """tick() writes triggered_by='heartbeat' for the heartbeat task card."""
+async def test_tick_writes_triggered_by_task(tmp_path):
+    """tick() writes triggered_by='task:<name>' in context."""
     from nutshell.session_engine.session import Session
 
     provider = MockProvider([("ok", [])])
@@ -181,12 +112,12 @@ async def test_tick_persistent_triggered_by_heartbeat(tmp_path):
 
     session = Session(
         agent,
-        session_id="test-persistent-trigger",
+        session_id="test-trigger",
         base_dir=tmp_path / "sessions",
         system_base=tmp_path / "_sessions",
     )
 
-    write_session_params(session.session_dir, session_type="persistent", default_task="Check state")
+    save_card(session.tasks_dir, TaskCard(name="duty", description="Do stuff", interval=600))
 
     result = await session.tick()
     assert result is not None
@@ -197,12 +128,12 @@ async def test_tick_persistent_triggered_by_heartbeat(tmp_path):
         if line.strip()
     ]
     assert turns[-1]["type"] == "turn"
-    assert turns[-1]["triggered_by"] == "heartbeat"
+    assert turns[-1]["triggered_by"] == "task:duty"
 
 
 @pytest.mark.asyncio
-async def test_tick_with_real_tasks_ignores_session_type(tmp_path):
-    """When tasks exist, tick() uses them normally regardless of session_type."""
+async def test_tick_with_explicit_card(tmp_path):
+    """tick(card) runs the specified card regardless of is_due()."""
     from nutshell.session_engine.session import Session
 
     provider = MockProvider([("done with task", [])])
@@ -210,15 +141,15 @@ async def test_tick_with_real_tasks_ignores_session_type(tmp_path):
 
     session = Session(
         agent,
-        session_id="test-persistent-tasks",
+        session_id="test-explicit",
         base_dir=tmp_path / "sessions",
         system_base=tmp_path / "_sessions",
     )
 
-    save_card(session.tasks_dir, TaskCard(name="real", content="- do something real", interval=None))
-    write_session_params(session.session_dir, session_type="persistent", default_task="Check state")
+    card = TaskCard(name="manual", description="- do something real", interval=None)
+    save_card(session.tasks_dir, card)
 
-    result = await session.tick(load_card(session.tasks_dir, "real"))
+    result = await session.tick(card)
     assert result is not None
 
     turns = [
@@ -227,78 +158,94 @@ async def test_tick_with_real_tasks_ignores_session_type(tmp_path):
         if line.strip()
     ]
     assert turns[-1]["type"] == "turn"
-    assert turns[-1]["triggered_by"] == "task:real"
+    assert turns[-1]["triggered_by"] == "task:manual"
 
 
-# ── session_factory — entity params propagation ───────────────────
+# ── session_init — duty propagation ──────────────────────────────
 
 
-def test_session_factory_propagates_entity_params(tmp_path):
-    """init_session reads params from agent.yaml and writes them to params.json."""
+def test_session_init_creates_duty_card_from_config(tmp_path):
+    """init_session creates a duty task card when config.yaml has duty field."""
     from nutshell.session_engine.session_init import init_session
+    from unittest.mock import patch
 
-    # Create a minimal entity with params (using legacy persistent: true)
     entity_base = tmp_path / "entity"
     entity_dir = entity_base / "test_ent"
     entity_dir.mkdir(parents=True)
-    (entity_dir / "agent.yaml").write_text(
+    (entity_dir / "config.yaml").write_text(
         "name: test_ent\n"
         "model: claude-sonnet-4-6\n"
         "provider: anthropic\n"
-        "tools: []\n"
-        "skills: []\n"
-        "params:\n"
-        "  persistent: true\n"
-        '  default_task: "Hello world"\n'
-        "  heartbeat_interval: 43200\n",
+        "duty:\n"
+        "  interval: 3600\n"
+        '  description: "Check mail"\n',
         encoding="utf-8",
     )
+    (entity_dir / "tool.md").write_text("bash\n", encoding="utf-8")
+    (entity_dir / "prompts").mkdir()
+    (entity_dir / "prompts" / "system.md").write_text("sys", encoding="utf-8")
+    (entity_dir / "prompts" / "task.md").write_text("task", encoding="utf-8")
+    (entity_dir / "prompts" / "env.md").write_text("env", encoding="utf-8")
 
     sessions_base = tmp_path / "sessions"
     system_base = tmp_path / "_sessions"
 
-    init_session(
-        "s1",
-        "test_ent",
-        sessions_base=sessions_base,
-        system_sessions_base=system_base,
-        entity_base=entity_base,
-    )
+    def fake_venv(session_dir):
+        venv = session_dir / ".venv"
+        venv.mkdir(parents=True, exist_ok=True)
+        return venv
 
-    params = read_session_params(sessions_base / "s1")
-    # Legacy persistent: true should be converted to session_type: persistent
-    assert params["session_type"] == "persistent"
-    assert params["default_task"] is None
-    assert params["heartbeat_interval"] == 43200
-    heartbeat = load_card(sessions_base / "s1" / "core" / "tasks", "heartbeat")
-    assert heartbeat is not None
-    assert heartbeat.content == "Hello world"
-    assert heartbeat.interval == 43200
+    with patch("nutshell.session_engine.session_init._create_session_venv", side_effect=fake_venv), \
+         patch("nutshell.session_engine.entity_state._create_meta_venv", side_effect=fake_venv):
+        init_session(
+            "s1",
+            "test_ent",
+            sessions_base=sessions_base,
+            system_sessions_base=system_base,
+            entity_base=entity_base,
+        )
+
+    duty = load_card(sessions_base / "s1" / "core" / "tasks", "duty")
+    assert duty is not None
+    assert duty.description == "Check mail"
+    assert duty.interval == 3600
 
 
-def test_session_factory_no_params_key_defaults(tmp_path):
-    """init_session without params key in agent.yaml keeps defaults."""
+def test_session_init_no_duty_keeps_empty_tasks(tmp_path):
+    """init_session without duty in config keeps tasks dir empty (no heartbeat card)."""
     from nutshell.session_engine.session_init import init_session
+    from unittest.mock import patch
 
     entity_base = tmp_path / "entity"
     entity_dir = entity_base / "plain"
     entity_dir.mkdir(parents=True)
-    (entity_dir / "agent.yaml").write_text(
-        "name: plain\nmodel: claude-sonnet-4-6\nprovider: anthropic\ntools: []\nskills: []\n",
+    (entity_dir / "config.yaml").write_text(
+        "name: plain\nmodel: claude-sonnet-4-6\nprovider: anthropic\n",
         encoding="utf-8",
     )
+    (entity_dir / "prompts").mkdir()
+    (entity_dir / "prompts" / "system.md").write_text("sys", encoding="utf-8")
 
     sessions_base = tmp_path / "sessions"
     system_base = tmp_path / "_sessions"
 
-    init_session(
-        "s2",
-        "plain",
-        sessions_base=sessions_base,
-        system_sessions_base=system_base,
-        entity_base=entity_base,
-    )
+    def fake_venv(session_dir):
+        venv = session_dir / ".venv"
+        venv.mkdir(parents=True, exist_ok=True)
+        return venv
 
-    params = read_session_params(sessions_base / "s2")
-    assert params["session_type"] == "default"
-    assert params["default_task"] is None
+    with patch("nutshell.session_engine.session_init._create_session_venv", side_effect=fake_venv), \
+         patch("nutshell.session_engine.entity_state._create_meta_venv", side_effect=fake_venv):
+        init_session(
+            "s2",
+            "plain",
+            sessions_base=sessions_base,
+            system_sessions_base=system_base,
+            entity_base=entity_base,
+        )
+
+    tasks_dir = sessions_base / "s2" / "core" / "tasks"
+    from nutshell.session_engine.task_cards import load_all_cards
+    # Should have no duty card (meta task may exist from start_meta_agent)
+    duty = load_card(tasks_dir, "duty")
+    assert duty is None

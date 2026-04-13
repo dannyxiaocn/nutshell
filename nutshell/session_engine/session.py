@@ -11,22 +11,20 @@ from nutshell.core.agent import Agent
 from nutshell.core.hook import OnLoopEnd, OnLoopStart, OnTextChunk, OnToolCall, OnToolDone
 from nutshell.core.tool import Tool
 from nutshell.core.types import AgentResult
-from nutshell.session_engine.session_params import ensure_session_params, read_session_params
+from nutshell.session_engine.session_config import read_config, ensure_config
 from nutshell.session_engine.task_cards import (
-    _DEFAULT_HEARTBEAT_CONTENT,
-    TaskCard, clear_all_cards, ensure_heartbeat_card, has_pending_cards,
-    load_all_cards, load_due_cards, migrate_legacy_task_sources, save_card,
+    TaskCard, clear_all_cards,
+    load_due_cards, migrate_legacy_task_sources, save_card,
 )
 from nutshell.llm_engine.registry import provider_name, resolve_provider
 from nutshell.session_engine.session_status import ensure_session_status, read_session_status, write_session_status
-from nutshell.tool_engine.executor.terminal.bash_terminal import BashExecutor
+from nutshell.tool_engine.loader import ToolLoader
 
 if TYPE_CHECKING:
     from nutshell.runtime.ipc import FileIPC
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
-DEFAULT_HEARTBEAT_INTERVAL = 600.0  # 10 minutes
 SESSION_FINISHED = "SESSION_FINISHED"
 
 
@@ -37,8 +35,8 @@ class Session:
         sessions/<id>/                ← agent-visible
           core/
             system.md               ← system prompt (copied from entity at creation)
-            heartbeat.md            ← heartbeat prompt
-            session.md              ← session paths + operational guide (template)
+            task.md                 ← task wakeup prompt (fallback: heartbeat.md)
+            env.md                  ← session paths + operational guide (fallback: session.md)
             memory.md               ← persistent memory (auto-injected each activation)
             tasks/*.md              ← task cards (YAML frontmatter + content)
             params.json             ← runtime config
@@ -68,7 +66,7 @@ class Session:
         session_id: str | None = None,
         base_dir: Path = SESSIONS_DIR,
         system_base: Path = _SYSTEM_SESSIONS_DIR,
-        heartbeat: float = DEFAULT_HEARTBEAT_INTERVAL,
+        heartbeat: float = 600.0,  # legacy param, ignored
         *,
         on_loop_start: OnLoopStart | None = None,
         on_loop_end: OnLoopEnd | None = None,
@@ -80,7 +78,7 @@ class Session:
         self._session_id = session_id or (datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "-" + uuid.uuid4().hex[:4])
         self._base_dir = base_dir
         self._system_base = system_base
-        self._heartbeat_interval = heartbeat
+        # heartbeat param accepted for backward compat but ignored
         self._agent_lock: asyncio.Lock = asyncio.Lock()
         self._ipc: FileIPC | None = None
 
@@ -109,7 +107,7 @@ class Session:
         if not self._events_path.exists():
             self._events_path.touch()
         ensure_session_status(self.system_dir)
-        ensure_session_params(self.session_dir, heartbeat_interval=heartbeat)
+        ensure_config(self.session_dir)
 
     # ── Capability loading ─────────────────────────────────────────
 
@@ -124,38 +122,36 @@ class Session:
     def _load_session_capabilities(self) -> None:
         """Reload params, prompts, skills, and tools from core/. Call inside agent lock before each run."""
         from nutshell.skill_engine.loader import SkillLoader
-        from nutshell.tool_engine.loader import ToolLoader
 
-        # 1. params → provider + model
-        params = read_session_params(self.session_dir)
+        # 1. config → provider + model
+        cfg = read_config(self.session_dir)
 
-        desired_provider = (params.get("provider") or "").lower()
+        desired_provider = (cfg.get("provider") or "").lower()
         if desired_provider and provider_name(self._agent._provider) != desired_provider:
             self._agent._provider = resolve_provider(desired_provider)
 
-        self._agent.model = params.get("model") or self._agent.model
-        self._agent.thinking = bool(params.get("thinking", self._agent.thinking))
-        self._agent.thinking_budget = int(params.get("thinking_budget", self._agent.thinking_budget))
-        if params.get("thinking_effort"):
-            self._agent.thinking_effort = str(params["thinking_effort"])
-        if params.get("fallback_model"):
-            self._agent.fallback_model = params["fallback_model"]
-        if params.get("fallback_provider"):
-            self._agent._fallback_provider_str = params["fallback_provider"]
+        self._agent.model = cfg.get("model") or self._agent.model
+        self._agent.thinking = bool(cfg.get("thinking", self._agent.thinking))
+        self._agent.thinking_budget = int(cfg.get("thinking_budget", self._agent.thinking_budget))
+        if cfg.get("thinking_effort"):
+            self._agent.thinking_effort = str(cfg["thinking_effort"])
+        if cfg.get("fallback_model"):
+            self._agent.fallback_model = cfg["fallback_model"]
+        if cfg.get("fallback_provider"):
+            self._agent._fallback_provider_str = cfg["fallback_provider"]
             self._agent._fallback_provider = None  # reset so it re-resolves on next use
-
-        write_session_status(self.system_dir, heartbeat_interval=params["heartbeat_interval"])
 
         # 2. prompts from core/
         system_md = self._read_core_text("system.md")
-        # session.md is the canonical name; fall back to session_context.md for old sessions
-        session_ctx_md = self._read_core_text("session.md") or self._read_core_text("session_context.md")
+        # env.md is the canonical name; fall back to session.md / session_context.md for old sessions
+        env_md = self._read_core_text("env.md") or self._read_core_text("session.md") or self._read_core_text("session_context.md")
 
         self._agent.system_prompt = system_md
-        self._agent.session_context = (
-            session_ctx_md.replace("{session_id}", self._session_id) if session_ctx_md else ""
+        self._agent.env_context = (
+            env_md.replace("{session_id}", self._session_id) if env_md else ""
         )
-        self._agent.heartbeat_prompt = self._read_core_text("heartbeat.md")
+        # task.md is the canonical name; fall back to heartbeat.md for old sessions
+        self._agent.task_prompt = self._read_core_text("task.md") or self._read_core_text("heartbeat.md")
         self._agent.memory = self.memory_path.read_text(encoding="utf-8").strip()
 
         # Extra named memory layers from core/memory/*.md (sorted, non-empty only)
@@ -188,29 +184,33 @@ class Session:
             skills = []
         self._agent.skills = skills
 
-        # 4. tools from core/tools/ + tool_providers overrides
+        # 4. tools from tool.md (toolhub) + local tools from core/tools/
         # default_workdir: bash and shell tools run from the session directory so
         # agents use short relative paths (core/tasks/) instead of full session paths.
         try:
-            tools = ToolLoader(
+            loader = ToolLoader(
                 default_workdir=str(self.session_dir),
                 skills=skills,
-            ).load_dir(self.core_dir / "tools")
-            for i, t in enumerate(tools):
-                if t.name == "bash":
-                    executor = BashExecutor(workdir=str(self.session_dir))
-
-                    async def _bash_impl(**kwargs):
-                        return await executor.execute(**kwargs)
-
-                    tools[i] = Tool(name=t.name, description=t.description, func=_bash_impl, schema=t.schema)
+                tasks_dir=self.tasks_dir,
+                memory_dir=self.core_dir / "memory",
+            )
+            # Load tools from tool.md (toolhub)
+            tool_md_path = self.core_dir / "tool.md"
+            if tool_md_path.exists():
+                tools = loader.load_from_tool_md(tool_md_path)
+                # Also load agent-created tools from core/tools/ (.json+.sh pairs)
+                tools.extend(loader.load_local_tools(self.core_dir / "tools"))
+            else:
+                # Legacy fallback: load from core/tools/*.json (handles .sh too)
+                tools = loader.load_dir(self.core_dir / "tools")
         except (FileNotFoundError, PermissionError):
             tools = []
         except Exception as e:
             print(f"[session] Warning: failed to load tools: {e}")
             tools = []
 
-        tool_providers = params.get("tool_providers") or {}
+        # Apply tool_providers overrides (e.g. web_search → brave/tavily)
+        tool_providers = cfg.get("tool_providers") or {}
         if tool_providers:
             from nutshell.tool_engine.registry import resolve_tool_impl
             for i, t in enumerate(tools):
@@ -313,7 +313,7 @@ class Session:
         return message
 
     async def chat(self, message: str, *, user_input_id: str | None = None, caller_type: str = "human") -> AgentResult:
-        """Run agent with user message. Holds agent lock — blocks heartbeat tick.
+        """Run agent with user message. Holds agent lock — blocks task tick.
 
         Args:
             caller_type: "human" or "agent" — passed to Agent.run() for prompt adaptation.
@@ -363,17 +363,8 @@ class Session:
 
         If no card is provided, picks the first due card from core/tasks/.
         Returns None if no card is due.
-
-        For persistent sessions, a recurring "heartbeat" card is auto-created
-        during session init and fires on its own interval.
         """
-        params = read_session_params(self.session_dir)
         migrate_legacy_task_sources(self.session_dir)
-        if self._resolve_session_type(params) == "persistent":
-            ensure_heartbeat_card(
-                self.tasks_dir,
-                interval=float(params.get("heartbeat_interval") or self._heartbeat_interval),
-            )
         if card is None:
             due = load_due_cards(self.tasks_dir)
             if due:
@@ -381,29 +372,25 @@ class Session:
             else:
                 return None
 
-        triggered_by = "heartbeat" if card.name == "heartbeat" else f"task:{card.name}"
-        tasks_content = card.content or (_DEFAULT_HEARTBEAT_CONTENT if card.name == "heartbeat" else "")
-        card_label = card.name
+        triggered_by = f"task:{card.name}"
+        task_info = card.description or card.name
 
         # Snapshot history so we can roll back if SESSION_FINISHED
         history_snapshot = list(self._agent._history)
         old_len = len(self._agent._history)
 
-        heartbeat_instructions = self._agent.heartbeat_prompt
-        if heartbeat_instructions and "{tasks}" in heartbeat_instructions:
-            prompt = heartbeat_instructions.format(tasks=tasks_content)
+        # Build wakeup prompt from task.md template + task info
+        task_prompt = self._agent.task_prompt
+        if task_prompt and "{task}" in task_prompt:
+            prompt = task_prompt.format(task=task_info)
         else:
-            prompt_prefix = "Heartbeat activation." if card.name == "heartbeat" else f"Task activation: {card_label}"
-            prompt = f"{prompt_prefix}\n\n{tasks_content}"
-            if heartbeat_instructions:
-                prompt += f"\n\n{heartbeat_instructions}"
+            prompt = f"Task wakeup: {card.name}\n\n{task_info}"
+            if task_prompt:
+                prompt += f"\n\n{task_prompt}"
 
         trigger_ts = datetime.now().isoformat()
-        if card.name == "heartbeat":
-            self._append_event({"type": "heartbeat_trigger", "ts": trigger_ts})
-        else:
-            self._append_event({"type": "task_trigger", "card": card.name, "ts": trigger_ts})
-        card.mark_running()
+        self._append_event({"type": "task_wakeup", "card": card.name, "ts": trigger_ts})
+        card.mark_working()
         save_card(self.tasks_dir, card)
         self._set_model_status("running", triggered_by)
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
@@ -420,8 +407,7 @@ class Session:
                     on_loop_end=self._make_loop_end_callback(),
                 )
         except BaseException:
-            # Revert card to pending on failure
-            card.status = "pending"
+            card.mark_paused()
             save_card(self.tasks_dir, card)
             self._set_model_status("idle", triggered_by)
             raise
@@ -429,31 +415,21 @@ class Session:
             on_chunk.flush()
 
         if SESSION_FINISHED in result.content:
-            # Clear all task cards, prune history
             clear_all_cards(self.tasks_dir)
             self._agent._history = history_snapshot
-            if card.name == "heartbeat":
-                self._append_event({"type": "heartbeat_finished", "ts": trigger_ts})
-            else:
-                self._append_event({"type": "task_finished", "card": card.name})
+            self._append_event({"type": "task_finished", "card": card.name, "ts": trigger_ts})
         else:
-            # Mark card done (recurring → pending with updated last_run_at; one-shot → completed)
-            card.mark_done()
+            card.mark_finished()
             save_card(self.tasks_dir, card)
 
-            # Replace verbose task/heartbeat prompt in history with a compact marker
+            # Replace verbose task prompt in history with a compact marker
             new_msgs = self._agent._history[old_len:]
             if new_msgs and new_msgs[0].role == "user":
                 from nutshell.core.types import Message as _Msg
-                marker = (
-                    f"[Heartbeat {trigger_ts}]"
-                    if card.name == "heartbeat"
-                    else f"[Task:{card.name} {trigger_ts}]"
-                )
+                marker = f"[Task:{card.name} {trigger_ts}]"
                 new_msgs = [_Msg(role="user", content=marker), *new_msgs[1:]]
                 self._agent._history = history_snapshot + new_msgs
 
-            # Only log to context if session is still active
             if not self.is_stopped():
                 turn: dict = {
                     "type": "turn",
@@ -470,19 +446,6 @@ class Session:
 
         self._set_model_status("idle", triggered_by)
         return result
-
-    # ── Session type ─────────────────────────────────────────────────
-
-    @staticmethod
-    def _resolve_session_type(params: dict) -> str:
-        """Return normalized session_type from params, with backward compat for 'persistent' bool."""
-        st = params.get("session_type")
-        if st in ("ephemeral", "default", "persistent"):
-            return st
-        # Backward compat: old params with persistent=True → "persistent"
-        if params.get("persistent"):
-            return "persistent"
-        return "default"
 
     # ── Stop / Start ───────────────────────────────────────────────
 
@@ -532,14 +495,7 @@ class Session:
         # Reset stale "running" state from a previous crash
         write_session_status(self.system_dir, model_state="idle", model_source="system")
 
-        # Ensure persistent sessions have a heartbeat task card
-        params = read_session_params(self.session_dir)
         migrate_legacy_task_sources(self.session_dir)
-        if self._resolve_session_type(params) == "persistent":
-            ensure_heartbeat_card(
-                self.tasks_dir,
-                interval=float(params.get("heartbeat_interval") or self._heartbeat_interval),
-            )
 
         # Notify if meta session has a newer version than this session.
         self._emit_version_notice_if_stale()
@@ -575,18 +531,6 @@ class Session:
                         await self.chat(content, user_input_id=msg_id, caller_type=caller_type)
                     except Exception as exc:
                         self._append_event({"type": "error", "content": str(exc)})
-
-                # Ephemeral auto-stop: after processing inputs, if no pending
-                # task cards and no new messages, auto-stop.
-                if inputs and not self.is_stopped():
-                    session_type = self._resolve_session_type(read_session_params(self.session_dir))
-                    if session_type == "ephemeral":
-                        _, next_offset = ipc.poll_inputs(input_offset)
-                        no_pending = next_offset == input_offset
-                        if not has_pending_cards(self.tasks_dir) and no_pending:
-                            self.set_status("stopped")
-                            write_session_status(self.system_dir, stopped_at=datetime.now().isoformat())
-                            self._append_event({"type": "status", "value": "ephemeral auto-stop"})
 
                 # Auto-expire stopped sessions after 5 hours
                 if self.is_stopped():
@@ -790,10 +734,10 @@ class Session:
             return
         try:
             from nutshell.session_engine.entity_state import get_meta_version
-            meta_version = get_meta_version(entity_name, s_base=self._base_dir)
+            meta_version = get_meta_version(entity_name)
         except Exception:
             return
-        session_version = read_session_params(self.session_dir).get("agent_version")
+        session_version = read_session_status(self.system_dir).get("agent_version")
         if meta_version and session_version and meta_version != session_version:
             self._append_event({
                 "type": "system_notice",
@@ -810,8 +754,8 @@ class Session:
         """Clean up orphaned trailing user message before processing new user input.
 
         If the agent history ends with an unresponded user message (e.g., a
-        heartbeat prompt interrupted mid-run), we either drop it (if it was a
-        heartbeat prompt) or merge it with the new message (if it was a real
+        task prompt interrupted mid-run), we either drop it (if it was a
+        task prompt) or merge it with the new message (if it was a real
         user message), to prevent consecutive user messages which the API rejects.
         """
         if not self._agent._history or self._agent._history[-1].role != "user":
@@ -822,6 +766,7 @@ class Session:
         if (
             "Task activation:" in last_content
             or last_content.startswith("[Task:")
+            or last_content.startswith("Task wakeup:")
             or "Heartbeat activation:" in last_content
             or last_content.startswith("[Heartbeat ")
         ):

@@ -44,10 +44,9 @@ class WebHelpersTest(unittest.TestCase):
             sessions_dir = root / "sessions"
             system_dir = root / "_sessions"
             with patch("nutshell.session_engine.session_init.init_session") as init_mock:
-                _init_session(sessions_dir, system_dir, "demo", "entity/agent", 30.0)
+                _init_session(sessions_dir, system_dir, "demo", "entity/agent", None)
         kwargs = init_mock.call_args.kwargs
         self.assertEqual(kwargs["entity_name"], "agent")
-        self.assertEqual(kwargs["heartbeat"], 30.0)
 
     def test_create_app_lists_seeded_sessions_and_blocks_meta_chat(self) -> None:
         with TemporaryDirectory() as tmp:

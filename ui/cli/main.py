@@ -290,7 +290,7 @@ def cmd_new(args) -> int:
         print(f"Error: entity '{args.entity}' not found in entity/", file=sys.stderr)
         return 1
     try:
-        create_session(session_id, args.entity, args.heartbeat, args.sessions_base, args.system_base)
+        create_session(session_id, args.entity, sessions_dir=args.sessions_base, system_sessions_dir=args.system_base)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -779,11 +779,12 @@ def cmd_tasks(args) -> int:
         for card in cards:
             interval_str = f"every {card['interval']}s" if card['interval'] else "one-shot"
             print(f"  [{card['status']}] {card['name']}  ({interval_str})")
-            if card['last_run_at']:
-                print(f"          last run: {card['last_run_at']}")
-            for line in card['content'].splitlines()[:3]:
+            if card.get('last_finished_at'):
+                print(f"          last finished: {card['last_finished_at']}")
+            desc = card.get('description') or ''
+            for line in desc.splitlines()[:3]:
                 print(f"          {line}")
-            if len(card['content'].splitlines()) > 3:
+            if len(desc.splitlines()) > 3:
                 print(f"          ...")
     return 0
 
@@ -1207,7 +1208,7 @@ def _read_meta_info(meta_dir: Path) -> dict:
         "memory_bytes": memory_path.stat().st_size if memory_path.exists() else 0,
         "memory_layers": sorted([p.stem for p in memory_dir.glob("*.md")]) if memory_dir.is_dir() else [],
         "playground_files": sorted([str(p.relative_to(playground_dir)) for p in playground_dir.rglob("*") if p.is_file()]) if playground_dir.is_dir() else [],
-        "params_exists": (meta_dir / "core" / "params.json").exists(),
+        "config_exists": (meta_dir / "core" / "config.yaml").exists() or (meta_dir / "core" / "params.json").exists(),
     }
 
 
@@ -1300,7 +1301,7 @@ def cmd_meta(args) -> int:
         print(f"MEMORY: {info['memory_bytes']} bytes")
         print(f"LAYERS: {', '.join(info['memory_layers']) if info['memory_layers'] else '—'}")
         print(f"PLAYGROUND FILES: {len(info['playground_files'])}")
-        print(f"PARAMS: {'yes' if info['params_exists'] else 'no'}")
+        print(f"PARAMS: {'yes' if info['config_exists'] else 'no'}")
         if idx != len(infos) - 1:
             print()
     return 0
