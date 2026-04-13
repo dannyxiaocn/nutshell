@@ -38,6 +38,14 @@ class WebHelpersTest(unittest.TestCase):
         ordered = _sort_sessions(sessions)
         self.assertEqual(ordered[0]["id"], "run")
 
+    def test_sort_sessions_prioritizes_idle_before_stopped(self) -> None:
+        sessions = [
+            {"id": "stopped", "pid_alive": False, "status": "stopped", "model_state": "idle", "created_at": "2026-01-01T00:00:01"},
+            {"id": "idle", "pid_alive": False, "status": "active", "model_state": "idle", "created_at": "2026-01-01T00:00:00"},
+        ]
+        ordered = _sort_sessions(sessions)
+        self.assertEqual(ordered[0]["id"], "idle")
+
     def test_init_session_resolves_entity_name_from_relative_path(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

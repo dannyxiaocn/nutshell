@@ -55,6 +55,18 @@ class TestClassifyStatus:
         info = {"status": "active"}
         assert classify_status(info) == "offline"
 
+    def test_online_with_naive_timestamp(self):
+        """Naive (no tzinfo) timestamps must not produce wrong results in non-UTC timezones."""
+        naive_ts = (datetime.now() - timedelta(seconds=60)).isoformat()
+        info = {"last_run_at": naive_ts, "status": "active"}
+        assert classify_status(info) == "online"
+
+    def test_idle_with_naive_timestamp(self):
+        """Naive timestamp 30 minutes ago → idle."""
+        naive_ts = (datetime.now() - timedelta(seconds=1800)).isoformat()
+        info = {"last_run_at": naive_ts, "status": "active"}
+        assert classify_status(info) == "idle"
+
 
 # ── format_friends_table ──────────────────────────────────────────────────────
 
