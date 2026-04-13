@@ -88,6 +88,16 @@ def test_fmt_ago_recent():
     assert "m ago" in _fmt_ago(ts)
 
 
+def test_fmt_ago_naive_timestamp():
+    """Naive (no tzinfo) timestamps — the common case for stored timestamps."""
+    from datetime import datetime, timedelta
+    ts = (datetime.now() - timedelta(seconds=90)).isoformat()
+    result = _fmt_ago(ts)
+    assert "m ago" in result
+    # Must never produce negative values (the pre-fix bug in UTC+ timezones)
+    assert "-" not in result
+
+
 # ── _session_tone ─────────────────────────────────────────────────────────────
 
 def test_session_tone_running():

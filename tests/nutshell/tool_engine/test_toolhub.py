@@ -131,6 +131,13 @@ class TestRecallMemoryExecutor:
         result = await executor.execute(name="../../../etc/passwd")
         assert "not found" in result
 
+    def test_schema_allows_empty_name_for_listing(self):
+        """tool.json must not require 'name' so the LLM can list layers."""
+        schema = _load_tool_schema("recall_memory")
+        assert schema is not None
+        required = schema.get("input_schema", {}).get("required", [])
+        assert "name" not in required
+
 
 # ── web_search executor ──────────────────────────────────────────────────────
 
