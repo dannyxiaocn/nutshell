@@ -10,7 +10,8 @@ from nutshell.session_engine.task_cards import (
     TaskCard,
     _default_start_at,
     _default_end_at,
-    _truncate_to_hour,
+    _ceil_to_hour,
+    _floor_to_hour,
     _LEGACY_STATUS_MAP,
     ensure_card,
     has_pending_cards,
@@ -21,35 +22,58 @@ from nutshell.session_engine.task_cards import (
 )
 
 
-# ── _truncate_to_hour ────────────────────────────────────────────────────────
+# ── _floor_to_hour / _ceil_to_hour ──────────────────────────────────────────
 
 
-def test_truncate_to_hour():
+def test_floor_to_hour():
     dt = datetime(2026, 4, 12, 14, 37, 59, 123456)
-    truncated = _truncate_to_hour(dt)
-    assert truncated == datetime(2026, 4, 12, 14, 0, 0, 0)
+    assert _floor_to_hour(dt) == datetime(2026, 4, 12, 14, 0, 0, 0)
 
 
-def test_truncate_to_hour_already_on_hour():
+def test_floor_to_hour_already_on_hour():
     dt = datetime(2026, 4, 12, 14, 0, 0, 0)
-    assert _truncate_to_hour(dt) == dt
+    assert _floor_to_hour(dt) == dt
+
+
+def test_ceil_to_hour():
+    dt = datetime(2026, 4, 12, 14, 37, 59, 123456)
+    assert _ceil_to_hour(dt) == datetime(2026, 4, 12, 15, 0, 0, 0)
+
+
+def test_ceil_to_hour_already_on_hour():
+    """Exact hour should NOT round up."""
+    dt = datetime(2026, 4, 12, 14, 0, 0, 0)
+    assert _ceil_to_hour(dt) == dt
+
+
+def test_ceil_to_hour_one_second_past():
+    dt = datetime(2026, 4, 12, 14, 0, 1)
+    assert _ceil_to_hour(dt) == datetime(2026, 4, 12, 15, 0, 0)
 
 
 # ── _default_start_at ────────────────────────────────────────────────────────
 
 
 def test_default_start_at_oneshot():
-    """One-shot tasks: start_at = truncated created_at."""
+    """One-shot tasks: start_at = floor(created_at)."""
     created = datetime(2026, 4, 12, 10, 30, 0)
     result = _default_start_at(created, interval=None)
-    assert result == "2026-04-12T10:00:00"
+    assert result == "2026-04-12T10:00:00"  # floor
 
 
 def test_default_start_at_recurring():
-    """Recurring: start_at = truncated (created + interval)."""
+    """Recurring: start_at = ceil(created + interval)."""
     created = datetime(2026, 4, 12, 10, 0, 0)
     result = _default_start_at(created, interval=3600)
-    assert result == "2026-04-12T11:00:00"
+    assert result == "2026-04-12T11:00:00"  # exact hour, no rounding needed
+
+
+def test_default_start_at_recurring_non_exact():
+    """Recurring with non-exact result rounds UP to next hour."""
+    created = datetime(2026, 4, 12, 10, 30, 0)
+    result = _default_start_at(created, interval=3600)
+    # 10:30 + 1h = 11:30 → ceil → 12:00
+    assert result == "2026-04-12T12:00:00"
 
 
 def test_default_start_at_large_interval():
@@ -62,25 +86,27 @@ def test_default_start_at_large_interval():
 
 
 def test_default_end_at_default_7_days():
-    """Default end_at is 7 days from created (truncated)."""
+    """Default end_at is ceil(7 days from created)."""
     created = datetime(2026, 4, 12, 10, 30, 0)
     result = _default_end_at(created, interval=3600)
-    assert result == "2026-04-19T10:00:00"
+    # 10:30 + 7d = 2026-04-19T10:30 → ceil → 11:00
+    assert result == "2026-04-19T11:00:00"
 
 
 def test_default_end_at_no_interval():
-    """One-shot: end_at = 7 days from created."""
+    """One-shot: end_at = ceil(7 days from created)."""
     created = datetime(2026, 4, 12, 10, 0, 0)
     result = _default_end_at(created, interval=None)
+    # exact hour, no rounding
     assert result == "2026-04-19T10:00:00"
 
 
 def test_default_end_at_large_interval():
-    """If interval > 7 days, end_at = 10 * interval."""
+    """If interval > 7 days, end_at = ceil(10 * interval)."""
     created = datetime(2026, 4, 12, 10, 0, 0)
     eight_days = 8 * 24 * 3600
     result = _default_end_at(created, interval=eight_days)
-    expected = _truncate_to_hour(created + timedelta(seconds=eight_days * 10))
+    expected = _ceil_to_hour(created + timedelta(seconds=eight_days * 10))
     assert result == expected.isoformat()
 
 
@@ -107,9 +133,9 @@ def test_post_init_preserves_explicit_values():
 
 
 def test_post_init_oneshot_start_at_is_created():
-    """One-shot tasks: start_at = truncated created_at."""
+    """One-shot tasks: start_at = floor(created_at)."""
     card = TaskCard(name="t", interval=None, created_at="2026-04-12T10:30:00")
-    assert card.start_at == "2026-04-12T10:00:00"
+    assert card.start_at == "2026-04-12T10:00:00"  # floor
 
 
 def test_post_init_invalid_created_at():
