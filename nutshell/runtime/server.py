@@ -238,27 +238,28 @@ def _add_dir_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main() -> None:
+    # Shared flags — available on every subcommand and at top level.
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("--foreground", action="store_true",
+                        help="Run in foreground (don't daemonize)")
+    _add_dir_args(shared)
+
     parser = argparse.ArgumentParser(
         description="Nutshell server — backend system",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
+        parents=[shared],
     )
-    # All flags live on the top-level parser so they work with or without
-    # an explicit subcommand (e.g. `nutshell-server --foreground` and
-    # `nutshell-server start --foreground` both work).
-    parser.add_argument("--foreground", action="store_true",
-                        help="Run in foreground (don't daemonize)")
-    _add_dir_args(parser)
     parser.set_defaults(func=None)
 
     subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser("start", allow_abbrev=False,
+    subparsers.add_parser("start", allow_abbrev=False, parents=[shared],
                           help="Start the server (default)")
-    subparsers.add_parser("stop", allow_abbrev=False,
+    subparsers.add_parser("stop", allow_abbrev=False, parents=[shared],
                           help="Stop the running server")
-    subparsers.add_parser("status", allow_abbrev=False,
+    subparsers.add_parser("status", allow_abbrev=False, parents=[shared],
                           help="Show server status")
-    subparsers.add_parser("update", allow_abbrev=False,
+    subparsers.add_parser("update", allow_abbrev=False, parents=[shared],
                           help="Reinstall package and restart server")
 
     args = parser.parse_args()
