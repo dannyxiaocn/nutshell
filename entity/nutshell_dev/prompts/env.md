@@ -19,7 +19,7 @@ Your session: `sessions/{session_id}/`
 
 **bash default directory**: `sessions/{session_id}/` — use short relative paths: `ls core/tasks`, `cat core/tasks/default.json`, `ls playground/`. Use `workdir=...` to override per call.
 
-**Task cards**: Each task lives in `core/tasks/<name>.md`. Update the relevant card with progress notes your future self can resume from. Mark completed work by updating that card's status or content instead of maintaining a separate flat board file.
+**Task cards**: Each task lives in `core/tasks/<name>.json`. Update the relevant card with progress notes your future self can resume from. Mark completed work by updating that card's status or content instead of maintaining a separate flat board file.
 
 **Memory**: One fact per line. Avoid injecting large documents — memory is prepended to every activation.
 

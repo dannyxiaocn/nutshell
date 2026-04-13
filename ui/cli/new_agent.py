@@ -49,7 +49,7 @@ def _list_entities(entity_dir: Path) -> list[str]:
         return []
     return sorted(
         d.name for d in entity_dir.iterdir()
-        if d.is_dir() and ((d / "config.yaml").exists() or (d / "agent.yaml").exists())
+        if d.is_dir() and (d / "config.yaml").exists()
     )
 
 
@@ -93,12 +93,9 @@ def _ask_init_from(entity_dir: Path) -> str | None:
 # ── File scaffolding ──────────────────────────────────────────────────────────
 
 def _find_config_path(entity_dir: Path) -> Path | None:
-    """Find config.yaml or legacy agent.yaml in an entity directory."""
-    for fname in ("config.yaml", "agent.yaml"):
-        p = entity_dir / fname
-        if p.exists():
-            return p
-    return None
+    """Find config.yaml in an entity directory."""
+    p = entity_dir / "config.yaml"
+    return p if p.exists() else None
 
 
 def create_entity(name: str, base_dir: Path, init_from: str | None) -> Path:

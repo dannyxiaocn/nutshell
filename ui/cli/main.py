@@ -653,12 +653,7 @@ def cmd_tasks(args) -> int:
     print(f"[{session_id}] task cards ({len(cards)})")
     print("─" * 60)
     if not cards:
-        legacy_tasks = tasks_dir.parent / "tasks.md"
-        legacy_text = legacy_tasks.read_text(encoding="utf-8").strip() if legacy_tasks.exists() else ""
-        if legacy_text:
-            print(legacy_text)
-        else:
-            print("(empty)")
+        print("(empty)")
     else:
         for card in cards:
             interval_str = f"every {card['interval']}s" if card['interval'] else "one-shot"

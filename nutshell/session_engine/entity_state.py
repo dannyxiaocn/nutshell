@@ -273,23 +273,21 @@ def sync_from_entity(entity_name: str, entity_base: Path | None = None, s_base: 
 
 
 def _load_gene_commands(entity_name: str, entity_base: Path | None = None) -> list[str]:
-    """Read the ``gene`` list from the entity's config.yaml (falls back to agent.yaml)."""
+    """Read the ``gene`` list from the entity's config.yaml."""
     entity_root = entity_base or (_REPO_ROOT / 'entity')
     entity_dir = entity_root / entity_name
 
-    # Try config.yaml first, fall back to legacy agent.yaml
-    for fname in ('config.yaml', 'agent.yaml'):
-        yaml_path = entity_dir / fname
-        if not yaml_path.exists():
-            continue
-        try:
-            import yaml
-            manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
-            gene = manifest.get('gene')
-            if gene and isinstance(gene, list):
-                return [str(cmd) for cmd in gene]
-        except Exception:
-            pass
+    yaml_path = entity_dir / 'config.yaml'
+    if not yaml_path.exists():
+        return []
+    try:
+        import yaml
+        manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
+        gene = manifest.get('gene')
+        if gene and isinstance(gene, list):
+            return [str(cmd) for cmd in gene]
+    except Exception:
+        pass
     return []
 
 
@@ -298,7 +296,7 @@ def run_gene_commands(
     entity_base: Path | None = None,
     s_base: Path | None = None,
 ) -> None:
-    """Execute the ``gene`` shell commands from agent.yaml in the meta playground."""
+    """Execute the ``gene`` shell commands from config.yaml in the meta playground."""
     commands = _load_gene_commands(entity_name, entity_base)
     if not commands:
         return
