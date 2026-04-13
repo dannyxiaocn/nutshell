@@ -68,7 +68,7 @@ def _seed_session(
     )
     (system_dir / "status.json").write_text(
         json.dumps({"status": status, "model_state": model_state, "pid": None,
-                    "last_run_at": None, "heartbeat_interval": 600}),
+                    "last_run_at": None}),
         encoding="utf-8",
     )
     return sessions, system
@@ -157,14 +157,13 @@ def test_cmd_new_creates_session(tmp_path, capsys):
     args = argparse.Namespace(
         session_id="my-test-session",
         entity="agent",
-        heartbeat=600.0,
         sessions_base=tmp_path / "sessions",
         system_base=tmp_path / "_sessions",
     )
     code = cmd_new(args)
     assert code == 0
     out = capsys.readouterr().out.strip()
-    assert out == "my-test-session"
+    assert "my-test-session" in out
     assert (tmp_path / "_sessions" / "my-test-session" / "manifest.json").exists()
     assert (tmp_path / "sessions" / "my-test-session" / "core").is_dir()
 
@@ -173,22 +172,22 @@ def test_cmd_new_generates_id(tmp_path, capsys):
     args = argparse.Namespace(
         session_id=None,  # auto-generate
         entity="agent",
-        heartbeat=600.0,
         sessions_base=tmp_path / "sessions",
         system_base=tmp_path / "_sessions",
     )
     code = cmd_new(args)
     assert code == 0
     out = capsys.readouterr().out.strip()
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-[0-9a-f]{4}", out)
-    assert (tmp_path / "_sessions" / out / "manifest.json").exists()
+    # Extract the last line (session ID) — server startup messages may precede it
+    session_id = out.strip().split("\n")[-1]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-[0-9a-f]{4}", session_id)
+    assert (tmp_path / "_sessions" / session_id / "manifest.json").exists()
 
 
 def test_cmd_new_bad_entity(tmp_path, capsys):
     args = argparse.Namespace(
         session_id="x",
         entity="nonexistent_entity_xyz",
-        heartbeat=600.0,
         sessions_base=tmp_path / "sessions",
         system_base=tmp_path / "_sessions",
     )
@@ -453,7 +452,7 @@ def test_cmd_tasks_defaults_to_non_meta_session(tmp_path, capsys):
     (system / "chat-session").mkdir(parents=True)
     (system / "agent_meta" / "manifest.json").write_text(json.dumps({"entity": "agent"}), encoding="utf-8")
     (system / "chat-session" / "manifest.json").write_text(json.dumps({"entity": "agent"}), encoding="utf-8")
-    (sessions / "agent_meta" / "core" / "tasks" / "heartbeat.md").write_text("meta task", encoding="utf-8")
+    (sessions / "agent_meta" / "core" / "tasks" / "default.md").write_text("meta task", encoding="utf-8")
     (sessions / "chat-session" / "core" / "tasks" / "real.md").write_text("chat task", encoding="utf-8")
 
     args = argparse.Namespace(
@@ -695,7 +694,6 @@ def test_cmd_new_inject_memory(tmp_path):
     args = argparse.Namespace(
         session_id="inject-test",
         entity="agent",
-        heartbeat=600.0,
         sessions_base=sessions,
         system_base=system,
         inject_memory=["mykey=myvalue", "other=content here"],

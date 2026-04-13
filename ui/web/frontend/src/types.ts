@@ -16,13 +16,11 @@ export interface Session {
 }
 
 export interface Params {
-  heartbeat_interval: number;
   model: string | null;
   provider: string | null;
   fallback_model: string | null;
   fallback_provider: string | null;
   tool_providers: Record<string, string>;
-  session_type: 'ephemeral' | 'default' | 'persistent';
   thinking: boolean;
   thinking_budget: number;
   thinking_effort: string;

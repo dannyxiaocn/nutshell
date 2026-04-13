@@ -238,8 +238,8 @@ class WeixinBridge:
             entity = arg or "entity/agent"
             sid = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "-" + uuid.uuid4().hex[:4]
             try:
-                from .sessions import _init_session
-                _init_session(self._sessions_dir, self._sys_dir, sid, entity, 600.0)
+                from nutshell.service.sessions_service import create_session as _create_session
+                _create_session(sid, entity, sessions_dir=self._sessions_dir, system_sessions_dir=self._sys_dir)
                 self._current_session = sid
                 reply = f"✅ 新 session 已创建: {sid}\nEntity: {entity}"
             except Exception as exc:

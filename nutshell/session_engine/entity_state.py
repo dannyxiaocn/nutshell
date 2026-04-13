@@ -84,20 +84,16 @@ def _init_meta_version(
     entity_root = entity_base or (_REPO_ROOT / 'entity')
     version = "1.0.0"
 
-    # Try config.yaml first, fall back to legacy agent.yaml
     config_yaml = entity_root / entity_name / 'config.yaml'
-    agent_yaml = entity_root / entity_name / 'agent.yaml'
-    for yaml_path in (config_yaml, agent_yaml):
-        if yaml_path.exists():
-            try:
-                import yaml
-                manifest = yaml.safe_load(yaml_path.read_text(encoding='utf-8')) or {}
-                v = manifest.get('version')
-                if v:
-                    version = str(v)
-                    break
-            except Exception:
-                pass
+    if config_yaml.exists():
+        try:
+            import yaml
+            manifest = yaml.safe_load(config_yaml.read_text(encoding='utf-8')) or {}
+            v = manifest.get('version')
+            if v:
+                version = str(v)
+        except Exception:
+            pass
 
     system_base = sys_base or _SYSTEM_SESSIONS_DIR
     system_dir = system_base / get_meta_session_id(entity_name)
@@ -204,15 +200,13 @@ def populate_meta_from_entity(
     meta_dir = ensure_meta_session(entity_name, s_base=s_base)
     core_dir = meta_dir / 'core'
 
-    # Copy prompts (new names with fallback to old names)
-    for new_src, old_src, dst_name in [
-        ('prompts/system.md', None, 'system.md'),
-        ('prompts/task.md', 'prompts/heartbeat.md', 'task.md'),
-        ('prompts/env.md', 'prompts/session.md', 'env.md'),
+    # Copy prompts
+    for src_name, dst_name in [
+        ('prompts/system.md', 'system.md'),
+        ('prompts/task.md', 'task.md'),
+        ('prompts/env.md', 'env.md'),
     ]:
-        src = entity_dir / new_src
-        if not src.exists() and old_src:
-            src = entity_dir / old_src
+        src = entity_dir / src_name
         if src.exists():
             (core_dir / dst_name).write_text(src.read_text(encoding='utf-8'), encoding='utf-8')
 
@@ -441,7 +435,7 @@ def start_meta_agent(
     """
     from nutshell.session_engine.session_status import ensure_session_status
     from nutshell.session_engine.session_config import ensure_config
-    from nutshell.session_engine.task_cards import ensure_card, migrate_legacy_task_sources
+    from nutshell.session_engine.task_cards import ensure_card
 
     sessions_base = s_base or _SESSIONS_DIR
     system_base = sys_base or _SYSTEM_SESSIONS_DIR
@@ -494,8 +488,6 @@ def start_meta_agent(
         interval=21600.0,
         description="Dream: review and process all child sessions for this entity",
     )
-    migrate_legacy_task_sources(meta_dir)
-
     return system_dir
 
 

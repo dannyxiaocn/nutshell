@@ -755,7 +755,7 @@ def cmd_prompt_stats(args) -> int:
     for label, lines, chars, tokens, note in dynamic_rows:
         print(f"  {label:<{COL[0]}}  {lines:>{COL[1]}}  {chars:>{COL[2]}}  {tokens:>{COL[3]}}  {note}")
 
-    # Group: Heartbeat
+    # Group: Task
     print("  TASK")
     label, lines, chars, tokens, note = rows[-1]
     print(f"  {label:<{COL[0]}}  {lines:>{COL[1]}}  {chars:>{COL[2]}}  {tokens:>{COL[3]}}  {note}")

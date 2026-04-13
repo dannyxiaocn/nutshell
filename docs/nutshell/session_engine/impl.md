@@ -4,11 +4,11 @@
 
 | File | Purpose |
 |------|---------|
-| `entity_config.py` | `AgentConfig` dataclass — reads `agent.yaml`, provides typed view of manifest |
+| `entity_config.py` | `AgentConfig` dataclass — reads `config.yaml`, provides typed view of manifest |
 | `agent_loader.py` | `AgentLoader` — builds `Agent` from a fully self-contained entity dir |
 | `entity_state.py` | Meta session lifecycle, version management, gene commands, entity→meta bootstrap |
 | `session_init.py` | `init_session()` — creates full session directory structure from meta session |
-| `session_params.py` | Reads/writes `core/params.json` with defaults |
+| `session_params.py` | Reads/writes `core/config.yaml` with defaults |
 | `session_status.py` | Reads/writes `_sessions/<id>/status.json` |
 | `task_cards.py` | Per-task `.json` files in `core/tasks/` with scheduling and status management |
 | `session.py` | `Session` class — wraps Agent with persistent file-backed behavior |
@@ -28,7 +28,7 @@ chat(message):
   3. append turn to context.jsonl
 
 tick(card):
-  1. Build prompt from card + heartbeat.md
+  1. Build prompt from card + task.md
   2. agent.run(...)
   3. Mark card done (recurring → pending with updated last_finished_at)
   4. On error: mark_pending() (not paused) so task retries next cycle
@@ -40,14 +40,14 @@ tick(card):
 2. Write `manifest.json`, create `.venv`
 3. Ensure meta session → `populate_meta_from_entity()` if first time
 4. Copy prompts/tools/skills **from meta** (not directly from entity)
-5. Write `params.json` from entity's `agent.yaml`; record meta version as `agent_version`
+5. Write `config.yaml` from entity's `config.yaml`; record meta version as `agent_version`
 6. Seed memory from meta → entity fallback
 7. Seed playground, task cards
 
 ## AgentLoader.load()
 
 Each entity is fully self-contained — no inheritance chain:
-1. Read `agent.yaml` → `AgentConfig`
+1. Read `config.yaml` → `AgentConfig`
 2. Load prompts from paths listed under `prompts:` key
 3. Load tools from paths listed under `tools:` key
 4. Load skills from paths listed under `skills:` key
@@ -55,9 +55,9 @@ Each entity is fully self-contained — no inheritance chain:
 
 ## Version Management
 
-- Meta session version: `agent_version` in `sessions/<entity>_meta/core/params.json`
+- Meta session version: `agent_version` in `sessions/<entity>_meta/core/config.yaml`
 - Version history: `_sessions/<entity>_meta/version_history.json`
-- Child session records meta version at creation time in its own `core/params.json`
+- Child session records meta version at creation time in its own `core/config.yaml`
 - `Session._emit_version_notice_if_stale()` emits a `system_notice` event if meta has advanced
 - `bump_meta_version()` increments patch version and appends to history
 

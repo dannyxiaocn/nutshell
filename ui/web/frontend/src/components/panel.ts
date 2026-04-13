@@ -170,7 +170,7 @@ export function createPanel(): HTMLElement {
     const params = store.currentParams;
     if (!params) return '<div class="config-empty">No config loaded.</div>';
 
-    const excluded = new Set(['default_task', 'is_meta_session']);
+    const excluded = new Set(['is_meta_session']);
     const rows = Object.entries(params)
       .filter(([k]) => !excluded.has(k))
       .map(([k, v]) => {

@@ -72,10 +72,6 @@ class BoundedIDSet:
     def has(self, event_id: str) -> bool:
         return event_id in self._set
 
-    def clear(self) -> None:
-        self._set.clear()
-        self._ring = [None] * self._capacity
-        self._write_idx = 0
 
 
 # ── BridgeSession ─────────────────────────────────────────────────────────────
@@ -95,7 +91,6 @@ class BridgeSession:
         from nutshell.runtime.ipc import FileIPC
         self._ipc = FileIPC(system_dir)
         self._seen_ids = BoundedIDSet()   # inbound dedup
-        self._posted_ids = BoundedIDSet() # echo dedup
 
     # ── Write ────────────────────────────────────────────────────────────────
 
@@ -113,7 +108,6 @@ class BridgeSession:
             "id": msg_id,
             "caller": caller,
         })
-        self._posted_ids.add(msg_id)
         return msg_id
 
     def send_interrupt(self) -> None:

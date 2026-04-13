@@ -124,11 +124,7 @@ def create_entity(name: str, base_dir: Path, init_from: str | None) -> Path:
         shutil.copytree(src_dir, entity_dir)
 
         # Update config: set new name and record init_from
-        # Prefer config.yaml; rename legacy agent.yaml → config.yaml
         yaml_path = entity_dir / "config.yaml"
-        legacy_path = entity_dir / "agent.yaml"
-        if not yaml_path.exists() and legacy_path.exists():
-            legacy_path.rename(yaml_path)
 
         import yaml as _yaml
         manifest = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
