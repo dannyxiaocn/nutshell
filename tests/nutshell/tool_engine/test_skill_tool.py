@@ -98,3 +98,27 @@ async def test_skill_tool_substitutes_dir_and_arguments(tmp_path):
     assert f"Dir: {skill_dir.resolve().as_posix()}" in result
     assert "Topic: refactor" in result
     assert "All: refactor" in result
+
+
+@pytest.mark.asyncio
+async def test_skill_tool_var_substitution_no_substring_collision(tmp_path):
+    """$to must not corrupt $topic — longer names are replaced first."""
+    skill_dir = tmp_path / "skills" / "mail"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: mail\ndescription: Send mail\narguments:\n  - to\n  - topic\n---\n\nTo: $to\nTopic: $topic\n",
+        encoding="utf-8",
+    )
+    skill = SkillLoader().load(skill_dir)
+
+    tool_json = tmp_path / "tools" / "skill.json"
+    tool_json.parent.mkdir()
+    _write_skill_json(tool_json)
+
+    tool = ToolLoader(skills=[skill]).load(tool_json)
+    result = await tool.execute(skill="mail", args="alice chatting")
+
+    assert "To: alice" in result
+    assert "Topic: chatting" in result
+    # Must NOT contain corrupted "alicepic" (from $to replacing inside $topic)
+    assert "alicepic" not in result
