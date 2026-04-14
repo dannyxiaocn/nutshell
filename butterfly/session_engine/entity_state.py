@@ -344,7 +344,7 @@ Meta-session memory is system-managed; keep it current through your task cycles.
 # TODO: more efficient tools for learning what to update (e.g. session diff summaries, structured change detection)
 """
 
-_META_HEARTBEAT_PROMPT = """Dream cycle: Review all child sessions and maintain entity health.
+_META_HEARTBEAT_PROMPT = """Heartbeat cycle: Review all child sessions and maintain entity health.
 
 ## 1. Review child sessions
 List: `butterfly sessions --json` (filter by entity from _sessions/*/manifest.json)

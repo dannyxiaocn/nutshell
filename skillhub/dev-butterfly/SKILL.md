@@ -122,8 +122,8 @@ _sessions/<id>/          system-only twin (agent never sees)
 
 ### Adding an entity
 
-1. Create `entity/<name>/` with `config.yaml`, `prompts/`, `tools.md`, `skills.md`
-2. Run `butterfly meta <name> --init` to initialize meta session
+1. Create `entity/<name>/` with `config.yaml`, `prompts/`, `tools.md`, `skills.md` (or use `butterfly entity new -n <name> --init-from agent`)
+2. The meta session is initialized automatically the first time a child session is created from the entity (`populate_meta_from_entity` runs during `init_session`).
 
 ## System Prompt Assembly
 
@@ -153,4 +153,4 @@ Test layout mirrors source: `tests/butterfly/{core,llm_engine,tool_engine,...}/`
 - If a README and the code disagree, trust the code and fix the README
 - If a directory is an operational subsystem, it should have a short README
 - If a file path is part of a contract, mention the path exactly as the code uses it
-- Use `butterfly meta agent --sync entity-wins` after changing entity files to sync to meta session
+- After changing files under `entity/<name>/`, either (a) delete the meta session `sessions/<name>_meta/` and `_sessions/<name>_meta/` so the next child session re-bootstraps from the entity, or (b) manually mirror the edits into `sessions/<name>_meta/core/` for existing sessions to pick up.

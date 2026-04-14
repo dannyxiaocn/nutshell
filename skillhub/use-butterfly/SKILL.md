@@ -66,7 +66,6 @@ butterfly chat --session 2026-04-13_10-00-00-a1b2 "What's the status?"
 | `butterfly sessions` | List all sessions with status |
 | `butterfly log [SESSION_ID]` | Show conversation history |
 | `butterfly tasks [SESSION_ID]` | Show task cards |
-| `butterfly prompt-stats [SESSION_ID]` | System prompt size breakdown |
 
 **`log` flags:**
 - `-n N` — number of turns (default: 5)
@@ -78,24 +77,11 @@ butterfly chat --session 2026-04-13_10-00-00-a1b2 "What's the status?"
 | Command | Description |
 |---------|-------------|
 | `butterfly entity new` | Scaffold a new entity (interactive) |
-| `butterfly meta [ENTITY]` | Show entity meta-session info |
-| `butterfly dream ENTITY` | Trigger meta session dream cycle |
 
 **`entity new` flags:**
 - `-n NAME` — skip interactive prompt
 - `--init-from SOURCE` — copy from existing entity
 - `--blank` — empty entity with placeholders
-
-### Dev Tools
-
-| Command | Description |
-|---------|-------------|
-| `butterfly repo-skill REPO_PATH` | Generate a SKILL.md codebase overview |
-| `butterfly repo-dev REPO_PATH` | Create a dev session with codebase skill |
-
-**`repo-dev` flags:**
-- `-n NAME` — custom skill name
-- `-m MSG` — initial message to send
 
 ### Server Management
 
@@ -138,11 +124,6 @@ butterfly log --session my-feature --watch  # monitor progress
 **Inject context into a session:**
 ```bash
 butterfly chat --inject-memory spec=@design_doc.md "Implement this spec"
-```
-
-**Work on an external codebase:**
-```bash
-butterfly repo-dev ~/projects/my-app -m "Add unit tests for the parser"
 ```
 
 **Check all agent activity:**
