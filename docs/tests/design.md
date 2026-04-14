@@ -1,12 +1,12 @@
 # Tests — Design
 
-Automated coverage for the nutshell runtime, providers, CLI, entities, and tool system. Tests mirror the source code directory structure for natural discoverability.
+Automated coverage for the butterfly runtime, providers, CLI, entities, and tool system. Tests mirror the source code directory structure for natural discoverability.
 
 ## Layout
 
 ```
 tests/
-  nutshell/              mirrors nutshell/ source tree
+  butterfly/              mirrors butterfly/ source tree
     core/                agent, tool, skill unit tests
     llm_engine/          provider and registry tests
     runtime/             IPC, CAP, watcher, meta-session tests

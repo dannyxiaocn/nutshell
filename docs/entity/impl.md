@@ -18,10 +18,10 @@ entity/<name>/
 ## CLI Usage
 
 ```bash
-nutshell new --entity agent                        # Create session from entity
-nutshell chat --entity nutshell_dev "fix the failing test"
-nutshell entity new -n myentity --init-from agent  # Copy entity from 'agent'
-nutshell entity new -n myentity --blank            # Blank entity with empty files
+butterfly new --entity agent                        # Create session from entity
+butterfly chat --entity butterfly_dev "fix the failing test"
+butterfly entity new -n myentity --init-from agent  # Copy entity from 'agent'
+butterfly entity new -n myentity --blank            # Blank entity with empty files
 ```
 
 ## Session Creation from Entity
@@ -42,7 +42,7 @@ nutshell entity new -n myentity --blank            # Blank entity with empty fil
 | `tools` | List of tool JSON schema paths |
 | `skills` | List of skill directory paths |
 | `params` | Extra params merged into `core/config.yaml` |
-| `meta_session` | Description shown in `nutshell meta` output |
+| `meta_session` | Description of the entity's meta session, surfaced to the meta agent on wake-up |
 
 ## Important Files
 

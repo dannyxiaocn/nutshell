@@ -1,6 +1,6 @@
 import json
 
-from nutshell.service.sessions_service import get_session
+from butterfly.service.sessions_service import get_session
 
 
 def test_read_session_info_returns_core_fields(tmp_path):

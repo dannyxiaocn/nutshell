@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from nutshell.session_engine.task_cards import TaskCard, save_card
+from butterfly.session_engine.task_cards import TaskCard, save_card
 from ui.web.app import create_app
-from nutshell.service.sessions_service import _is_stale_stopped
+from butterfly.service.sessions_service import _is_stale_stopped
 
 
 def _make_session(root: Path, session_id: str = "test-session") -> Path:

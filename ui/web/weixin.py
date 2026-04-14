@@ -1,6 +1,6 @@
-"""Nutshell WeChat Bridge.
+"""Butterfly WeChat Bridge.
 
-Bridges WeChat (via ilink bot API) to a Nutshell session.
+Bridges WeChat (via ilink bot API) to a Butterfly session.
 Reads token from ~/.openclaw/openclaw-weixin/accounts/ (requires OpenClaw QR login).
 Runs as an asyncio background task alongside the FastAPI web server.
 
@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
-from nutshell.service import send_message as service_send_message, start_session as service_start_session, stop_session as service_stop_session, wait_for_reply as service_wait_for_reply
+from butterfly.service import send_message as service_send_message, start_session as service_start_session, stop_session as service_stop_session, wait_for_reply as service_wait_for_reply
 
 _WEIXIN_STATE_DIR = Path.home() / ".openclaw" / "openclaw-weixin"
 _WEIXIN_ACCOUNTS_INDEX = _WEIXIN_STATE_DIR / "accounts.json"
@@ -55,9 +55,9 @@ def _api_headers(token: str) -> dict:
 
 
 class WeixinBridge:
-    """Async WeChat ↔ Nutshell bridge.
+    """Async WeChat ↔ Butterfly bridge.
 
-    Polls WeChat for incoming messages, routes them to the active Nutshell session via
+    Polls WeChat for incoming messages, routes them to the active Butterfly session via
     FileIPC, waits for the agent reply, and sends it back to the WeChat user.
     """
 
@@ -202,7 +202,7 @@ class WeixinBridge:
         msg: dict = {
             "from_user_id": "",
             "to_user_id": to_user,
-            "client_id": f"nutshell-{int(time.time() * 1000)}",
+            "client_id": f"butterfly-{int(time.time() * 1000)}",
             "message_type": 2,   # BOT
             "message_state": 2,  # FINISH
             "item_list": [{"type": 1, "text_item": {"text": text}}],
@@ -238,7 +238,7 @@ class WeixinBridge:
             entity = arg or "entity/agent"
             sid = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "-" + uuid.uuid4().hex[:4]
             try:
-                from nutshell.service.sessions_service import create_session as _create_session
+                from butterfly.service.sessions_service import create_session as _create_session
                 _create_session(sid, entity, sessions_dir=self._sessions_dir, system_sessions_dir=self._sys_dir)
                 self._current_session = sid
                 reply = f"✅ 新 session 已创建: {sid}\nEntity: {entity}"

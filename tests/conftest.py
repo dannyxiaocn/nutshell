@@ -1,4 +1,4 @@
-"""Shared pytest configuration and helpers for the nutshell test suite."""
+"""Shared pytest configuration and helpers for the butterfly test suite."""
 from __future__ import annotations
 
 from pathlib import Path

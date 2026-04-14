@@ -1,12 +1,12 @@
-"""Nutshell Web UI — FastAPI server with SSE streaming.
+"""Butterfly Web UI — FastAPI server with SSE streaming.
 
 Browser connects via SSE to receive real-time agent output; sends messages
 via POST. FastAPI is a thin HTTP wrapper over FileIPC — no agent logic here.
 
 Usage:
-    nutshell-web
-    nutshell-web --port 8080 --sessions-dir ./sessions
-    python -m nutshell.ui.web
+    butterfly-web
+    butterfly-web --port 8080 --sessions-dir ./sessions
+    python -m butterfly.ui.web
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from nutshell.service import (
+from butterfly.service import (
     iter_events as service_iter_events,
     create_session as service_create_session,
     delete_session as service_delete_session,
@@ -43,7 +43,7 @@ from nutshell.service import (
     upsert_task as service_upsert_task,
     delete_task as service_delete_task,
 )
-from nutshell.service.sessions_service import _validate_session_id as _service_validate_session_id
+from butterfly.service.sessions_service import _validate_session_id as _service_validate_session_id
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
@@ -140,7 +140,7 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
         yield
         weixin.stop()
 
-    app = FastAPI(title="Nutshell Web UI", docs_url=None, redoc_url=None, lifespan=_lifespan)
+    app = FastAPI(title="Butterfly Web UI", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
     # Serve built frontend assets if dist/ exists
     if _DIST_DIR.exists():
@@ -363,9 +363,9 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
 
 
 def main() -> None:
-    from nutshell.runtime.env import load_dotenv
+    from butterfly.runtime.env import load_dotenv
     load_dotenv()
-    parser = argparse.ArgumentParser(description="Nutshell Web UI")
+    parser = argparse.ArgumentParser(description="Butterfly Web UI")
     parser.add_argument("--port", type=int, default=_DEFAULT_PORT)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--sessions-dir", default=str(SESSIONS_DIR), metavar="DIR")
@@ -378,7 +378,7 @@ def main() -> None:
     system_sessions_dir.mkdir(parents=True, exist_ok=True)
 
     app = create_app(sessions_dir, system_sessions_dir)
-    print(f"nutshell web UI: http://localhost:{args.port}")
+    print(f"butterfly web UI: http://localhost:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

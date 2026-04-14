@@ -9,13 +9,13 @@ TESTS_DIR = REPO_ROOT / "tests"
 
 # Expected test directories that mirror the source tree.
 EXPECTED_DIRS = [
-    "nutshell/core",
-    "nutshell/llm_engine",
-    "nutshell/runtime",
-    "nutshell/service",
-    "nutshell/session_engine",
-    "nutshell/skill_engine",
-    "nutshell/tool_engine",
+    "butterfly/core",
+    "butterfly/llm_engine",
+    "butterfly/runtime",
+    "butterfly/service",
+    "butterfly/session_engine",
+    "butterfly/skill_engine",
+    "butterfly/tool_engine",
     "entity",
     "ui/cli",
     "ui/web",

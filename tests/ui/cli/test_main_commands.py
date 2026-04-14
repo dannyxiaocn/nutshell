@@ -1,4 +1,4 @@
-"""Tests for the unified `nutshell` CLI (ui/cli/main.py)."""
+"""Tests for the unified `butterfly` CLI (ui/cli/main.py)."""
 from __future__ import annotations
 
 import argparse
@@ -21,7 +21,6 @@ from ui.cli.main import (
     cmd_entity,
     _add_new_parser,
     _add_log_parser,
-    _add_prompt_stats_parser,
     _add_tasks_parser,
     _read_all_sessions,
     _fmt_ago,
@@ -208,7 +207,6 @@ def _parse_subcommand(add_parser, argv: list[str]):
     [
         (_add_log_parser, "log"),
         (_add_tasks_parser, "tasks"),
-        (_add_prompt_stats_parser, "prompt-stats"),
     ],
 )
 def test_session_alias_parsers_accept_flag_form(add_parser, command):
@@ -220,7 +218,7 @@ def test_main_disables_option_abbreviation(capsys):
     with pytest.raises(SystemExit) as exc:
         from unittest.mock import patch
 
-        with patch.object(sys, "argv", ["nutshell", "log", "--sess", "demo-session"]):
+        with patch.object(sys, "argv", ["butterfly", "log", "--sess", "demo-session"]):
             main()
 
     assert exc.value.code == 2
@@ -323,7 +321,7 @@ def test_cmd_entity_name_only_does_not_require_init_from_prompt(tmp_path, capsys
 # ── cmd_stop / cmd_start ──────────────────────────────────────────────────────
 
 def test_cmd_stop_and_start(tmp_path, capsys):
-    from nutshell.session_engine.session_status import read_session_status
+    from butterfly.session_engine.session_status import read_session_status
     sessions, system = _seed_session(tmp_path, "ctrl-session")
 
     import argparse
@@ -711,7 +709,7 @@ def test_cmd_new_inject_memory(tmp_path):
     )
     from ui.cli.main import cmd_new
     import unittest.mock as mock
-    with mock.patch("nutshell.session_engine.session_init.init_session") as m:
+    with mock.patch("butterfly.session_engine.session_init.init_session") as m:
         m.return_value = None
         # cmd_new calls _write_inject_memory after init_session
         # We need session dir to exist for mkdir to work on memory

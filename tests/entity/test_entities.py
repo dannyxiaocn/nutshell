@@ -3,13 +3,13 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from nutshell.session_engine.agent_loader import AgentLoader
+from butterfly.session_engine.agent_loader import AgentLoader
 
 
 from conftest import REPO_ROOT
 
 ENTITY_ROOT = REPO_ROOT / "entity"
-ACTIVE_ENTITIES = ["agent", "nutshell_dev"]
+ACTIVE_ENTITIES = ["agent", "butterfly_dev"]
 
 
 DOCS_ROOT = REPO_ROOT / "docs" / "entity"

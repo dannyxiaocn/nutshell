@@ -5,7 +5,7 @@ import shlex
 from pathlib import Path
 from typing import Any, Iterable
 
-from nutshell.core.skill import Skill
+from butterfly.core.skill import Skill
 
 
 def _normalize_skill_name(name: str) -> str:
@@ -25,11 +25,11 @@ def _substitute_skill_vars(text: str, skill: Skill, args: str | None) -> str:
     root_dir = skill.root_dir
     if root_dir is not None:
         skill_dir = root_dir.as_posix()
-        for var in ("${NUTSHELL_SKILL_DIR}", "${CLAUDE_SKILL_DIR}", "${CODEX_SKILL_DIR}"):
+        for var in ("${BUTTERFLY_SKILL_DIR}", "${CLAUDE_SKILL_DIR}", "${CODEX_SKILL_DIR}"):
             text = text.replace(var, skill_dir)
 
     raw_args = (args or "").strip()
-    text = text.replace("${NUTSHELL_SKILL_ARGS}", raw_args)
+    text = text.replace("${BUTTERFLY_SKILL_ARGS}", raw_args)
     text = text.replace("${CLAUDE_SKILL_ARGS}", raw_args)
     text = text.replace("${CODEX_SKILL_ARGS}", raw_args)
     text = text.replace("$ARGUMENTS", raw_args)

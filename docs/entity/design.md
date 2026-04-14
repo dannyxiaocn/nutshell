@@ -21,12 +21,12 @@ entity/<name>/          ← static, version-controlled template
 
 ## Creating a New Entity
 
-Use `nutshell entity new`:
+Use `butterfly entity new`:
 
 ```bash
-nutshell entity new -n my-agent                    # defaults to --init-from agent
-nutshell entity new -n my-agent --init-from agent  # copy all files from 'agent'
-nutshell entity new -n my-agent --blank            # empty placeholder files
+butterfly entity new -n my-agent                    # defaults to --init-from agent
+butterfly entity new -n my-agent --init-from agent  # copy all files from 'agent'
+butterfly entity new -n my-agent --blank            # empty placeholder files
 ```
 
 `--init-from` performs a one-time full copy (prompts, tools, skills, config.yaml with updated name).

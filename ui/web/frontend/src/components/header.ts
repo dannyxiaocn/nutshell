@@ -46,7 +46,7 @@ export function createHeader(): HTMLElement {
 
     el.innerHTML = `
       <div class="header-left">
-        <span class="logo">🥜 nutshell</span>
+        <span class="logo">🦋 butterfly</span>
         <span class="indicator" title="${escHtml(serverLabel)}">
           <span class="dot" style="background:${serverDot}"></span>
           <span>${escHtml(serverLabel)}</span>

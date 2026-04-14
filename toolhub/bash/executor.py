@@ -1,4 +1,4 @@
-"""Bash/CLI execution tool for nutshell agents.
+"""Bash/CLI execution tool for butterfly agents.
 
 Two execution modes:
   - subprocess (default): asyncio.create_subprocess_shell — async, portable
@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from nutshell.tool_engine.executor.base import BaseExecutor
+from butterfly.tool_engine.executor.base import BaseExecutor
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mGKHF]")
 _MAX_OUTPUT = 10_000
@@ -24,7 +24,7 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 
 def _venv_env() -> dict[str, str] | None:
     """Build an env dict with session venv activated, or None if no venv."""
-    session_id = os.environ.get("NUTSHELL_SESSION_ID", "")
+    session_id = os.environ.get("BUTTERFLY_SESSION_ID", "")
     if not session_id:
         return None
     venv_path = _REPO_ROOT / "sessions" / session_id / ".venv"

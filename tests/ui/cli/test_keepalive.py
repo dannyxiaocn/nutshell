@@ -1,4 +1,4 @@
-"""Tests for nutshell chat --keep-alive functionality."""
+"""Tests for butterfly chat --keep-alive functionality."""
 from __future__ import annotations
 
 import subprocess
@@ -140,10 +140,10 @@ class TestKeepAliveBranching:
 
         with (
             mock.patch.dict("sys.modules", {
-                "nutshell.session_engine.agent_loader": mock.MagicMock(AgentLoader=fake_loader_cls),
-                "nutshell.session_engine.session": mock.MagicMock(Session=fake_session_cls),
-                "nutshell.runtime.ipc": mock.MagicMock(FileIPC=fake_ipc_cls),
-                "nutshell.session_engine.session_init": mock.MagicMock(init_session=fake_init_session),
+                "butterfly.session_engine.agent_loader": mock.MagicMock(AgentLoader=fake_loader_cls),
+                "butterfly.session_engine.session": mock.MagicMock(Session=fake_session_cls),
+                "butterfly.runtime.ipc": mock.MagicMock(FileIPC=fake_ipc_cls),
+                "butterfly.session_engine.session_init": mock.MagicMock(init_session=fake_init_session),
             }),
             mock.patch("ui.cli.chat.datetime") as mock_dt,
             mock.patch("ui.cli.chat._send_message", return_value="fake-id"),
@@ -172,12 +172,12 @@ class TestKeepAliveBranching:
         return code, popen_mock, captured_stdout.getvalue(), captured_stderr.getvalue()
 
     def test_keep_alive_true_calls_popen(self):
-        """keep_alive=True should call subprocess.Popen with nutshell-server."""
+        """keep_alive=True should call subprocess.Popen with butterfly-server."""
         code, popen_mock, stdout, stderr = self._run_new_session(keep_alive=True)
         assert code == 0
         popen_mock.assert_called_once()
         args, kwargs = popen_mock.call_args
-        assert args[0] == ["nutshell-server"]
+        assert args[0] == ["butterfly-server"]
         assert kwargs["start_new_session"] is True
         assert kwargs["stdout"] is subprocess.DEVNULL
         assert kwargs["stderr"] is subprocess.DEVNULL

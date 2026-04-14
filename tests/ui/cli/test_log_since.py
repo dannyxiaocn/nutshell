@@ -1,4 +1,4 @@
-"""Tests for nutshell log --since / --watch helpers (v1.3.36)."""
+"""Tests for butterfly log --since / --watch helpers (v1.3.36)."""
 
 import json
 import time

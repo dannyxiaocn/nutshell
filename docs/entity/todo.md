@@ -8,7 +8,7 @@
 
 - [x] Entity catalog with README (bc2cc6f)
 - [x] Entity inheritance: link/own/append (b4fbc50) — **removed in v1.3.85**
-- [x] Entity scaffolding: nutshell entity new (new_agent.py)
+- [x] Entity scaffolding: butterfly entity new (new_agent.py)
 - [x] Replace inheritance with flat init_from copy model (v1.3.85)
 - [x] Entity versioning via agent_version in meta session params (v1.3.85)
 
