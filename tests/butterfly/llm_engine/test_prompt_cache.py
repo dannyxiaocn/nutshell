@@ -356,7 +356,13 @@ def test_token_usage_as_dict():
     from butterfly.core.types import TokenUsage
     u = TokenUsage(input_tokens=10, output_tokens=5, cache_read_tokens=100, cache_write_tokens=2)
     d = u.as_dict()
-    assert d == {"input": 10, "output": 5, "cache_read": 100, "cache_write": 2}
+    assert d == {
+        "input": 10,
+        "output": 5,
+        "cache_read": 100,
+        "cache_write": 2,
+        "reasoning": 0,
+    }
 
 
 @pytest.mark.asyncio
