@@ -1,4 +1,4 @@
-"""Tests for `nutshell prompt-stats` command."""
+"""Tests for `butterfly prompt-stats` command."""
 from __future__ import annotations
 
 import json

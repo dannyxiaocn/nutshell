@@ -1,4 +1,4 @@
-"""nutshell repo-skill — generate a SKILL.md codebase overview from any repo.
+"""butterfly repo-skill — generate a SKILL.md codebase overview from any repo.
 
 Pure filesystem operations, no LLM calls.  Fast and offline.
 """
@@ -279,7 +279,7 @@ def generate_repo_skill(
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 def cmd_repo_skill(args) -> int:
-    """CLI handler for `nutshell repo-skill`."""
+    """CLI handler for `butterfly repo-skill`."""
     repo_path = Path(args.repo_path).resolve()
     if not repo_path.is_dir():
         import sys
@@ -331,7 +331,7 @@ def cmd_repo_skill(args) -> int:
 # ── CLI entry point: repo-dev ─────────────────────────────────────────────────
 
 def cmd_repo_dev(args) -> int:
-    """CLI handler for `nutshell repo-dev`."""
+    """CLI handler for `butterfly repo-dev`."""
     import sys
     from datetime import datetime
 
@@ -351,16 +351,16 @@ def cmd_repo_dev(args) -> int:
 
     # 2. Find sessions_dir
     sessions_dir = Path(
-        os.environ.get("NUTSHELL_SESSIONS_DIR", "")
+        os.environ.get("BUTTERFLY_SESSIONS_DIR", "")
         or Path(__file__).parent.parent.parent / "sessions"
     )
 
     # 3. Generate session_id
     session_id = f"repo-dev-{name}-{datetime.now():%Y%m%d_%H%M%S}"
 
-    # 4. Create session via `nutshell new`
+    # 4. Create session via `butterfly new`
     result = subprocess.run(
-        [sys.executable, "-m", "ui.cli.main", "new", session_id, "--entity", "nutshell_dev"],
+        [sys.executable, "-m", "ui.cli.main", "new", session_id, "--entity", "butterfly_dev"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -382,7 +382,7 @@ def cmd_repo_dev(args) -> int:
     print(f"\n✅ repo-dev session created: {session_id}")
     print(f"   Skill: {name}-wiki (written to session)")
     print(f"\n   Usage:")
-    print(f"     nutshell chat --session {session_id} 'your task here'")
-    print(f"     nutshell log {session_id}")
-    print(f"     nutshell tasks {session_id}")
+    print(f"     butterfly chat --session {session_id} 'your task here'")
+    print(f"     butterfly log {session_id}")
+    print(f"     butterfly tasks {session_id}")
     return 0

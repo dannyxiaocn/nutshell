@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from ui.web.app import _sse_format, create_app
-from nutshell.service.sessions_service import create_session, sort_sessions
+from butterfly.service.sessions_service import create_session, sort_sessions
 from ui.web.weixin import WeixinBridge
 
 
@@ -51,7 +51,7 @@ class WebHelpersTest(unittest.TestCase):
             root = Path(tmp)
             sessions_dir = root / "sessions"
             system_dir = root / "_sessions"
-            with patch("nutshell.session_engine.session_init.init_session") as init_mock:
+            with patch("butterfly.session_engine.session_init.init_session") as init_mock:
                 create_session("demo", "entity/agent", sessions_dir=sessions_dir, system_sessions_dir=system_dir)
         kwargs = init_mock.call_args.kwargs
         self.assertEqual(kwargs["entity_name"], "agent")
@@ -91,7 +91,7 @@ class WebHelpersTest(unittest.TestCase):
             fake_client = object()
 
             async def _run() -> None:
-                with patch("nutshell.service.sessions_service.create_session") as init_mock, patch.object(
+                with patch("butterfly.service.sessions_service.create_session") as init_mock, patch.object(
                     bridge,
                     "_send_text",
                     new=AsyncMock(),

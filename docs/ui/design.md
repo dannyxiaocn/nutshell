@@ -4,4 +4,4 @@ The UI directory exposes the runtime to humans and external channels. It is inte
 
 ## Design Rule
 
-UI layers are pure adapters. All business logic lives in `nutshell/service/`. UI code should not import `nutshell.runtime.ipc`, `session_status`, `session_params`, or `bridge` directly.
+UI layers are pure adapters. All business logic lives in `butterfly/service/`. UI code should not import `butterfly.runtime.ipc`, `session_status`, `session_params`, or `bridge` directly.

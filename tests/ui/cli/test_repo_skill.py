@@ -1,4 +1,4 @@
-"""Tests for nutshell repo-skill — codebase overview skill generation."""
+"""Tests for butterfly repo-skill — codebase overview skill generation."""
 from __future__ import annotations
 
 import textwrap

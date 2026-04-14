@@ -1,21 +1,21 @@
-"""nutshell — unified CLI for the Nutshell agent runtime.
+"""butterfly — unified CLI for the Butterfly agent runtime.
 
 Usage:
-    nutshell chat MESSAGE [options]          Send a message / create a session
-    nutshell sessions [--json]              List all sessions
-    nutshell new [SESSION_ID] [options]     Create a new session (no message)
-    nutshell stop SESSION_ID                Stop a session
-    nutshell start SESSION_ID               Resume a stopped session
-    nutshell log [SESSION_ID] [-n N] [--since T] [--watch]  Show conversation history
-    nutshell tasks [SESSION_ID]             Show a session's task board
-    nutshell entity new [options]           Scaffold a new entity directory
+    butterfly chat MESSAGE [options]          Send a message / create a session
+    butterfly sessions [--json]              List all sessions
+    butterfly new [SESSION_ID] [options]     Create a new session (no message)
+    butterfly stop SESSION_ID                Stop a session
+    butterfly start SESSION_ID               Resume a stopped session
+    butterfly log [SESSION_ID] [-n N] [--since T] [--watch]  Show conversation history
+    butterfly tasks [SESSION_ID]             Show a session's task board
+    butterfly entity new [options]           Scaffold a new entity directory
 
-    nutshell prompt-stats [SESSION_ID]      Show prompt space breakdown for a session
-    nutshell repo-skill REPO_PATH           Generate codebase overview skill
+    butterfly prompt-stats [SESSION_ID]      Show prompt space breakdown for a session
+    butterfly repo-skill REPO_PATH           Generate codebase overview skill
 
-    nutshell server                         Start the Nutshell server (auto-daemonize)
-    nutshell web                            Start the web UI (monitoring)
-    nutshell dream ENTITY                    Trigger meta session dream cycle
+    butterfly server                         Start the Butterfly server (auto-daemonize)
+    butterfly web                            Start the web UI (monitoring)
+    butterfly dream ENTITY                    Trigger meta session dream cycle
 
 All session-management commands (sessions, new, stop, start, tasks) work without
 a running server — they read/write the _sessions/ directory directly.
@@ -42,12 +42,12 @@ def _ensure_server_running(
     sessions_dir: Path | None = None,
     system_sessions_dir: Path | None = None,
 ) -> None:
-    """Start nutshell-server in daemon mode if not already running."""
-    from nutshell.runtime.server import _is_server_running, _start_daemon
+    """Start butterfly-server in daemon mode if not already running."""
+    from butterfly.runtime.server import _is_server_running, _start_daemon
     sys_dir = system_sessions_dir or _DEFAULT_SYSTEM_BASE
     if _is_server_running(sys_dir):
         return
-    print("Starting nutshell server...")
+    print("Starting butterfly server...")
     _start_daemon(
         sessions_dir=sessions_dir or _DEFAULT_SESSIONS_BASE,
         system_sessions_dir=sys_dir,
@@ -147,7 +147,7 @@ def _read_all_sessions(
     exclude_meta: bool = False,
 ) -> list[dict]:
     """Read all sessions from _sessions/ + sessions/. No server required."""
-    from nutshell.service import list_sessions
+    from butterfly.service import list_sessions
     return list_sessions(sessions_base, system_base, exclude_meta=exclude_meta)
 
 
@@ -161,10 +161,10 @@ def _add_chat_parser(subparsers) -> None:
         description=(
             "Send a message to an existing session or create a new one.\n\n"
             "Examples:\n"
-            "  nutshell chat 'Plan a data pipeline'\n"
-            "  nutshell chat --entity nutshell_dev 'Review this code'\n"
-            "  nutshell chat --session 2026-03-25_10-00-00 'Status?'\n"
-            "  nutshell chat --session <id> --no-wait 'Run overnight'\n"
+            "  butterfly chat 'Plan a data pipeline'\n"
+            "  butterfly chat --entity butterfly_dev 'Review this code'\n"
+            "  butterfly chat --session 2026-03-25_10-00-00 'Status?'\n"
+            "  butterfly chat --session <id> --no-wait 'Run overnight'\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -277,9 +277,9 @@ def _add_new_parser(subparsers) -> None:
             "Create a session from an entity. Session ID is auto-generated from\n"
             "the current timestamp unless specified explicitly.\n\n"
             "Examples:\n"
-            "  nutshell new\n"
-            "  nutshell new --entity nutshell_dev\n"
-            "  nutshell new my-project --entity agent\n"
+            "  butterfly new\n"
+            "  butterfly new --entity butterfly_dev\n"
+            "  butterfly new my-project --entity agent\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -299,7 +299,7 @@ def _add_new_parser(subparsers) -> None:
 
 def cmd_new(args) -> int:
     _ensure_server_running(args.sessions_base, args.system_base)
-    from nutshell.service import create_session
+    from butterfly.service import create_session
     session_id = args.session_id or (datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "-" + uuid.uuid4().hex[:4])
     entity_dir = _REPO_ROOT / "entity" / args.entity
     if not entity_dir.exists():
@@ -331,7 +331,7 @@ def _add_stop_parser(subparsers) -> None:
 
 
 def cmd_stop(args) -> int:
-    from nutshell.service import stop_session
+    from butterfly.service import stop_session
     try:
         if not stop_session(args.session_id, args.system_base):
             print(f"Error: session '{args.session_id}' not found", file=sys.stderr)
@@ -357,7 +357,7 @@ def _add_start_parser(subparsers) -> None:
 
 
 def cmd_start(args) -> int:
-    from nutshell.service import start_session
+    from butterfly.service import start_session
     if not start_session(args.session_id, args.system_base):
         print(f"Error: session '{args.session_id}' not found", file=sys.stderr)
         return 1
@@ -437,12 +437,12 @@ def _add_log_parser(subparsers) -> None:
         description=(
             "Display the last N conversation turns from a session.\n\n"
             "Examples:\n"
-            "  nutshell log                                  Show latest session, last 5 turns\n"
-            "  nutshell log 2026-03-25_10-00-00              Specific session\n"
-            "  nutshell log -n 20                            Last 20 turns\n"
-            "  nutshell log --since now                      Bookmark 'now', future calls show new turns only\n"
-            "  nutshell log --since 2026-03-25T12:00:00      Turns after a specific time\n"
-            "  nutshell log --watch                          Poll every 2s for new turns (Ctrl-C to stop)\n"
+            "  butterfly log                                  Show latest session, last 5 turns\n"
+            "  butterfly log 2026-03-25_10-00-00              Specific session\n"
+            "  butterfly log -n 20                            Last 20 turns\n"
+            "  butterfly log --since now                      Bookmark 'now', future calls show new turns only\n"
+            "  butterfly log --since 2026-03-25T12:00:00      Turns after a specific time\n"
+            "  butterfly log --watch                          Poll every 2s for new turns (Ctrl-C to stop)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -484,7 +484,7 @@ def _fmt_msg_content(content) -> str:
 
 
 def cmd_log(args) -> int:
-    from nutshell.service import get_log_turns, get_pending_inputs
+    from butterfly.service import get_log_turns, get_pending_inputs
     session_id = args.session_id
 
     if not session_id:
@@ -617,8 +617,8 @@ def _add_tasks_parser(subparsers) -> None:
         description=(
             "Display task cards for a session.\n\n"
             "Examples:\n"
-            "  nutshell tasks                       Show latest session's tasks\n"
-            "  nutshell tasks 2026-03-25_10-00-00   Show specific session\n"
+            "  butterfly tasks                       Show latest session's tasks\n"
+            "  butterfly tasks 2026-03-25_10-00-00   Show specific session\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -634,7 +634,7 @@ def _add_tasks_parser(subparsers) -> None:
 
 
 def cmd_tasks(args) -> int:
-    from nutshell.service import get_tasks
+    from butterfly.service import get_tasks
 
     session_id = args.session_id
     if not session_id:
@@ -681,8 +681,8 @@ def _add_prompt_stats_parser(subparsers) -> None:
         description=(
             "Display a component-by-component breakdown of system prompt size.\n\n"
             "Examples:\n"
-            "  nutshell prompt-stats                       Latest session\n"
-            "  nutshell prompt-stats 2026-03-25_10-00-00   Specific session\n"
+            "  butterfly prompt-stats                       Latest session\n"
+            "  butterfly prompt-stats 2026-03-25_10-00-00   Specific session\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -706,7 +706,7 @@ def _prompt_stats_row(label: str, content: str, note: str = "") -> tuple[str, in
 
 
 def cmd_prompt_stats(args) -> int:
-    from nutshell.service import get_prompt_stats
+    from butterfly.service import get_prompt_stats
     session_id = args.session_id
     if not session_id:
         sessions = _read_all_sessions(args.sessions_base, args.system_base, exclude_meta=True)
@@ -785,10 +785,10 @@ def _add_entity_parser(subparsers) -> None:
         description=(
             "Scaffold a new agent entity directory.\n\n"
             "Examples:\n"
-            "  nutshell entity new                          # interactive\n"
-            "  nutshell entity new -n my-agent\n"
-            "  nutshell entity new -n my-agent --init-from agent\n"
-            "  nutshell entity new -n my-agent --blank\n"
+            "  butterfly entity new                          # interactive\n"
+            "  butterfly entity new -n my-agent\n"
+            "  butterfly entity new -n my-agent --init-from agent\n"
+            "  butterfly entity new -n my-agent --blank\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -841,13 +841,13 @@ def _add_exec_parser(subparsers, name: str, help_text: str) -> None:
 def _exec_entrypoint(name: str) -> int:
     """Replace the current process with the named entry-point script."""
     import shutil
-    cmd = f"nutshell-{name}"
+    cmd = f"butterfly-{name}"
     path = shutil.which(cmd)
     if path:
         os.execv(path, [path])
     # Fallback: call the Python module directly
     mapping = {
-        "server": ("nutshell.runtime.server", "main"),
+        "server": ("butterfly.runtime.server", "main"),
         "web":    ("ui.web", "main"),
     }
     if name in mapping:
@@ -870,9 +870,9 @@ def _add_repo_skill_parser(subparsers) -> None:
         description=(
             "Generate a SKILL.md codebase overview from a repository.\n\n"
             "Examples:\n"
-            "  nutshell repo-skill ./my-project\n"
-            "  nutshell repo-skill ~/code/fastapi --name fastapi\n"
-            "  nutshell repo-skill . --output /tmp/skills/my-wiki\n"
+            "  butterfly repo-skill ./my-project\n"
+            "  butterfly repo-skill ~/code/fastapi --name fastapi\n"
+            "  butterfly repo-skill . --output /tmp/skills/my-wiki\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -898,9 +898,9 @@ def _add_repo_dev_parser(subparsers) -> None:
         description=(
             "Create a dev-agent session pre-loaded with a codebase overview skill.\n\n"
             "Examples:\n"
-            "  nutshell repo-dev ./my-project\n"
-            "  nutshell repo-dev ~/code/fastapi --name fastapi\n"
-            "  nutshell repo-dev . -m 'add unit tests for the parser module'\n"
+            "  butterfly repo-dev ./my-project\n"
+            "  butterfly repo-dev ~/code/fastapi --name fastapi\n"
+            "  butterfly repo-dev . -m 'add unit tests for the parser module'\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -935,8 +935,8 @@ def _add_dream_parser(subparsers) -> None:
 
 def cmd_dream(args) -> int:
     """Send a wake-up message to the entity's meta session to trigger the dream cycle."""
-    from nutshell.session_engine.entity_state import get_meta_session_id
-    from nutshell.service import send_message
+    from butterfly.session_engine.entity_state import get_meta_session_id
+    from butterfly.service import send_message
 
     meta_id = get_meta_session_id(args.entity)
     sys_dir = args.system_base / meta_id
@@ -985,7 +985,7 @@ def _add_meta_parser(subparsers) -> None:
 
 
 def cmd_meta(args) -> int:
-    from nutshell.session_engine.entity_state import (
+    from butterfly.session_engine.entity_state import (
         get_meta_version,
         get_version_history,
         run_gene_commands,
@@ -1067,36 +1067,36 @@ def cmd_meta(args) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="nutshell",
-        description="Nutshell agent runtime CLI.",
+        prog="butterfly",
+        description="Butterfly agent runtime CLI.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
         epilog=(
             "Session management (no server required):\n"
-            "  nutshell sessions                   List all sessions\n"
-            "  nutshell new [ID] [--entity NAME]   Create a session\n"
-            "  nutshell chat MESSAGE               New session + send message\n"
-            "  nutshell chat --session ID MSG      Send to existing session\n"
-            "  nutshell stop SESSION_ID            Stop a session\n"
-            "  nutshell start SESSION_ID           Resume a session\n"
-            "  nutshell log [SESSION_ID] [-n N]    Show conversation history\n"
-            "  nutshell tasks [SESSION_ID]         Show session task board\n\n"
+            "  butterfly sessions                   List all sessions\n"
+            "  butterfly new [ID] [--entity NAME]   Create a session\n"
+            "  butterfly chat MESSAGE               New session + send message\n"
+            "  butterfly chat --session ID MSG      Send to existing session\n"
+            "  butterfly stop SESSION_ID            Stop a session\n"
+            "  butterfly start SESSION_ID           Resume a session\n"
+            "  butterfly log [SESSION_ID] [-n N]    Show conversation history\n"
+            "  butterfly tasks [SESSION_ID]         Show session task board\n\n"
             "Entity management:\n"
-            "  nutshell entity new                 Scaffold entity interactively\n"
-            "  nutshell entity new -n NAME         Scaffold entity by name\n\n"
+            "  butterfly entity new                 Scaffold entity interactively\n"
+            "  butterfly entity new -n NAME         Scaffold entity by name\n\n"
             "Diagnostics:\n"
-            "  nutshell prompt-stats [SESSION_ID]  Show prompt space breakdown\n\n"
+            "  butterfly prompt-stats [SESSION_ID]  Show prompt space breakdown\n\n"
             "Repo skills:\n"
-            "  nutshell repo-skill PATH            Generate codebase overview SKILL.md\n"
-            "  nutshell repo-skill PATH -n NAME     Custom skill name\n"
-            "  nutshell repo-dev PATH               Create dev agent for repo\n"
-            "  nutshell repo-dev PATH -m MSG         … with initial task\n\n"
+            "  butterfly repo-skill PATH            Generate codebase overview SKILL.md\n"
+            "  butterfly repo-skill PATH -n NAME     Custom skill name\n"
+            "  butterfly repo-dev PATH               Create dev agent for repo\n"
+            "  butterfly repo-dev PATH -m MSG         … with initial task\n\n"
             "Dream (session cleanup):\n"
-            "  nutshell dream ENTITY                 Trigger meta session dream cycle\n"
+            "  butterfly dream ENTITY                 Trigger meta session dream cycle\n"
             "\n"
             "Other:\n"
-            "  nutshell server                     Start the server\n"
-            "  nutshell web                        Start the web UI (monitoring)\n"
+            "  butterfly server                     Start the server\n"
+            "  butterfly web                        Start the web UI (monitoring)\n"
         ),
     )
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
@@ -1116,7 +1116,7 @@ def main() -> None:
     _add_repo_dev_parser(subparsers)
     _add_dream_parser(subparsers)
     _add_meta_parser(subparsers)
-    _add_exec_parser(subparsers, "server", "Start the Nutshell server daemon.")
+    _add_exec_parser(subparsers, "server", "Start the Butterfly server daemon.")
     _add_exec_parser(subparsers, "web",    "Start the web UI at http://localhost:8080 (monitoring).")
 
     args = parser.parse_args()

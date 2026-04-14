@@ -1,4 +1,4 @@
-"""Tests for nutshell-chat CLI."""
+"""Tests for butterfly-chat CLI."""
 from __future__ import annotations
 
 import json
@@ -26,7 +26,7 @@ def test_continue_session_nonexistent_exits_1(tmp_path, capsys):
     from ui.cli.chat import main
     with pytest.raises(SystemExit) as exc:
         with patch("sys.argv", [
-            "nutshell-chat", "--session", "ghost",
+            "butterfly-chat", "--session", "ghost",
             "--system-base", str(tmp_path),
             "hi",
         ]):
@@ -42,7 +42,7 @@ def test_no_wait_writes_user_input_and_exits_0(tmp_path, capsys):
     from ui.cli.chat import main
     with pytest.raises(SystemExit) as exc:
         with patch("sys.argv", [
-            "nutshell-chat", "--session", sid,
+            "butterfly-chat", "--session", sid,
             "--no-wait",
             "--system-base", str(tmp_path),
             "fire and forget",
@@ -69,7 +69,7 @@ def test_continue_session_timeout_exits_1(tmp_path, capsys):
     from ui.cli.chat import main
     with pytest.raises(SystemExit) as exc:
         with patch("sys.argv", [
-            "nutshell-chat", "--session", sid,
+            "butterfly-chat", "--session", sid,
             "--system-base", str(tmp_path),
             "--timeout", "0.3",
             "hello",
@@ -114,7 +114,7 @@ def test_continue_session_prints_agent_reply(tmp_path, capsys):
     from ui.cli.chat import main
     with pytest.raises(SystemExit) as exc:
         with patch("sys.argv", [
-            "nutshell-chat", "--session", sid,
+            "butterfly-chat", "--session", sid,
             "--system-base", str(tmp_path),
             "--timeout", "5",
             "hello?",

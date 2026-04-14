@@ -1,11 +1,11 @@
-"""nutshell-chat — single-shot CLI for interacting with a Nutshell session.
+"""butterfly-chat — single-shot CLI for interacting with a Butterfly session.
 
 Usage:
-    nutshell-chat "message"                              # new session (default entity: agent)
-    nutshell-chat --entity nutshell_dev "message"        # new session, custom entity
-    nutshell-chat --session <id> "message"               # continue existing session
-    nutshell-chat --session <id> --no-wait "message"     # fire-and-forget
-    nutshell-chat --session <id> --timeout 60 "message"  # custom timeout (seconds)
+    butterfly-chat "message"                              # new session (default entity: agent)
+    butterfly-chat --entity butterfly_dev "message"        # new session, custom entity
+    butterfly-chat --session <id> "message"               # continue existing session
+    butterfly-chat --session <id> --no-wait "message"     # fire-and-forget
+    butterfly-chat --session <id> --timeout 60 "message"  # custom timeout (seconds)
 
 When creating a new session, the session ID is always printed on its own line:
     Session: <session_id>
@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-from nutshell.runtime.env import load_dotenv as _load_dotenv
+from butterfly.runtime.env import load_dotenv as _load_dotenv
 
 _load_dotenv()
 
@@ -168,10 +168,10 @@ def _new_session(
 ) -> int:
     """Handle new-session mode. Spawns daemon thread, returns exit code."""
     import asyncio
-    from nutshell.service import build_ready_notifying_ipc
-    from nutshell.session_engine.agent_loader import AgentLoader
-    from nutshell.session_engine.session import Session
-    from nutshell.session_engine.session_init import init_session
+    from butterfly.service import build_ready_notifying_ipc
+    from butterfly.session_engine.agent_loader import AgentLoader
+    from butterfly.session_engine.session import Session
+    from butterfly.session_engine.session_init import init_session
 
     entity_base = Path(__file__).parent.parent.parent / "entity"
     try:
@@ -244,7 +244,7 @@ def _new_session(
         # Stop the in-process daemon but launch a background server
         _stop_daemon(stop_event_holder, daemon_thread)
         subprocess.Popen(
-            ["nutshell-server"],
+            ["butterfly-server"],
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -292,15 +292,15 @@ def _stop_daemon(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="nutshell-chat",
-        description="Send a message to a Nutshell session and print the response.",
+        prog="butterfly-chat",
+        description="Send a message to a Butterfly session and print the response.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  nutshell-chat 'Plan a data pipeline'\n"
-            "  nutshell-chat --entity nutshell_dev 'Review this code'\n"
-            "  nutshell-chat --session 2026-03-24_10-00-00 'Status update?'\n"
-            "  nutshell-chat --session <id> --no-wait 'Run overnight report'\n"
+            "  butterfly-chat 'Plan a data pipeline'\n"
+            "  butterfly-chat --entity butterfly_dev 'Review this code'\n"
+            "  butterfly-chat --session 2026-03-24_10-00-00 'Status update?'\n"
+            "  butterfly-chat --session <id> --no-wait 'Run overnight report'\n"
         ),
     )
     parser.add_argument("message", help="Message to send to the agent")

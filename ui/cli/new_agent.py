@@ -1,12 +1,12 @@
-"""nutshell-new-agent: scaffold a new agent entity directory.
+"""butterfly-new-agent: scaffold a new agent entity directory.
 
 Usage (interactive — recommended):
-    nutshell-new-agent
+    butterfly-new-agent
 
 Usage (non-interactive / scripted):
-    nutshell-new-agent -n my-agent
-    nutshell-new-agent -n my-agent --init-from agent
-    nutshell-new-agent -n my-agent --entity-dir path/to/entity
+    butterfly-new-agent -n my-agent
+    butterfly-new-agent -n my-agent --init-from agent
+    butterfly-new-agent -n my-agent --entity-dir path/to/entity
 
 When run without --init-from, creates a blank entity with empty prompt files.
 With --init-from <source>, copies all files from the source entity and sets

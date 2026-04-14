@@ -1,4 +1,4 @@
-"""Tests for nutshell repo-dev — dedicated dev-agent session for a repo."""
+"""Tests for butterfly repo-dev — dedicated dev-agent session for a repo."""
 from __future__ import annotations
 
 import textwrap
@@ -37,7 +37,7 @@ class TestRepoDev:
         sessions_dir = tmp_path / "sessions"
         sessions_dir.mkdir()
 
-        # Make `nutshell new` succeed and create the session dir skeleton
+        # Make `butterfly new` succeed and create the session dir skeleton
         def side_effect(cmd, **kwargs):
             # Find the session_id from the command args
             # cmd = [sys.executable, "-m", "ui.cli.main", "new", session_id, "--entity", ...]
@@ -48,7 +48,7 @@ class TestRepoDev:
 
         mock_run.side_effect = side_effect
 
-        with patch.dict("os.environ", {"NUTSHELL_SESSIONS_DIR": str(sessions_dir)}):
+        with patch.dict("os.environ", {"BUTTERFLY_SESSIONS_DIR": str(sessions_dir)}):
             args = _make_args(str(sample_repo))
             rc = cmd_repo_dev(args)
 
@@ -80,7 +80,7 @@ class TestRepoDev:
 
         mock_run.side_effect = side_effect
 
-        with patch.dict("os.environ", {"NUTSHELL_SESSIONS_DIR": str(sessions_dir)}):
+        with patch.dict("os.environ", {"BUTTERFLY_SESSIONS_DIR": str(sessions_dir)}):
             args = _make_args(str(sample_repo))
             cmd_repo_dev(args)
 
@@ -104,7 +104,7 @@ class TestRepoDev:
 
         mock_run.side_effect = side_effect
 
-        with patch.dict("os.environ", {"NUTSHELL_SESSIONS_DIR": str(sessions_dir)}):
+        with patch.dict("os.environ", {"BUTTERFLY_SESSIONS_DIR": str(sessions_dir)}):
             args = _make_args(str(sample_repo))  # name=None → default from path
             cmd_repo_dev(args)
 
@@ -133,7 +133,7 @@ class TestRepoDev:
 
         mock_run.side_effect = side_effect
 
-        with patch.dict("os.environ", {"NUTSHELL_SESSIONS_DIR": str(sessions_dir)}):
+        with patch.dict("os.environ", {"BUTTERFLY_SESSIONS_DIR": str(sessions_dir)}):
             args = _make_args(str(sample_repo), name="cool-proj")
             cmd_repo_dev(args)
 
@@ -161,18 +161,18 @@ class TestRepoDev:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                # First call: nutshell new
+                # First call: butterfly new
                 sid = cmd[4]
                 sdir = sessions_dir / sid / "core" / "skills"
                 sdir.mkdir(parents=True, exist_ok=True)
                 return MagicMock(returncode=0, stderr="")
             else:
-                # Second call: nutshell chat
+                # Second call: butterfly chat
                 return MagicMock(returncode=0)
 
         mock_run.side_effect = side_effect
 
-        with patch.dict("os.environ", {"NUTSHELL_SESSIONS_DIR": str(sessions_dir)}):
+        with patch.dict("os.environ", {"BUTTERFLY_SESSIONS_DIR": str(sessions_dir)}):
             args = _make_args(str(sample_repo), message="please add tests")
             rc = cmd_repo_dev(args)
 

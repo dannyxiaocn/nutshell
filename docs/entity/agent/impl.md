@@ -3,8 +3,8 @@
 ## Usage
 
 ```bash
-nutshell new --entity agent
-nutshell chat --entity agent "build a small CLI"
+butterfly new --entity agent
+butterfly chat --entity agent "build a small CLI"
 ```
 
 ## Configuration (config.yaml)

@@ -8,7 +8,7 @@ from conftest import REPO_ROOT
 DOCS_DIR = REPO_ROOT / "docs" / "entity"
 ACTIVE_ENTITIES = [
     "agent",
-    "nutshell_dev",
+    "butterfly_dev",
 ]
 
 

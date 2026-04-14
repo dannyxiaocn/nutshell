@@ -6,8 +6,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from nutshell.runtime.ipc import FileIPC
-from nutshell.session_engine.session_init import init_session
+from butterfly.runtime.ipc import FileIPC
+from butterfly.session_engine.session_init import init_session
 
 
 class FullSystemTest(unittest.TestCase):
@@ -34,14 +34,14 @@ class FullSystemTest(unittest.TestCase):
                 venv.mkdir(parents=True, exist_ok=True)
                 return venv
 
-            with patch("nutshell.session_engine.session_init._create_session_venv", side_effect=fake_create_session_venv), patch(
-                "nutshell.session_engine.session_init.ensure_meta_session",
+            with patch("butterfly.session_engine.session_init._create_session_venv", side_effect=fake_create_session_venv), patch(
+                "butterfly.session_engine.session_init.ensure_meta_session",
                 side_effect=lambda *args, **kwargs: meta_dir,
             ), patch(
-                "nutshell.session_engine.session_init.ensure_gene_initialized"
+                "butterfly.session_engine.session_init.ensure_gene_initialized"
             ), patch(
-                "nutshell.session_engine.session_init.start_meta_agent"
-            ), patch("nutshell.session_engine.session_init.sync_from_entity"):
+                "butterfly.session_engine.session_init.start_meta_agent"
+            ), patch("butterfly.session_engine.session_init.sync_from_entity"):
                 init_session(
                     "demo-session",
                     "demo",
