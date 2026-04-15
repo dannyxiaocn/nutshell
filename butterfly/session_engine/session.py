@@ -18,6 +18,7 @@ from butterfly.session_engine.task_cards import (
 )
 from butterfly.llm_engine.registry import provider_name, resolve_provider
 from butterfly.session_engine.session_status import ensure_session_status, read_session_status, write_session_status
+from butterfly.tool_engine.background import BackgroundEvent, BackgroundTaskManager
 from butterfly.tool_engine.loader import ToolLoader
 
 if TYPE_CHECKING:
@@ -94,10 +95,12 @@ class Session:
         self.core_dir.mkdir(exist_ok=True)
         (self.core_dir / "tools").mkdir(exist_ok=True)
         (self.core_dir / "skills").mkdir(exist_ok=True)
+        self.panel_dir.mkdir(parents=True, exist_ok=True)
         self.docs_dir.mkdir(exist_ok=True)
         self.playground_dir.mkdir(exist_ok=True)
         self.system_dir.mkdir(parents=True, exist_ok=True)
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        self.tool_results_dir.mkdir(parents=True, exist_ok=True)
         if not self.memory_path.exists():
             self.memory_path.write_text("", encoding="utf-8")
         if not self._context_path.exists():
@@ -106,6 +109,23 @@ class Session:
             self._events_path.touch()
         ensure_session_status(self.system_dir)
         ensure_config(self.session_dir)
+
+        # Non-blocking tool infrastructure — one BackgroundTaskManager per session.
+        # The manager is wired into the Agent so backgroundable tool calls with
+        # run_in_background=true get routed here instead of executed inline.
+        def _venv_env_provider() -> dict[str, str] | None:
+            try:
+                from butterfly.tool_engine.executor.terminal.bash_terminal import _venv_env
+                return _venv_env()
+            except Exception:
+                return None
+
+        self._bg_manager = BackgroundTaskManager(
+            panel_dir=self.panel_dir,
+            tool_results_dir=self.tool_results_dir,
+            venv_env_provider=_venv_env_provider,
+        )
+        self._agent.background_spawn = self._bg_manager.spawn
 
     # ── Capability loading ─────────────────────────────────────────
 
@@ -150,15 +170,10 @@ class Session:
         self._agent.task_prompt = self._read_core_text("task.md")
         self._agent.memory = self.memory_path.read_text(encoding="utf-8").strip()
 
-        # Extra named memory layers from core/memory/*.md (sorted, non-empty only)
-        memory_dir = self.core_dir / "memory"
-        extra_layers: list[tuple[str, str]] = []
-        if memory_dir.is_dir():
-            for md_file in sorted(memory_dir.glob("*.md")):
-                content = md_file.read_text(encoding="utf-8").strip()
-                if content:
-                    extra_layers.append((md_file.stem, content))
-        self._agent.memory_layers = extra_layers
+        # v2.0.5 memory (β): sub-memory under core/memory/*.md is NO LONGER
+        # injected into the system prompt. The agent discovers sub-memories via
+        # one-line index entries in main memory.md and fetches them on demand
+        # via recall_memory. See docs/butterfly/session_engine/design.md.
 
         # App notifications from core/apps/*.md (sorted, non-empty only)
         apps_dir = self.core_dir / "apps"
@@ -191,14 +206,17 @@ class Session:
         self._agent.skills = skills
 
         # 4. tools from tools.md (toolhub) + local tools from core/tools/
-        # default_workdir: bash and shell tools run from the session directory so
-        # agents use short relative paths (core/tasks/) instead of full session paths.
+        # default_workdir: tools run from the session directory so agents use
+        # short relative paths (core/tasks/) instead of full session paths.
         try:
             loader = ToolLoader(
                 default_workdir=str(self.session_dir),
                 skills=skills,
                 tasks_dir=self.tasks_dir,
                 memory_dir=self.core_dir / "memory",
+                main_memory_path=self.memory_path,
+                panel_dir=self.panel_dir,
+                tool_results_dir=self.tool_results_dir,
             )
             # Load tools from tools.md (toolhub), fallback to legacy tool.md
             tools_md_path = self.core_dir / "tools.md"
@@ -226,13 +244,13 @@ class Session:
                     tool_provider_key = tool_providers[t.name]
                     impl = resolve_tool_impl(t.name, tool_provider_key)
                     if impl:
-                        tools[i] = Tool(name=t.name, description=t.description, func=impl, schema=t.schema)
-
-        # Inject reload_capabilities — always present, cannot be overridden from disk
-        from butterfly.tool_engine.reload import create_reload_tool
-        reload_tool = create_reload_tool(self)
-        tools = [t for t in tools if t.name != "reload_capabilities"]
-        tools.append(reload_tool)
+                        tools[i] = Tool(
+                            name=t.name,
+                            description=t.description,
+                            func=impl,
+                            schema=t.schema,
+                            backgroundable=t.backgroundable,
+                        )
 
         self._agent.tools = tools
 
@@ -505,12 +523,22 @@ class Session:
         # Notify if meta session has a newer version than this session.
         self._emit_version_notice_if_stale()
 
+        # Any panel entries that were still `running` when the server last
+        # stopped are orphaned subprocesses from our POV; mark them
+        # killed_by_restart and emit notifications so the agent knows.
+        self._bg_manager.sweep_restart()
+
         # Skip existing context events — only process new user_input events.
         input_offset = ipc.context_size()
         interrupt_offset = ipc.events_size()
 
         try:
             while True:
+                # Drain background-task events (completion, stall, progress,
+                # killed_by_restart). Each gets appended once to context.jsonl as a
+                # user-role message so the agent picks it up on the next wake.
+                self._drain_background_events()
+
                 # Check for interrupt control events (soft interrupt).
                 interrupted, interrupt_offset = ipc.poll_interrupt(interrupt_offset)
                 if interrupted:
@@ -609,6 +637,14 @@ class Session:
         return self.core_dir / "tasks"
 
     @property
+    def panel_dir(self) -> Path:
+        return self.core_dir / "panel"
+
+    @property
+    def tool_results_dir(self) -> Path:
+        return self.system_dir / "tool_results"
+
+    @property
     def _context_path(self) -> Path:
         return self.system_dir / "context.jsonl"
 
@@ -635,6 +671,72 @@ class Session:
             event.setdefault("ts", datetime.now().isoformat())
             with self._events_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def _drain_background_events(self) -> None:
+        """Non-blocking drain of the BackgroundTaskManager event queue.
+
+        Each event is appended ONCE to `context.jsonl` as a user-role message
+        so the agent picks it up on its next wake — append-once avoids the
+        O(turns) reminder-bloat bug Claude Code hit (issue #13249). A mirror
+        `panel_update` event is also emitted on `events.jsonl` for the UI.
+        """
+        queue = self._bg_manager.events
+        while True:
+            try:
+                evt: BackgroundEvent = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+
+            entry = evt.entry
+            # Build the human-readable notification text. Kept concise on
+            # purpose — bulk output is fetchable via tool_output(task_id=...).
+            if evt.kind == "completed":
+                duration = ""
+                if entry.finished_at and entry.started_at:
+                    duration = f" in {entry.finished_at - entry.started_at:.1f}s"
+                msg = (
+                    f"Background task {entry.tid} ({entry.tool_name}) completed "
+                    f"with exit {entry.exit_code}{duration}. {entry.output_bytes}B output.\n"
+                    f'Fetch full output: tool_output(task_id="{entry.tid}").'
+                )
+            elif evt.kind == "stalled":
+                msg = (
+                    f"Background task {entry.tid} ({entry.tool_name}) has produced "
+                    "no output for 5 minutes — possibly stuck on interactive input or "
+                    "deadlocked. Consider checking its tail with "
+                    f'tool_output(task_id="{entry.tid}") and killing it via '
+                    "`butterfly panel --tid <tid> --kill` if needed."
+                )
+            elif evt.kind == "progress":
+                msg = (
+                    f"Background task {entry.tid} ({entry.tool_name}) progress "
+                    f"(new output, {len(evt.delta_text)}B):\n{evt.delta_text.rstrip()}"
+                )
+            elif evt.kind == "killed_by_restart":
+                msg = (
+                    f"Background task {entry.tid} ({entry.tool_name}) was running "
+                    "when the server restarted and has been terminated. Its partial "
+                    f'output is at tool_output(task_id="{entry.tid}").'
+                )
+            else:
+                msg = f"Background task {entry.tid} event: {evt.kind}"
+
+            event = {
+                "type": "user_input",
+                "content": msg,
+                "id": str(uuid.uuid4()),
+                "caller": "system",
+                "source": "panel",
+                "tid": entry.tid,
+                "kind": evt.kind,
+            }
+            self._append_context(event)
+            self._append_event({
+                "type": "panel_update",
+                "tid": entry.tid,
+                "kind": evt.kind,
+                "status": entry.status,
+            })
 
     def _set_model_status(self, state: str, source: str) -> str:
         ts = datetime.now().isoformat()

@@ -1,0 +1,22 @@
+{
+  "name": "read",
+  "description": "Read a file from the filesystem (paginated by line). Use `offset` and `limit` for large files. Relative paths are resolved against the session workdir.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the file. Relative paths resolve against the session workdir."
+      },
+      "offset": {
+        "type": "integer",
+        "description": "1-indexed line number to start reading from. Default 1."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Maximum number of lines to read. Default 2000."
+      }
+    },
+    "required": ["path"]
+  }
+}

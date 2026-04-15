@@ -6,12 +6,17 @@ Tool discovery:
   3. Dynamically import executor from toolhub/<name>/executor.py
   4. Also load agent-created tools from core/tools/ (.json + .sh pairs)
 
-Special tools:
-  - reload_capabilities: system tool, injected by session.py (not in toolhub)
-  - skill: executor needs skills list injection
-  - bash: executor needs workdir injection
-  - manage_task: executor needs tasks_dir injection
-  - recall_memory: executor needs memory_dir injection
+Context injection — executors receive injected context so the agent passes
+only business-intent parameters:
+  - bash: workdir + tool_results_dir (for disk spillover)
+  - session_shell: workdir + venv_env_provider
+  - read/write/edit/glob/grep: workdir
+  - task_*: tasks_dir
+  - recall_memory: memory_dir
+  - update_memory: memory_dir + main_memory_path
+  - tool_output: panel_dir
+  - skill: skills list
+  - web_search / web_fetch: no injection (provider config via registry)
 """
 from __future__ import annotations
 
@@ -74,7 +79,7 @@ class ToolLoader:
     Args:
         default_workdir: Default working directory for bash/shell executors.
         skills: List of Skill objects for the skill executor.
-        tasks_dir: Path to core/tasks/ for manage_task tool.
+        tasks_dir: Path to core/tasks/ for task_* tools.
         memory_dir: Path to core/memory/ for recall_memory tool.
         toolhub_dir: Override toolhub directory (for testing).
     """
@@ -85,6 +90,9 @@ class ToolLoader:
         skills: list[Skill] | None = None,
         tasks_dir: Path | None = None,
         memory_dir: Path | None = None,
+        main_memory_path: Path | None = None,
+        panel_dir: Path | None = None,
+        tool_results_dir: Path | None = None,
         toolhub_dir: Path | None = None,
         # Legacy compatibility
         impl_registry: dict[str, Callable] | None = None,
@@ -93,6 +101,9 @@ class ToolLoader:
         self._skills = list(skills or [])
         self._tasks_dir = tasks_dir
         self._memory_dir = memory_dir
+        self._main_memory_path = main_memory_path
+        self._panel_dir = panel_dir
+        self._tool_results_dir = tool_results_dir
         self._toolhub_dir = toolhub_dir or _TOOLHUB_DIR
         self._impl_registry = impl_registry or {}
 
@@ -110,7 +121,51 @@ class ToolLoader:
         if tool_name == "bash":
             executor_cls = getattr(mod, "BashExecutor", None)
             if executor_cls:
-                executor = executor_cls(workdir=self._default_workdir)
+                executor = executor_cls(
+                    workdir=self._default_workdir,
+                    tool_results_dir=self._tool_results_dir,
+                )
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "tool_output":
+            executor_cls = getattr(mod, "ToolOutputExecutor", None)
+            if executor_cls:
+                executor = executor_cls(panel_dir=self._panel_dir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "update_memory":
+            executor_cls = getattr(mod, "UpdateMemoryExecutor", None)
+            if executor_cls:
+                executor = executor_cls(
+                    memory_dir=self._memory_dir,
+                    main_memory_path=self._main_memory_path,
+                )
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "session_shell":
+            executor_cls = getattr(mod, "SessionShellExecutor", None)
+            if executor_cls:
+                # Mirror bash_terminal._venv_env() as a callable so the
+                # executor can pick up the session venv on first spawn.
+                def _venv_env_provider() -> dict[str, str] | None:
+                    try:
+                        from butterfly.tool_engine.executor.terminal.bash_terminal import (
+                            _venv_env,
+                        )
+                        return _venv_env()
+                    except Exception:
+                        return None
+
+                executor = executor_cls(
+                    workdir=self._default_workdir,
+                    venv_env_provider=_venv_env_provider,
+                )
                 async def _impl(**kwargs: Any) -> str:
                     return await executor.execute(**kwargs)
                 return _impl
@@ -131,8 +186,56 @@ class ToolLoader:
                     return await executor.execute(**kwargs)
                 return _impl
 
-        elif tool_name == "manage_task":
-            executor_cls = getattr(mod, "ManageTaskExecutor", None)
+        elif tool_name == "web_fetch":
+            executor_cls = getattr(mod, "WebFetchExecutor", None)
+            if executor_cls:
+                executor = executor_cls()
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "task_create":
+            executor_cls = getattr(mod, "TaskCreateExecutor", None)
+            if executor_cls:
+                executor = executor_cls(tasks_dir=self._tasks_dir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "task_update":
+            executor_cls = getattr(mod, "TaskUpdateExecutor", None)
+            if executor_cls:
+                executor = executor_cls(tasks_dir=self._tasks_dir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "task_finish":
+            executor_cls = getattr(mod, "TaskFinishExecutor", None)
+            if executor_cls:
+                executor = executor_cls(tasks_dir=self._tasks_dir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "task_pause":
+            executor_cls = getattr(mod, "TaskPauseExecutor", None)
+            if executor_cls:
+                executor = executor_cls(tasks_dir=self._tasks_dir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "task_resume":
+            executor_cls = getattr(mod, "TaskResumeExecutor", None)
+            if executor_cls:
+                executor = executor_cls(tasks_dir=self._tasks_dir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "task_list":
+            executor_cls = getattr(mod, "TaskListExecutor", None)
             if executor_cls:
                 executor = executor_cls(tasks_dir=self._tasks_dir)
                 async def _impl(**kwargs: Any) -> str:
@@ -143,6 +246,46 @@ class ToolLoader:
             executor_cls = getattr(mod, "RecallMemoryExecutor", None)
             if executor_cls:
                 executor = executor_cls(memory_dir=self._memory_dir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "read":
+            executor_cls = getattr(mod, "ReadExecutor", None)
+            if executor_cls:
+                executor = executor_cls(workdir=self._default_workdir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "write":
+            executor_cls = getattr(mod, "WriteExecutor", None)
+            if executor_cls:
+                executor = executor_cls(workdir=self._default_workdir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "edit":
+            executor_cls = getattr(mod, "EditExecutor", None)
+            if executor_cls:
+                executor = executor_cls(workdir=self._default_workdir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "glob":
+            executor_cls = getattr(mod, "GlobExecutor", None)
+            if executor_cls:
+                executor = executor_cls(workdir=self._default_workdir)
+                async def _impl(**kwargs: Any) -> str:
+                    return await executor.execute(**kwargs)
+                return _impl
+
+        elif tool_name == "grep":
+            executor_cls = getattr(mod, "GrepExecutor", None)
+            if executor_cls:
+                executor = executor_cls(workdir=self._default_workdir)
                 async def _impl(**kwargs: Any) -> str:
                     return await executor.execute(**kwargs)
                 return _impl
@@ -179,7 +322,14 @@ class ToolLoader:
                 raise NotImplementedError(f"Tool '{name}' has no executor in toolhub.")
             impl = _stub
 
-        return Tool(name=name, description=description, func=impl, schema=input_schema)
+        backgroundable = bool(schema_data.get("backgroundable", False))
+        return Tool(
+            name=name,
+            description=description,
+            func=impl,
+            schema=input_schema,
+            backgroundable=backgroundable,
+        )
 
     def load_from_tool_md(self, tool_md_path: Path) -> list[Tool]:
         """Load all tools listed in a tools.md file."""

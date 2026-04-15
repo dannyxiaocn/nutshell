@@ -1,0 +1,18 @@
+{
+  "name": "tool_output",
+  "description": "Fetch the output of a backgrounded tool call (one spawned with `run_in_background=true`). Pass the `task_id` you received when the task was started. By default returns the full accumulated output; set `delta=true` to receive only the new bytes since your last fetch.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string",
+        "description": "The task_id you received when you spawned the background tool."
+      },
+      "delta": {
+        "type": "boolean",
+        "description": "If true, return only the bytes added since the last call for this task_id. Default false (returns full output)."
+      }
+    },
+    "required": ["task_id"]
+  }
+}

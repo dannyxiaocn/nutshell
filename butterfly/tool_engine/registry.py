@@ -37,7 +37,21 @@ _PROVIDER_REGISTRY: dict[str, dict[str, tuple[str, str]]] = {
         "brave":  ("brave",  "_brave_search"),
         "tavily": ("tavily", "_tavily_search"),
     },
+    "web_fetch": {
+        "httpx": ("httpx", "_httpx_fetch"),
+    },
 }
+
+# Default provider used when `tool_providers` config omits a tool entry.
+_DEFAULT_PROVIDERS: dict[str, str] = {
+    "web_search": "brave",
+    "web_fetch": "httpx",
+}
+
+
+def default_provider(tool_name: str) -> str | None:
+    """Return the default provider name for a multi-provider tool, if any."""
+    return _DEFAULT_PROVIDERS.get(tool_name)
 
 
 def resolve_tool_impl(tool_name: str, provider_name: str) -> Callable | None:

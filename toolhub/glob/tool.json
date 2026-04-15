@@ -1,0 +1,18 @@
+{
+  "name": "glob",
+  "description": "Find files by glob pattern. Default root is session workdir. Supports `**` recursion. Results sorted by modification time (newest first).",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string",
+        "description": "Glob pattern. Filename-only patterns (no `/`) match recursively at any depth; path-aware patterns like `src/**/*.py` are matched relative to the search root."
+      },
+      "path": {
+        "type": "string",
+        "description": "Directory to search in. Relative paths resolve against the session workdir. Omit to use the workdir."
+      }
+    },
+    "required": ["pattern"]
+  }
+}

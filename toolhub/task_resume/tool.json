@@ -1,0 +1,14 @@
+{
+  "name": "task_resume",
+  "description": "Resume a paused task card.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the task card to resume."
+      }
+    },
+    "required": ["name"]
+  }
+}

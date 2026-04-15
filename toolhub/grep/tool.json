@@ -1,0 +1,39 @@
+{
+  "name": "grep",
+  "description": "Search file contents with regex. Powered by ripgrep when available. Use `output_mode` to choose content / files-with-matches / count. `glob` filter limits to matching files.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string",
+        "description": "Regex pattern to search for."
+      },
+      "path": {
+        "type": "string",
+        "description": "File or directory to search. Relative paths resolve against the session workdir. Omit to search the workdir."
+      },
+      "glob": {
+        "type": "string",
+        "description": "Only search files matching this glob (e.g. `*.py`, `**/test_*.py`)."
+      },
+      "-i": {
+        "type": "boolean",
+        "description": "Case-insensitive match."
+      },
+      "-n": {
+        "type": "boolean",
+        "description": "Show line numbers in content mode. Default true."
+      },
+      "output_mode": {
+        "type": "string",
+        "enum": ["content", "files_with_matches", "count"],
+        "description": "Output format. Default `files_with_matches`."
+      },
+      "context": {
+        "type": "integer",
+        "description": "Lines of context before and after each match (content mode only)."
+      }
+    },
+    "required": ["pattern"]
+  }
+}

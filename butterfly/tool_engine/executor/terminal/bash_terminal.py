@@ -1,26 +1,29 @@
-"""Built-in bash/CLI execution tool for butterfly agents.
+"""Built-in bash execution tool for butterfly agents.
 
-Provides create_bash_tool(), a factory that returns a Tool the agent can call
-to run arbitrary shell commands.
+One-shot subprocess per call — no PTY, no shared state. For persistent shell
+sessions use `session_shell`. For long-running commands use `run_in_background=true`
+(routed through `BackgroundTaskManager` at the agent-loop layer).
 
-Two execution modes:
-  - subprocess (default): asyncio.create_subprocess_shell — async, portable
-  - pty: pseudo-terminal via stdlib pty + thread executor — preserves isatty(),
-    color output, and avoids stdout buffering. Unix only.
+Structured output:
+
+    <stdout/stderr combined>
+    [exit N, duration T.Ts, truncated bool]
+    [spilled: <path>]        # only when output > max_output_chars
+
+See `docs/butterfly/tool_engine/design.md` §3.1.
 """
 from __future__ import annotations
 
 import asyncio
 import os
-import re
-import subprocess
+import secrets
+import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from butterfly.core.tool import Tool
 from butterfly.tool_engine.executor.base import BaseExecutor
 
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mGKHF]")
 _MAX_OUTPUT = 10_000
 
 _REPO_ROOT = Path(__file__).parent.parent.parent.parent
@@ -41,214 +44,155 @@ def _venv_env() -> dict[str, str] | None:
     return env
 
 
-# ── subprocess mode ────────────────────────────────────────────────────────────
+def _spill_if_oversized(
+    output: str, max_output: int, tool_results_dir: Path | None
+) -> tuple[str, bool, Path | None]:
+    """If output exceeds max_output, write full output to disk and return
+    (truncated_tail, truncated=True, spill_path). Otherwise return (output, False, None).
+    """
+    if len(output) <= max_output:
+        return output, False, None
+    if tool_results_dir is None:
+        return output[-max_output:], True, None
+    tool_results_dir.mkdir(parents=True, exist_ok=True)
+    spill_path = tool_results_dir / f"bash_{secrets.token_hex(4)}.txt"
+    spill_path.write_text(output, encoding="utf-8")
+    return output[-max_output:], True, spill_path
+
 
 async def _run_subprocess(
     command: str,
     timeout: float,
     workdir: str | None,
+    stdin: str | None,
     max_output: int,
+    tool_results_dir: Path | None,
 ) -> str:
     env = _venv_env()
     proc = await asyncio.create_subprocess_shell(
         command,
+        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=workdir,
         env=env,
     )
+    started = time.monotonic()
     try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout_bytes, _ = await asyncio.wait_for(
+            proc.communicate(input=stdin.encode() if stdin is not None else None),
+            timeout=timeout,
+        )
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        return f"[timed out after {timeout}s]"
+        duration = time.monotonic() - started
+        return f"[timed out after {timeout}s, duration {duration:.1f}s]"
 
-    output = stdout.decode(errors="replace")
-    if len(output) > max_output:
-        output = output[-max_output:]
-        output = f"[...truncated]\n{output}"
-    return f"{output.rstrip()}\n[exit {proc.returncode}]"
+    duration = time.monotonic() - started
+    output = stdout_bytes.decode(errors="replace").rstrip()
+    tail, truncated, spill_path = _spill_if_oversized(output, max_output, tool_results_dir)
+    footer = f"[exit {proc.returncode}, duration {duration:.1f}s, truncated {str(truncated).lower()}]"
+    if spill_path is not None:
+        footer += f"\n[spilled: {spill_path}]"
+    body = f"[...truncated to last {max_output} chars]\n{tail}" if truncated else tail
+    return f"{body}\n{footer}" if body else footer
 
-
-# ── PTY mode ───────────────────────────────────────────────────────────────────
-
-def _run_pty_sync(command: str, timeout: float, workdir: str | None, max_output: int) -> str:
-    """Run command in a PTY (blocking). Called via run_in_executor.
-
-    Reader pattern: dedicated thread does blocking os.read() on master_fd.
-    Main thread waits for proc with timeout, then closes master_fd to unblock
-    the reader thread via EIO — reliable on both macOS and Linux.
-    """
-    import threading
-
-    try:
-        master_fd, slave_fd = os.openpty()
-    except OSError as exc:
-        return f"[pty unavailable: {exc}]"
-
-    chunks: list[bytes] = []
-    read_done = threading.Event()
-
-    def _reader() -> None:
-        while True:
-            try:
-                data = os.read(master_fd, 4096)
-                if not data:
-                    break  # EOF — Linux returns empty instead of OSError
-                chunks.append(data)
-            except OSError:
-                break  # EIO after slave closed, or master_fd was force-closed
-        read_done.set()
-
-    env = _venv_env()
-    try:
-        proc = subprocess.Popen(
-            ["bash", "-c", command],
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            close_fds=True,
-            cwd=workdir,
-            env=env,
-        )
-        os.close(slave_fd)
-
-        reader_thread = threading.Thread(target=_reader, daemon=True)
-        reader_thread.start()
-
-        timed_out = False
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-            timed_out = True
-
-        # Wait for reader to drain remaining output (up to 0.5s)
-        read_done.wait(timeout=0.5)
-
-    finally:
-        # Force-close master_fd — if reader is still blocked on os.read(),
-        # closing the fd raises OSError(EBADF) in that thread, unblocking it.
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
-
-    raw = b"".join(chunks).decode(errors="replace")
-    output = _ANSI_RE.sub("", raw)  # strip ANSI escape codes
-    if len(output) > max_output:
-        output = output[-max_output:]
-        output = f"[...truncated]\n{output}"
-    suffix = "\n[timed out]" if timed_out else f"\n[exit {proc.returncode}]"
-    return output.rstrip() + suffix
-
-
-async def _run_pty(
-    command: str,
-    timeout: float,
-    workdir: str | None,
-    max_output: int,
-) -> str:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, _run_pty_sync, command, timeout, workdir, max_output
-    )
-
-
-# ── Executor class ─────────────────────────────────────────────────────────────
 
 class BashExecutor(BaseExecutor):
-    """Executor for the built-in bash tool."""
+    """Executor for the built-in bash tool.
+
+    v2.0.5 — subprocess only. PTY mode was removed; interactive prompts are
+    handled by (a) the `stdin` parameter (pre-feed answers), (b) the stall
+    watchdog on backgrounded tasks, or (c) `session_shell` for multi-step
+    workflows that need persistent state.
+    """
 
     def __init__(
         self,
         timeout: float = 30.0,
         workdir: str | None = None,
         max_output: int = _MAX_OUTPUT,
+        tool_results_dir: Path | None = None,
     ) -> None:
         self._timeout = timeout
         self._workdir = workdir
         self._max_output = max_output
+        self._tool_results_dir = tool_results_dir
 
     async def execute(self, **kwargs: Any) -> str:
         command: str = kwargs["command"]
         timeout = float(kwargs.get("timeout") or self._timeout)
         workdir = kwargs.get("workdir") or self._workdir
-        pty = bool(kwargs.get("pty", False))
-        if pty:
-            return await _run_pty(command, timeout, workdir, self._max_output)
-        return await _run_subprocess(command, timeout, workdir, self._max_output)
+        stdin = kwargs.get("stdin")
+        # run_in_background / polling_interval are consumed by the agent loop
+        # before reaching the executor, so we simply ignore them here.
+        return await _run_subprocess(
+            command,
+            timeout,
+            workdir,
+            stdin,
+            self._max_output,
+            self._tool_results_dir,
+        )
 
-
-# ── Factory ────────────────────────────────────────────────────────────────────
 
 def create_bash_tool(
     timeout: float = 30.0,
     workdir: str | None = None,
     max_output: int = _MAX_OUTPUT,
+    tool_results_dir: Path | None = None,
 ) -> Tool:
     """Return a bash Tool pre-configured with defaults.
 
-    The agent can override timeout and workdir per call.
-
-    Args:
-        timeout: Default execution timeout in seconds.
-        workdir: Default working directory (None = inherit from process).
-        max_output: Max characters of output returned to the model.
+    The agent can override timeout per call. workdir is auto-injected from the
+    session directory and agents should always use relative paths.
     """
-    executor = BashExecutor(timeout=timeout, workdir=workdir, max_output=max_output)
+    executor = BashExecutor(
+        timeout=timeout,
+        workdir=workdir,
+        max_output=max_output,
+        tool_results_dir=tool_results_dir,
+    )
 
-    async def bash(
-        command: str,
-        timeout: Optional[float] = None,
-        workdir: Optional[str] = None,
-        pty: Optional[bool] = False,
-    ) -> str:
-        """Execute a shell command and return stdout+stderr combined.
+    async def bash(**kwargs: Any) -> str:
+        return await executor.execute(**kwargs)
 
-        Args:
-            command: The shell command to run (passed to bash -c).
-            timeout: Execution timeout in seconds. Defaults to factory setting.
-            workdir: Working directory. Defaults to factory setting.
-            pty: If true, run in a pseudo-terminal (preserves color, isatty).
-                 Unix only. Useful for commands that buffer output differently
-                 or check terminal width.
-        """
-        return await executor.execute(command=command, timeout=timeout, workdir=workdir, pty=pty)
+    # Explicit schema — the ToolLoader / Tool will auto-inject run_in_background
+    # and polling_interval when backgroundable=True.
+    schema = {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "The shell command to execute.",
+            },
+            "timeout": {
+                "type": "number",
+                "description": "Timeout in seconds. Omit to use the default (30s).",
+            },
+            "stdin": {
+                "type": "string",
+                "description": (
+                    "Optional string piped to the command's stdin. Useful for "
+                    "pre-feeding interactive prompts (e.g. 'y\\n' for apt/brew)."
+                ),
+            },
+        },
+        "required": ["command"],
+    }
+
+    description = (
+        "Execute a shell command. Each call spawns a fresh subprocess — `cd`, "
+        "`export`, and aliases DO NOT persist across calls. Use relative paths "
+        "(resolved against your session workdir). For multi-step workflows that "
+        "need shared environment, use `session_shell` instead."
+    )
 
     return Tool(
         name="bash",
-        description=(
-            "Execute a shell command. Returns stdout+stderr combined and exit code. "
-            "Use pty=true for commands that need an interactive terminal (color output, "
-            "progress bars)."
-        ),
+        description=description,
         func=bash,
-        schema={
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute.",
-                },
-                "timeout": {
-                    "type": "number",
-                    "description": "Timeout in seconds. Omit to use the default.",
-                },
-                "workdir": {
-                    "type": "string",
-                    "description": "Working directory path. Omit to use the default.",
-                },
-                "pty": {
-                    "type": "boolean",
-                    "description": (
-                        "Run in a pseudo-terminal. Preserves color output and isatty(). "
-                        "Unix only. Default false."
-                    ),
-                },
-            },
-            "required": ["command"],
-        },
+        schema=schema,
+        backgroundable=True,
     )

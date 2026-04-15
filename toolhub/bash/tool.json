@@ -1,6 +1,7 @@
 {
   "name": "bash",
-  "description": "Execute a shell command. Returns stdout+stderr combined and exit code. Use pty=true for commands that need an interactive terminal (color output, progress bars).",
+  "description": "Execute a shell command. Each call spawns a fresh subprocess — `cd`, `export`, and aliases DO NOT persist across calls. Use relative paths (resolved against your session workdir). For multi-step workflows that need shared environment, use `session_shell` instead.",
+  "backgroundable": true,
   "input_schema": {
     "type": "object",
     "properties": {
@@ -12,13 +13,9 @@
         "type": "number",
         "description": "Timeout in seconds. Omit to use the default (30s)."
       },
-      "workdir": {
+      "stdin": {
         "type": "string",
-        "description": "Working directory path. Omit to use the current directory."
-      },
-      "pty": {
-        "type": "boolean",
-        "description": "Run in a pseudo-terminal. Preserves color output and isatty(). Unix only. Default false."
+        "description": "Optional string piped to the command's stdin. Useful for pre-feeding interactive prompts (e.g. 'y\\n' for apt/brew)."
       }
     },
     "required": ["command"]

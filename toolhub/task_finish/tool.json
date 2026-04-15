@@ -1,0 +1,14 @@
+{
+  "name": "task_finish",
+  "description": "Mark a task card as finished. For a one-shot task this is terminal; for a recurring task it returns the card to pending (ready for the next cycle).",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the task card to mark finished."
+      }
+    },
+    "required": ["name"]
+  }
+}

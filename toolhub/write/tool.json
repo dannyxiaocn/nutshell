@@ -1,0 +1,18 @@
+{
+  "name": "write",
+  "description": "Write or overwrite a file. Creates parent directories as needed. Atomic. For small-edits prefer `edit`. Relative paths resolve against session workdir.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the file. Relative paths resolve against the session workdir."
+      },
+      "content": {
+        "type": "string",
+        "description": "Full file content to write. Overwrites any existing file."
+      }
+    },
+    "required": ["path", "content"]
+  }
+}

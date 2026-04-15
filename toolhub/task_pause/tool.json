@@ -1,0 +1,14 @@
+{
+  "name": "task_pause",
+  "description": "Pause a recurring task card. It stops firing until you resume it.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the task card to pause."
+      }
+    },
+    "required": ["name"]
+  }
+}

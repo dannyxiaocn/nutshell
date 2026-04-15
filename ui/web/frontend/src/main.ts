@@ -60,8 +60,10 @@ export async function attachSession(id: string): Promise<void> {
   getChatEl().clearMessages();
   lastRenderedContextOffset = 0;
   store.taskCards = [];
+  store.panelEntries = [];
   store.currentParams = null;
   store.emit('tasks');
+  store.emit('panel');
   store.emit('config');
 
   // Load history first, then open SSE from returned offsets

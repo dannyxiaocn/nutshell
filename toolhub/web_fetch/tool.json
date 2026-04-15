@@ -1,0 +1,19 @@
+{
+  "name": "web_fetch",
+  "description": "Fetch a URL and return its main text content (article extraction). Returns a readable summary with title + body, without nav/ads/markup.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "The URL to fetch (must include scheme, e.g. https://...)."
+      },
+      "max_chars": {
+        "type": "integer",
+        "description": "Maximum characters of extracted body text to return. Default: 20000.",
+        "minimum": 100
+      }
+    },
+    "required": ["url"]
+  }
+}

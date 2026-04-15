@@ -6,6 +6,45 @@
 
 ## Active
 
+### Module 11 · v2.0.5 Tool Engine Evolution
+
+Big redesign. Full spec in `docs/butterfly/tool_engine/design.md` and `docs/butterfly/session_engine/design.md` (Memory layers — on-demand recall section).
+
+**Foundation**
+- [ ] Add `Tool.backgroundable` field + ToolLoader auto-injection of `run_in_background` / `polling_interval` schema fields + description suffix
+- [ ] Create `butterfly/session_engine/panel.py` (Panel entry schemas, panel dir lifecycle)
+- [ ] `sessions/<id>/core/panel/` dir created at session init alongside `core/tasks/`
+
+**Tool rewrites / additions**
+- [ ] Unify bash: drop PTY; delete shell_terminal.py; add `stdin` param; structured output; backgroundable=true
+- [ ] New tool `session_shell` (persistent bash, sentinel protocol, auto-restart, single-command timeout → SIGINT→SIGKILL→restart)
+- [ ] New tools `read` / `write` / `edit` (exact-string, uniqueness-enforced)
+- [ ] New tools `glob` / `grep` (ripgrep-preferred, Python `re` fallback)
+- [ ] New tool `web_fetch` (provider-abstracted like web_search; default httpx+trafilatura)
+- [ ] Split `manage_task` → `task_create` / `task_update` / `task_finish` / `task_pause` / `task_resume` / `task_list`
+- [ ] Rename + behavior change: `recall_memory` (β, fetch-only) + new `update_memory` (patch sub-memory + upsert main memory index line)
+- [ ] New tool `tool_output(task_id, delta?)` — fetch backgrounded-tool output from panel
+- [ ] Remove `reload_capabilities` injection from `session.py` + delete `butterfly/tool_engine/reload.py`
+
+**Non-blocking infrastructure**
+- [ ] `butterfly/tool_engine/background.py` — `BackgroundTaskManager`: spawn tracked subprocess, delta-output polling, stall watchdog (5m silence + interactive-prompt regex), completion hook
+- [ ] `Agent._execute_tools`: route `run_in_background=true` calls to BackgroundTaskManager, return placeholder `tool_result` with `task_id`; mixed gather preserves call ordering
+- [ ] Daemon loop: background completion / stall / progress → append-once user-role message to `context.jsonl` + wake agent; mirror `panel_update` event to `events.jsonl`
+- [ ] Server restart: mark all `running` panel entries `killed_by_restart` + append notification
+
+**UI**
+- [ ] Web UI: new **Panel** tab next to Tasks tab (right sidebar). One row per entry; click-through detail; Kill / Fetch actions
+- [ ] CLI: `butterfly panel` (one-line list) + `butterfly panel --tid <tid>` (detail + `--kill` / `--output`)
+
+**Sync-up**
+- [ ] Rewrite `entity/agent/tools.md` and `entity/butterfly_dev/tools.md` for the new catalog (drop `shell`, `manage_task`, `reload_capabilities`; add new ones)
+- [ ] Migrate meta sessions: either delete `sessions/<name>_meta/` + `_sessions/<name>_meta/` for re-bootstrap, or mirror tool list into existing metas
+- [ ] `CLAUDE_*` env vars → `BUTTERFLY_*` (notably `${CLAUDE_SKILL_DIR}` in skill_tool.py); no alias
+- [ ] Memory (β) wiring: drop `memory_layers` from prompt build; verify main-memory index flow end-to-end
+- [ ] Regenerate `docs/butterfly/tool_engine/executor/*/design.md` + `impl.md` + `todo.md` for each tool subdir
+- [ ] Tests: per-tool unit tests + integration tests for non-blocking flow + panel lifecycle
+- [ ] Bump pyproject.toml to 2.0.5 (rebased onto main's v2.0.4 LLM hotfix; branch version shifted +1)
+
 ### Module 10 · v2.0.2 Follow-ups (from PR #17 review)
 
 - [ ] **验证 Codex `gpt-5-codex` 默认模型是否在 ChatGPT-OAuth 端点可用**：PR #17 把 `CodexProvider.DEFAULT_MODEL` 从 `gpt-5.4` 改成 `gpt-5-codex`（对齐 openai/codex-rs CLI），但 PR description 中 `Manual end-to-end call against Codex (codex-oauth) with thinking=True` 的 checkbox 未勾选 —— 没有人真实跑过这个组合。同时 `entity/agent/config.yaml`、`entity/butterfly_dev/config.yaml`、`README.md`、`docs/entity/agent/impl.md`、`ui/web/frontend/src/components/chat.ts` 里的 token 上限表仍是 `gpt-5.4`，处于不一致状态。需要：

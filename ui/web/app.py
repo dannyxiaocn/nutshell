@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -313,6 +314,81 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
         if not deleted:
             raise HTTPException(404, f"Task not found: {task_name}")
         return {"ok": True}
+
+    @app.get("/api/sessions/{session_id}/panel")
+    async def get_panel(session_id: str):
+        """List all panel entries for a session, sorted by created_at asc.
+
+        Returns [] if the panel dir doesn't yet exist (session may not have
+        spawned any backgroundable tool calls). 404 only if the session itself
+        is missing.
+        """
+        _validate_session_id_or_400(session_id)
+        session_dir = sessions_dir / session_id
+        if not session_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+        from butterfly.session_engine.panel import list_entries
+        panel_dir = session_dir / "core" / "panel"
+        entries = list_entries(panel_dir)
+        return [e.to_json() for e in entries]
+
+    @app.get("/api/sessions/{session_id}/panel/{tid}")
+    async def get_panel_entry(session_id: str, tid: str):
+        """Return a single panel entry + the last 40 lines of its output_file."""
+        _validate_session_id_or_400(session_id)
+        session_dir = sessions_dir / session_id
+        if not session_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+        from butterfly.session_engine.panel import load_entry
+        panel_dir = session_dir / "core" / "panel"
+        entry = load_entry(panel_dir, tid)
+        if entry is None:
+            raise HTTPException(404, f"Panel entry not found: {tid}")
+        tail: str | None = None
+        if entry.output_file:
+            # output_file is stored as a path relative to the repo root (see
+            # design.md §5.1); resolve relative paths against the repo root,
+            # which is the sessions_dir's parent.
+            candidate = Path(entry.output_file)
+            if not candidate.is_absolute():
+                candidate = sessions_dir.parent / candidate
+            try:
+                if candidate.exists():
+                    text = candidate.read_text(encoding="utf-8", errors="replace")
+                    lines = text.splitlines()
+                    tail = "\n".join(lines[-40:])
+            except OSError as exc:
+                console_msg = f"[panel] could not read output_file {candidate}: {exc}"
+                print(console_msg)
+                tail = None
+        payload = entry.to_json()
+        payload["output_tail"] = tail
+        return payload
+
+    @app.post("/api/sessions/{session_id}/panel/{tid}/kill")
+    async def kill_panel_entry(session_id: str, tid: str):
+        """Mark a panel entry as killed at the file level.
+
+        Does NOT send a signal to the underlying process; the background
+        task manager reaps on its next tick. 404 if the entry is missing.
+        """
+        _validate_session_id_or_400(session_id)
+        session_dir = sessions_dir / session_id
+        if not session_dir.exists():
+            raise HTTPException(404, f"Session not found: {session_id}")
+        from butterfly.session_engine.panel import (
+            STATUS_KILLED,
+            load_entry,
+            save_entry,
+        )
+        panel_dir = session_dir / "core" / "panel"
+        entry = load_entry(panel_dir, tid)
+        if entry is None:
+            raise HTTPException(404, f"Panel entry not found: {tid}")
+        entry.status = STATUS_KILLED
+        entry.finished_at = time.time()
+        save_entry(panel_dir, entry)
+        return {"status": "killed"}
 
     @app.get("/api/sessions/{session_id}/config")
     async def get_config(session_id: str):
