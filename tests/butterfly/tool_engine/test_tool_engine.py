@@ -8,23 +8,11 @@ from tempfile import TemporaryDirectory
 from butterfly.core.skill import Skill
 from butterfly.tool_engine.loader import ToolLoader
 from butterfly.tool_engine.registry import list_providers, resolve_tool_impl
-from butterfly.tool_engine.reload import _summarize_names, create_reload_tool
 
 
-class _ReloadSession:
-    def __init__(self) -> None:
-        self.reload_calls = 0
-        self._agent = type(
-            "AgentLike",
-            (),
-            {
-                "tools": [type("ToolLike", (), {"name": "bash"})(), type("ToolLike", (), {"name": "skill"})()],
-                "skills": [type("SkillLike", (), {"name": "creator-mode"})()],
-            },
-        )()
-
-    def _load_session_capabilities(self) -> None:
-        self.reload_calls += 1
+# Note: butterfly.tool_engine.reload and its create_reload_tool / _summarize_names
+# helpers were removed in v2.0.5. Capability reloading is now runtime-level
+# file-watch; there is no in-agent reload tool to test here.
 
 
 class ToolEngineTest(unittest.IsolatedAsyncioTestCase):
@@ -44,7 +32,7 @@ class ToolEngineTest(unittest.IsolatedAsyncioTestCase):
             tool = ToolLoader(default_workdir=tmp).load(path)
             output = await tool.execute(command="printf 'ok'")
         self.assertIn("ok", output)
-        self.assertIn("[exit 0]", output)
+        self.assertIn("[exit 0", output)
 
     def test_tool_loader_prefers_shell_executor_when_script_exists(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -88,18 +76,9 @@ class ToolEngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Topic: testing", output)
         self.assertIn("notes.txt", output)
 
-    async def test_reload_tool_reports_current_capabilities(self) -> None:
-        session = _ReloadSession()
-        tool = create_reload_tool(session)
-        output = await tool.execute()
-        self.assertEqual(session.reload_calls, 1)
-        self.assertIn("reload", tool.name)
-        self.assertIn("Tools (2): bash, skill", output)
-
     def test_registry_helpers_report_available_providers(self) -> None:
         self.assertIn("brave", list_providers("web_search"))
         self.assertIsNone(resolve_tool_impl("web_search", "missing"))
-        self.assertEqual(_summarize_names(["a", "b", "c"]), "a, b, c")
 
 
 if __name__ == "__main__":

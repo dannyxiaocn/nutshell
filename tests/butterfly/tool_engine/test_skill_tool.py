@@ -83,7 +83,7 @@ async def test_skill_tool_substitutes_dir_and_arguments(tmp_path):
     skill_dir = tmp_path / "skills" / "templated"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
-        "---\nname: templated\ndescription: Uses placeholders\narguments:\n  - topic\n---\n\nDir: ${CLAUDE_SKILL_DIR}\nTopic: $topic\nAll: $ARGUMENTS\n",
+        "---\nname: templated\ndescription: Uses placeholders\narguments:\n  - topic\n---\n\nDir: ${BUTTERFLY_SKILL_DIR}\nTopic: $topic\nAll: $ARGUMENTS\n",
         encoding="utf-8",
     )
     skill = SkillLoader().load(skill_dir)

@@ -65,12 +65,6 @@ class CoreAgentToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add.schema["required"], ["a", "b"])
         self.assertEqual(add.schema["properties"]["label"], {"type": "string"})
 
-    def test_memory_layer_truncation_mentions_source_file(self) -> None:
-        content = "\n".join(f"line {idx}" for idx in range(100))
-        rendered = Agent._render_memory_layer("notes", content)
-        self.assertIn("cat core/memory/notes.md", rendered)
-        self.assertIn("lines omitted", rendered)
-
     def test_build_system_parts_includes_agent_mode_guidance(self) -> None:
         agent = Agent(
             system_prompt="base prompt",

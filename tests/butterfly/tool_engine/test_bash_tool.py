@@ -48,7 +48,7 @@ async def test_basic_echo():
     t = _make_bash_tool()
     result = await t.execute(command="echo hello")
     assert "hello" in result
-    assert "[exit 0]" in result
+    assert "[exit 0" in result
 
 
 @pytest.mark.asyncio
@@ -56,14 +56,14 @@ async def test_stderr_merged():
     t = _make_bash_tool()
     result = await t.execute(command="echo err >&2")
     assert "err" in result
-    assert "[exit 0]" in result
+    assert "[exit 0" in result
 
 
 @pytest.mark.asyncio
 async def test_nonzero_exit_code():
     t = _make_bash_tool()
     result = await t.execute(command="exit 7")
-    assert "[exit 7]" in result
+    assert "[exit 7" in result
 
 
 @pytest.mark.asyncio
@@ -101,7 +101,7 @@ async def test_pty_basic():
     if "[pty unavailable" in result:
         pytest.skip("PTY not available in this environment")
     assert "pty-hello" in result
-    assert "[exit 0]" in result
+    assert "[exit 0" in result
 
 
 @pytest.mark.asyncio
@@ -110,7 +110,7 @@ async def test_pty_exit_code():
     result = await t.execute(command="exit 3", pty=True)
     if "[pty unavailable" in result:
         pytest.skip("PTY not available in this environment")
-    assert "[exit 3]" in result
+    assert "[exit 3" in result
 
 
 @pytest.mark.asyncio

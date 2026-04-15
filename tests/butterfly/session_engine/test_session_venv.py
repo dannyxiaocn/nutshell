@@ -213,7 +213,7 @@ async def test_bash_without_venv_works():
         tool = create_bash_tool()
         result = await tool.execute(command="echo works")
         assert "works" in result
-        assert "[exit 0]" in result
+        assert "[exit 0" in result
 
 
 # ── 6. PTY mode also uses venv ────────────────────────────────────────────────

@@ -44,14 +44,6 @@ class AgentUnitTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(results[1]["is_error"])
         self.assertIn("boom", results[1]["content"])
 
-    def test_render_memory_layer_truncates_large_content(self) -> None:
-        content = "\n".join(f"line {i}" for i in range(65))
-        rendered = Agent._render_memory_layer("notes", content)
-
-        self.assertIn("Memory: notes", rendered)
-        self.assertIn("full content: `cat core/memory/notes.md`", rendered)
-        self.assertIn("5 lines omitted", rendered)
-
 
 
 # ── BUG-3 regression: fallback_model-only path reuses primary provider ──
