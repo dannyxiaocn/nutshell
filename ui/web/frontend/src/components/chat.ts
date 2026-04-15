@@ -26,29 +26,25 @@ export function createChat(): HTMLElement {
   el.id = 'chat';
   el.innerHTML = `
     <div id="messages" class="messages"></div>
-    <div id="hud-bar" class="hud-bar hidden">
-      <span class="hud-item hud-cwd" title="Working directory">
-        <span class="hud-icon">📁</span>
-        <span class="hud-cwd-text">…</span>
-      </span>
+    <div id="hud-bar" class="hud-bar hidden" title="model · context · running tool · tokens">
+      <span class="hud-dot hud-dot-idle" id="hud-dot"></span>
+      <span class="hud-item hud-model"><span class="hud-model-text">…</span></span>
       <span class="hud-sep">·</span>
-      <span class="hud-item hud-context" title="Context size">
-        <span class="hud-icon">💬</span>
-        <span class="hud-ctx-text">…</span>
-      </span>
-      <span class="hud-sep">·</span>
-      <span class="hud-item hud-git" title="Git changes">
-        <span class="hud-icon">⎇</span>
-        <span class="hud-git-text">…</span>
-      </span>
-      <span class="hud-sep">·</span>
-      <span class="hud-item hud-tokens" title="Last turn token usage">
-        <span class="hud-icon">⚡</span>
-        <span class="hud-tokens-text">…</span>
-      </span>
+      <span class="hud-item hud-context"><span class="hud-ctx-text">…</span></span>
+      <span class="hud-sep hud-tool-sep hidden">·</span>
+      <span class="hud-item hud-tool hidden"><span class="hud-tool-text"></span></span>
+      <span class="hud-sep hud-tokens-sep">·</span>
+      <span class="hud-item hud-tokens"><span class="hud-tokens-text">…</span></span>
+    </div>
+    <div id="pending-bar" class="pending-bar hidden">
+      <span class="pending-label">queued</span>
+      <span class="pending-preview"></span>
+      <span class="pending-timer"></span>
+      <button id="btn-send-now" class="btn-sm btn-primary" title="Send queued messages immediately">Send now</button>
+      <button id="btn-interrupt-send" class="btn-sm btn-warn hidden" title="Cancel current agent run and send">Interrupt &amp; send</button>
     </div>
     <div id="chat-input-area" class="chat-input-area">
-      <textarea id="chat-input" placeholder="Type a message… (Shift+Enter for newline, Enter to send)" rows="3"></textarea>
+      <textarea id="chat-input" placeholder="Type a message… (Shift+Enter for newline, Enter to send — messages are merged over a 5 s window)" rows="3"></textarea>
       <div class="chat-input-actions">
         <button id="btn-interrupt" class="btn-sm btn-warn" title="Interrupt current turn">⚡ Interrupt</button>
         <div class="chat-input-actions-right">
@@ -62,6 +58,16 @@ export function createChat(): HTMLElement {
   const inputEl = el.querySelector('#chat-input') as HTMLTextAreaElement;
   const sendBtn = el.querySelector('#btn-send') as HTMLButtonElement;
   const interruptBtn = el.querySelector('#btn-interrupt') as HTMLButtonElement;
+  const pendingBar = el.querySelector('#pending-bar') as HTMLDivElement;
+  const pendingPreview = el.querySelector('.pending-preview') as HTMLSpanElement;
+  const pendingTimerEl = el.querySelector('.pending-timer') as HTMLSpanElement;
+  const sendNowBtn = el.querySelector('#btn-send-now') as HTMLButtonElement;
+  const interruptSendBtn = el.querySelector('#btn-interrupt-send') as HTMLButtonElement;
+
+  // Track in-flight tool by name so the HUD can show "▶ bash" during a call.
+  // Also held per msg-tool DOM node for the running/finished state transition.
+  const runningTools = new Map<string, { el: HTMLElement | null; startTs: number }>();
+  let latestToolKey: string | null = null;
 
   // Streaming bubble lives INSIDE the messages div so it scrolls with the conversation
   let streamingEl: HTMLDivElement | null = null;
@@ -98,6 +104,10 @@ export function createChat(): HTMLElement {
     removeStreamingBubble();
     messages.innerHTML = '';
     isStreaming = false;
+    runningTools.clear();
+    latestToolKey = null;
+    updateHudTool(null);
+    updateHudDot('idle');
   }
 
   function scrollToBottom() {
@@ -128,10 +138,16 @@ export function createChat(): HTMLElement {
           body.innerHTML = '';
           scrollToBottom();
           store.modelState = { state: 'running', source: event.source ?? null };
+          updateHudDot('running');
         } else {
           // Idle: if no agent message came, remove bubble
           if (isStreaming) removeStreamingBubble();
           store.modelState = { state: 'idle', source: null };
+          updateHudDot('idle');
+          // Agent idled: flush any pending merged message accumulated while streaming.
+          if (pendingMessages.length > 0 && !sendTimer) {
+            void flushPendingMessages();
+          }
         }
         store.emit('modelState');
         break;
@@ -160,8 +176,85 @@ export function createChat(): HTMLElement {
         appendEvent(event);
         break;
 
+      case 'tool': {
+        // Record running tool so tool_done can pair against it. Events don't
+        // carry a tool_use_id yet, so we key by name — last wins.
+        const name = event.name ?? 'tool';
+        latestToolKey = name;
+        runningTools.set(name, { el: null, startTs: Date.now() });
+        updateHudTool(name);
+        // Render via the normal path — renderEvent defaults to "done" styling
+        // so history replays look correct. Flip the freshly appended row back
+        // to the running state here (live path only).
+        appendEvent(event);
+        const lastTool = messages.querySelector('.msg-tool:last-of-type') as HTMLElement | null;
+        if (lastTool) {
+          lastTool.classList.remove('done');
+          const summary = lastTool.querySelector('.tool-status-summary') as HTMLElement | null;
+          if (summary) {
+            summary.innerHTML = `<span class="tool-status-icon">▶</span><span class="tool-status-name">${escapeHtml(name)}</span><span class="tool-status-meta">running…</span>`;
+          }
+        }
+        break;
+      }
+
+      case 'tool_done': {
+        const name = event.name ?? (latestToolKey ?? 'tool');
+        const entry = runningTools.get(name);
+        const started = entry?.startTs ?? Date.now();
+        const durationMs = Date.now() - started;
+        // Attach finished state onto the most recent msg-tool for this name.
+        const toolEls = Array.from(messages.querySelectorAll('.msg-tool')) as HTMLElement[];
+        const target = toolEls
+          .reverse()
+          .find(n => n.dataset.toolName === name && !n.classList.contains('done'));
+        if (target) {
+          target.classList.add('done');
+          const durSec = (durationMs / 1000).toFixed(1) + 's';
+          const summary = target.querySelector('.tool-status-summary') as HTMLElement | null;
+          if (summary) {
+            summary.innerHTML = `<span class="tool-status-icon">✓</span><span class="tool-status-name">${escapeHtml(name)}</span><span class="tool-status-meta">${escapeHtml(durSec)}${typeof event.result_len === 'number' ? ` · ${event.result_len} chars` : ''}</span>`;
+          }
+        }
+        runningTools.delete(name);
+        if (latestToolKey === name) latestToolKey = null;
+        updateHudTool(latestToolKey);
+        // Intentionally NOT appending a separate msg-status line — the running
+        // pill transitions to done in place. Memory note: keeps the log quiet.
+        break;
+      }
+
+      case 'loop_start':
+      case 'loop_end':
+        // Quiet: loop lifecycle no longer clutters the transcript (user feedback).
+        // HUD's running dot already conveys the information.
+        break;
+
       default:
         appendEvent(event);
+    }
+  }
+
+  function updateHudDot(state: 'running' | 'idle') {
+    const dot = el.querySelector('#hud-dot') as HTMLElement | null;
+    if (!dot) return;
+    dot.classList.toggle('hud-dot-running', state === 'running');
+    dot.classList.toggle('hud-dot-idle', state === 'idle');
+  }
+
+  function updateHudTool(toolName: string | null) {
+    const sep = el.querySelector('.hud-tool-sep') as HTMLElement | null;
+    const item = el.querySelector('.hud-tool') as HTMLElement | null;
+    const text = el.querySelector('.hud-tool-text') as HTMLElement | null;
+    if (!sep || !item || !text) return;
+    if (toolName) {
+      sep.classList.remove('hidden');
+      item.classList.remove('hidden');
+      text.textContent = `▶ ${toolName}`;
+    } else {
+      sep.classList.add('hidden');
+      item.classList.add('hidden');
+      text.textContent = '';
     }
   }
 
@@ -171,49 +264,36 @@ export function createChat(): HTMLElement {
       const hudBar = el.querySelector('#hud-bar') as HTMLElement;
       hudBar.classList.remove('hidden');
 
-      // CWD: show full path, auto-scroll if it overflows the container
-      const cwdEl = hudBar.querySelector('.hud-cwd-text') as HTMLElement;
-      cwdEl.textContent = data.cwd;
-      cwdEl.title = data.cwd;
-      cwdEl.classList.remove('scrolling');
-      cwdEl.style.removeProperty('--scroll-px');
-      // Measure after paint to check overflow
-      requestAnimationFrame(() => {
-        const parent = cwdEl.parentElement;
-        if (parent && cwdEl.scrollWidth > parent.clientWidth + 2) {
-          const px = cwdEl.scrollWidth - parent.clientWidth + 8;
-          cwdEl.style.setProperty('--scroll-px', `-${px}px`);
-          cwdEl.classList.add('scrolling');
-        }
-      });
+      // Model name — compact, single-line. This is the "essential" field.
+      const modelEl = hudBar.querySelector('.hud-model-text') as HTMLElement;
+      const modelName = data.model ?? '(default)';
+      modelEl.textContent = modelName;
+      modelEl.title = `model: ${modelName} · cwd: ${data.cwd}`;
 
       // Context: estimate tokens from bytes, show as % of model max
       const estimatedTokens = Math.round(data.context_bytes / 4);
       const maxTokens = getModelMaxTokens(data.model ?? null);
       const pct = Math.min(100, Math.round(estimatedTokens / maxTokens * 100));
-      const ctxStr = `${pct}% (${(estimatedTokens / 1000).toFixed(0)}k/${(maxTokens / 1000).toFixed(0)}k)`;
-      (hudBar.querySelector('.hud-ctx-text') as HTMLElement).textContent = `ctx: ${ctxStr}`;
+      const ctxEl = hudBar.querySelector('.hud-ctx-text') as HTMLElement;
+      ctxEl.textContent = `ctx ${pct}%`;
+      ctxEl.title = `${estimatedTokens.toLocaleString()} / ${maxTokens.toLocaleString()} tokens`;
 
-      // Git stat
-      const gitEl = hudBar.querySelector('.hud-git-text') as HTMLElement;
-      const { added, deleted, files } = data.git;
-      if (files === 0) {
-        gitEl.innerHTML = '<span style="color:var(--dimmed)">clean</span>';
-      } else {
-        gitEl.innerHTML = `${files}f <span class="hud-git-added">+${added}</span> <span class="hud-git-deleted">-${deleted}</span>`;
-      }
-
-      // Token usage
+      // Token usage — collapse to one number unless caching meaningfully present.
       const tokEl = hudBar.querySelector('.hud-tokens-text') as HTMLElement;
       if (data.usage) {
         const u = data.usage;
-        const tokParts: string[] = [];
-        if (u.input) tokParts.push(`in:${(u.input / 1000).toFixed(1)}k`);
-        if (u.output) tokParts.push(`out:${(u.output / 1000).toFixed(1)}k`);
-        if (u.cache_read) tokParts.push(`cache:${(u.cache_read / 1000).toFixed(1)}k`);
-        tokEl.textContent = tokParts.join(' ');
+        const inK = u.input ? (u.input / 1000).toFixed(1) + 'k' : '—';
+        const outK = u.output ? (u.output / 1000).toFixed(1) + 'k' : '—';
+        tokEl.textContent = `${inK}↓ ${outK}↑`;
+        const full: string[] = [];
+        if (u.input) full.push(`in:${u.input}`);
+        if (u.output) full.push(`out:${u.output}`);
+        if (u.cache_read) full.push(`cache_read:${u.cache_read}`);
+        if (u.cache_write) full.push(`cache_write:${u.cache_write}`);
+        tokEl.title = full.join(' · ');
       } else {
-        tokEl.textContent = 'no usage';
+        tokEl.textContent = '—';
+        tokEl.title = 'no usage yet';
       }
     } catch {
       // ignore — HUD is best-effort
@@ -232,13 +312,77 @@ export function createChat(): HTMLElement {
   (el as HTMLElement & ChatMethods).handleEvent = handleEvent;
   (el as HTMLElement & ChatMethods).refreshHud = refreshHud;
 
-  // Message batching: queue messages and flush after 300ms debounce,
-  // joining with \n so rapid sends (or Enter-key multi-line) become one request.
-  // Session ID is captured at enqueue time so switching sessions mid-debounce
-  // cannot redirect a pending message to the wrong session (Problem 4).
+  // ==================== 5-s user-input merge window ====================
+  //
+  // State machine (web UI only; CLI is untouched):
+  //
+  //   IDLE  ──[user types+Enter]──▶  PENDING(timer=5s)
+  //
+  //   PENDING  ──[timer fires, agent idle]──▶  flush → IDLE
+  //   PENDING  ──[timer fires, agent running]──▶  BUFFERED_WHILE_STREAMING
+  //   PENDING  ──[another message typed]──▶  append to buffer, reset 5s timer
+  //   PENDING  ──["Send now"]──▶  flush → IDLE
+  //   PENDING  ──["Interrupt & send"]──▶  /interrupt + flush → IDLE
+  //
+  //   BUFFERED_WHILE_STREAMING  ──[model_status=idle]──▶  flush → IDLE
+  //   BUFFERED_WHILE_STREAMING  ──[another message]──▶  append to buffer
+  //                                                      (no timer — waits on agent)
+  //   BUFFERED_WHILE_STREAMING  ──["Send now"]──▶  flush → IDLE
+  //   BUFFERED_WHILE_STREAMING  ──["Interrupt & send"]──▶  /interrupt + flush
+  //
+  // Task-layer messages (scheduled duty fires) bypass this entirely — they
+  // go directly to the backend via the task runtime, not through this path.
+  // CLI chat also bypasses; this merge is strictly front-end driven.
+  //
+  // Auto-interrupt heuristic: if the buffered content starts with a
+  // correction phrase ("stop", "wait", "no", "cancel"), promote the pending
+  // "Send now" into an "Interrupt & send". Otherwise default to merge-and-send.
+  const MERGE_WINDOW_MS = 5000;
+  const INTERRUPT_PHRASES = /^\s*(stop|wait|no|cancel|nope|hold on)\b/i;
+
   let pendingMessages: string[] = [];
   let pendingSessionId: string | null = null;
   let sendTimer: ReturnType<typeof setTimeout> | null = null;
+  let timerDeadline = 0;
+  let timerTickHandle: ReturnType<typeof setInterval> | null = null;
+
+  function isAgentRunning(): boolean {
+    return store.modelState.state === 'running';
+  }
+
+  function updatePendingBar() {
+    if (pendingMessages.length === 0) {
+      pendingBar.classList.add('hidden');
+      if (timerTickHandle) { clearInterval(timerTickHandle); timerTickHandle = null; }
+      return;
+    }
+    pendingBar.classList.remove('hidden');
+    const combined = pendingMessages.join('\n');
+    const preview = combined.length > 80 ? combined.slice(0, 80) + '…' : combined;
+    pendingPreview.textContent = preview;
+
+    if (isAgentRunning()) {
+      pendingTimerEl.textContent = 'waiting for agent…';
+      interruptSendBtn.classList.remove('hidden');
+      if (timerTickHandle) { clearInterval(timerTickHandle); timerTickHandle = null; }
+    } else if (timerDeadline > 0) {
+      const remaining = Math.max(0, Math.ceil((timerDeadline - Date.now()) / 1000));
+      pendingTimerEl.textContent = `sending in ${remaining}s`;
+      interruptSendBtn.classList.add('hidden');
+    }
+
+    // Auto-interrupt heuristic
+    if (INTERRUPT_PHRASES.test(combined) && isAgentRunning()) {
+      interruptSendBtn.classList.add('pulse');
+    } else {
+      interruptSendBtn.classList.remove('pulse');
+    }
+  }
+
+  function startTimerTick() {
+    if (timerTickHandle) clearInterval(timerTickHandle);
+    timerTickHandle = setInterval(updatePendingBar, 500);
+  }
 
   async function flushPendingMessages() {
     if (pendingMessages.length === 0) return;
@@ -246,12 +390,27 @@ export function createChat(): HTMLElement {
     const sessId = pendingSessionId;
     pendingMessages = [];
     pendingSessionId = null;
+    timerDeadline = 0;
+    if (sendTimer) { clearTimeout(sendTimer); sendTimer = null; }
+    updatePendingBar();
     if (!sessId) return;
     try {
       await api.sendMessage(sessId, combined);
     } catch (e) {
+      console.error('Failed to send merged user message:', e);
       appendEvent({ type: 'error', content: `Failed to send: ${e}` });
     }
+  }
+
+  async function interruptAndFlush() {
+    const sessId = pendingSessionId ?? store.currentSessionId;
+    if (!sessId) return;
+    try {
+      await api.interruptSession(sessId);
+    } catch (e) {
+      console.error('Interrupt failed:', e);
+    }
+    await flushPendingMessages();
   }
 
   async function sendMessage() {
@@ -263,18 +422,46 @@ export function createChat(): HTMLElement {
     inputEl.value = '';
     inputEl.style.height = 'auto';
     // If session changed mid-batch, flush previous batch to its original session first
-    if (sendTimer && pendingSessionId && pendingSessionId !== sessId) {
-      clearTimeout(sendTimer);
-      sendTimer = null;
+    if (pendingSessionId && pendingSessionId !== sessId) {
+      if (sendTimer) { clearTimeout(sendTimer); sendTimer = null; }
       void flushPendingMessages();
     }
     pendingMessages.push(content);
     pendingSessionId = sessId;
-    if (sendTimer) clearTimeout(sendTimer);
-    sendTimer = setTimeout(flushPendingMessages, 300);
+
+    if (isAgentRunning()) {
+      // Agent is mid-reply — hold the buffer, don't arm the 5s timer.
+      // It will be flushed on model_status=idle.
+      if (sendTimer) { clearTimeout(sendTimer); sendTimer = null; }
+      timerDeadline = 0;
+    } else {
+      // Agent idle — arm or reset the 5s merge timer.
+      if (sendTimer) clearTimeout(sendTimer);
+      timerDeadline = Date.now() + MERGE_WINDOW_MS;
+      sendTimer = setTimeout(() => {
+        sendTimer = null;
+        timerDeadline = 0;
+        // Re-check: by the time the timer fires, the agent might have started.
+        if (isAgentRunning()) {
+          updatePendingBar();
+          return;
+        }
+        void flushPendingMessages();
+      }, MERGE_WINDOW_MS);
+      startTimerTick();
+    }
+    updatePendingBar();
   }
 
   sendBtn.addEventListener('click', sendMessage);
+  sendNowBtn.addEventListener('click', () => {
+    if (sendTimer) { clearTimeout(sendTimer); sendTimer = null; }
+    void flushPendingMessages();
+  });
+  interruptSendBtn.addEventListener('click', () => {
+    if (sendTimer) { clearTimeout(sendTimer); sendTimer = null; }
+    void interruptAndFlush();
+  });
 
   // Chinese IME: track composition state so Enter that confirms a candidate
   // does not also trigger message send.
@@ -370,41 +557,19 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
     }
 
     case 'tool': {
-      div.className = 'msg msg-tool';
+      // Default to "done" styling because renderEvent is also used by history
+      // replay (completed turns). handleEvent's live `tool` case explicitly
+      // strips the .done class after appending to show the running state.
+      div.className = 'msg msg-tool msg-tool-compact done';
+      div.dataset.toolName = event.name ?? 'tool';
       div.innerHTML = renderToolEvent(event);
       break;
     }
 
-    case 'tool_done': {
-      div.className = 'msg msg-status';
-      const name = escapeHtml(event.name ?? 'tool');
-      const suffix = typeof event.result_len === 'number' ? ` (${event.result_len} chars)` : '';
-      div.innerHTML = `<em>${name} finished${escapeHtml(suffix)}</em>`;
-      break;
-    }
-
-    case 'loop_start': {
-      div.className = 'msg msg-status';
-      div.innerHTML = `<em>agent loop started</em>`;
-      break;
-    }
-
-    case 'loop_end': {
-      div.className = 'msg msg-status';
-      const parts: string[] = [];
-      if (typeof event.iterations === 'number') parts.push(`${event.iterations} iteration${event.iterations === 1 ? '' : 's'}`);
-      if (event.usage?.input != null || event.usage?.output != null) {
-        const usageParts: string[] = [];
-        if (event.usage.input != null) usageParts.push(`in:${event.usage.input}`);
-        if (event.usage.output != null) usageParts.push(`out:${event.usage.output}`);
-        if (event.usage.cache_read != null) usageParts.push(`cached:${event.usage.cache_read}`);
-        if (event.usage.cache_write != null) usageParts.push(`wrote:${event.usage.cache_write}`);
-        if (usageParts.length) parts.push(usageParts.join(' · '));
-      }
-      const detail = parts.length ? ` (${parts.join(' | ')})` : '';
-      div.innerHTML = `<em>agent loop finished${escapeHtml(detail)}</em>`;
-      break;
-    }
+    // tool_done / loop_start / loop_end are handled in handleEvent (transition
+    // the live msg-tool to "done" and update the HUD); they don't produce
+    // separate log lines anymore. This keeps the transcript quiet and
+    // matches the uniform `✓ name (duration)` pattern the user asked for.
 
     case 'task_wakeup': {
       div.className = 'msg msg-task-wakeup';
@@ -444,50 +609,76 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
 }
 
 function renderToolEvent(event: DisplayEvent): string {
+  // Uniform compact layout:
+  //   [summary row] ▶ toolname  <one-line arg preview>      (ts)
+  //   [optional] click-to-expand <details> with full args / command
+  //
+  // When tool_done lands, chat.ts flips the summary row to `✓ name (Xs)`.
   const name = event.name ?? 'unknown';
   const input = event.input ?? {};
+  const preview = toolArgPreview(name, input);
+  const expanded = toolArgExpanded(name, input);
 
-  if (name === 'bash' || name === 'shell') {
-    const cmd = String(input['command'] ?? input['cmd'] ?? JSON.stringify(input));
-    const lineCount = cmd.split('\n').length;
-    const isLong = cmd.length > 500 || lineCount > 10;
-    const cmdHtml = isLong
-      ? `<details class="tool-collapse"><summary>command (${lineCount} lines, ${cmd.length} chars)</summary><pre class="tool-pre">${escapeHtml(cmd)}</pre></details>`
-      : `<pre class="tool-pre">${escapeHtml(cmd)}</pre>`;
-    return `
-      <div class="msg-header">
-        <span class="tool-pill">${escapeHtml(name)}</span>
-        <span class="msg-ts">${formatTs(event.ts)}</span>
-      </div>
-      ${cmdHtml}
-    `;
-  }
+  // Default icon is the "done" checkmark; handleEvent's live `tool` case
+  // overrides this to show `▶ running…` until tool_done lands.
+  const summary = `
+    <div class="tool-status-summary">
+      <span class="tool-status-icon">✓</span>
+      <span class="tool-status-name">${escapeHtml(name)}</span>
+      <span class="tool-status-meta"></span>
+    </div>
+  `;
 
-  if (name === 'web_search') {
-    const query = String(input['query'] ?? input['q'] ?? '');
-    return `
-      <div class="msg-header">
-        <span class="tool-pill">web_search</span>
-        <span class="msg-ts">${formatTs(event.ts)}</span>
-      </div>
-      <div class="tool-query">🔍 ${escapeHtml(query)}</div>
-    `;
-  }
-
-  // generic: key=value pairs
-  const pairs = Object.entries(input)
-    .slice(0, 8)
-    .map(([k, v]) => {
-      const val = typeof v === 'string' ? v : JSON.stringify(v);
-      return `<span class="kv-pair"><span class="kv-key">${escapeHtml(k)}</span>=<span class="kv-val">${escapeHtml(val.slice(0, 120))}</span></span>`;
-    })
-    .join(' ');
+  const previewLine = preview
+    ? `<div class="tool-arg-preview" title="${escapeHtml(preview)}">${escapeHtml(preview)}</div>`
+    : '';
+  const detailsBlock = expanded
+    ? `<details class="tool-collapse"><summary>details</summary>${expanded}</details>`
+    : '';
 
   return `
-    <div class="msg-header">
-      <span class="tool-pill">${escapeHtml(name)}</span>
+    <div class="tool-row-header">
+      ${summary}
       <span class="msg-ts">${formatTs(event.ts)}</span>
     </div>
-    <div class="tool-args">${pairs}</div>
+    ${previewLine}
+    ${detailsBlock}
   `;
+}
+
+function toolArgPreview(name: string, input: Record<string, unknown>): string {
+  if (name === 'bash' || name === 'shell') {
+    const cmd = String(input['command'] ?? input['cmd'] ?? '');
+    const firstLine = cmd.split('\n')[0] ?? '';
+    return firstLine.length > 120 ? firstLine.slice(0, 120) + '…' : firstLine;
+  }
+  if (name === 'web_search') {
+    return `🔍 ${String(input['query'] ?? input['q'] ?? '')}`;
+  }
+  if (name === 'read' || name === 'edit' || name === 'write') {
+    const p = String(input['file_path'] ?? input['path'] ?? '');
+    return p;
+  }
+  // Generic: first kv pair
+  const entries = Object.entries(input);
+  if (!entries.length) return '';
+  const [k, v] = entries[0];
+  const val = typeof v === 'string' ? v : JSON.stringify(v);
+  return `${k}=${val.slice(0, 100)}${val.length > 100 ? '…' : ''}`;
+}
+
+function toolArgExpanded(name: string, input: Record<string, unknown>): string {
+  if (name === 'bash' || name === 'shell') {
+    const cmd = String(input['command'] ?? input['cmd'] ?? JSON.stringify(input));
+    return `<pre class="tool-pre">${escapeHtml(cmd)}</pre>`;
+  }
+  const entries = Object.entries(input);
+  if (!entries.length) return '';
+  const rows = entries
+    .map(([k, v]) => {
+      const val = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+      return `<div class="kv-row"><span class="kv-key">${escapeHtml(k)}</span><pre class="kv-val">${escapeHtml(val)}</pre></div>`;
+    })
+    .join('');
+  return `<div class="tool-args-expanded">${rows}</div>`;
 }

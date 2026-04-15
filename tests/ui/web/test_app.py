@@ -265,6 +265,85 @@ class WebUnitTests(unittest.TestCase):
                 resp = client.delete("/api/sessions/test-session/tasks/bad%5Cname")
             self.assertEqual(resp.status_code, 400)
 
+    def test_get_models_returns_provider_catalog(self) -> None:
+        """GET /api/models exposes the provider → models matrix used by the web config editor."""
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            app = create_app(root / "sessions", root / "_sessions")
+            with TestClient(app) as client:
+                resp = client.get("/api/models")
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertIn("providers", payload)
+        self.assertIn("thinking_efforts", payload)
+        names = {p["provider"] for p in payload["providers"]}
+        # The 4 CLI-supported providers (plus openai-responses) must all be listed.
+        self.assertIn("anthropic", names)
+        self.assertIn("openai", names)
+        self.assertIn("kimi-coding-plan", names)
+        self.assertIn("codex-oauth", names)
+        for p in payload["providers"]:
+            self.assertIn("models", p)
+            self.assertIsInstance(p["models"], list)
+            self.assertTrue(p["models"], f"{p['provider']} has no models")
+            self.assertIn(p["default_model"], p["models"])
+
+    def test_get_config_yaml_returns_raw_yaml_text(self) -> None:
+        with TemporaryDirectory() as td:
+            root = _make_session(Path(td))
+            # Seed a config.yaml with a recognisable marker.
+            cfg_path = root / "sessions" / "test-session" / "core" / "config.yaml"
+            cfg_path.write_text("name: demo\nmodel: gpt-5.4\nprovider: codex-oauth\n", encoding="utf-8")
+            app = create_app(root / "sessions", root / "_sessions")
+            with TestClient(app) as client:
+                resp = client.get("/api/sessions/test-session/config/yaml")
+
+        self.assertEqual(resp.status_code, 200)
+        text = resp.json()["yaml"]
+        self.assertIn("name: demo", text)
+        self.assertIn("model: gpt-5.4", text)
+
+    def test_put_config_yaml_round_trips(self) -> None:
+        with TemporaryDirectory() as td:
+            root = _make_session(Path(td))
+            app = create_app(root / "sessions", root / "_sessions")
+            with TestClient(app) as client:
+                put_resp = client.put(
+                    "/api/sessions/test-session/config/yaml",
+                    json={"yaml": "name: x\nmodel: claude-sonnet-4-6\nprovider: anthropic\n"},
+                )
+                self.assertEqual(put_resp.status_code, 200)
+                saved = put_resp.json()["params"]
+                self.assertEqual(saved["model"], "claude-sonnet-4-6")
+                self.assertEqual(saved["provider"], "anthropic")
+                # YAML round-trip: subsequent GET surfaces the written fields.
+                get_resp = client.get("/api/sessions/test-session/config/yaml")
+                self.assertEqual(get_resp.status_code, 200)
+                self.assertIn("claude-sonnet-4-6", get_resp.json()["yaml"])
+
+    def test_put_config_yaml_rejects_malformed_yaml(self) -> None:
+        with TemporaryDirectory() as td:
+            root = _make_session(Path(td))
+            app = create_app(root / "sessions", root / "_sessions")
+            with TestClient(app) as client:
+                resp = client.put(
+                    "/api/sessions/test-session/config/yaml",
+                    json={"yaml": "name: [unterminated"},
+                )
+            self.assertEqual(resp.status_code, 400)
+
+    def test_put_config_yaml_rejects_non_mapping(self) -> None:
+        with TemporaryDirectory() as td:
+            root = _make_session(Path(td))
+            app = create_app(root / "sessions", root / "_sessions")
+            with TestClient(app) as client:
+                resp = client.put(
+                    "/api/sessions/test-session/config/yaml",
+                    json={"yaml": "- just\n- a\n- list\n"},
+                )
+            self.assertEqual(resp.status_code, 400)
+
     def test_create_session_same_second_does_not_silently_reuse_existing_id(self) -> None:
         fixed = datetime(2026, 4, 10, 23, 30, 0)
         with TemporaryDirectory() as td:

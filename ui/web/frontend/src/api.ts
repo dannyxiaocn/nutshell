@@ -1,5 +1,6 @@
 import type {
   DisplayEvent,
+  ModelsCatalog,
   Params,
   PanelEntry,
   PanelEntryDetail,
@@ -52,6 +53,15 @@ export const api = {
 
   setConfig: (id: string, params: Params): Promise<{ ok: boolean; params: Params }> =>
     request('PUT', `/api/sessions/${encodeURIComponent(id)}/config`, { params }),
+
+  getConfigYaml: (id: string): Promise<{ yaml: string }> =>
+    request('GET', `/api/sessions/${encodeURIComponent(id)}/config/yaml`),
+
+  setConfigYaml: (id: string, yamlText: string): Promise<{ ok: boolean; params: Params }> =>
+    request('PUT', `/api/sessions/${encodeURIComponent(id)}/config/yaml`, { yaml: yamlText }),
+
+  getModels: (): Promise<ModelsCatalog> =>
+    request('GET', '/api/models'),
 
   startSession: (id: string): Promise<{ ok: boolean }> =>
     request('POST', `/api/sessions/${encodeURIComponent(id)}/start`),

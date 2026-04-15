@@ -71,6 +71,21 @@ export interface TaskCard {
   progress: string;
 }
 
+export interface ProviderCatalogEntry {
+  provider: string;
+  label: string;
+  env: string[];
+  supports_thinking: boolean;
+  thinking_style: 'budget' | 'effort' | 'extra_body' | null;
+  default_model: string;
+  models: string[];
+}
+
+export interface ModelsCatalog {
+  providers: ProviderCatalogEntry[];
+  thinking_efforts: string[];
+}
+
 export interface DisplayEvent {
   type: string;
   content?: string;
