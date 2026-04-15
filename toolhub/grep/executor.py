@@ -106,6 +106,11 @@ class GrepExecutor(BaseExecutor):
         elif output_mode == "count":
             args.append("-c")
         else:  # content
+            # -H forces filename prefix even when searching a single file, so
+            # the output format is always `<path>:<lineno>:<line>` — matches
+            # the Python fallback and stays consistent whether the caller
+            # passes a file or a directory.
+            args.append("-H")
             if show_line_numbers:
                 args.append("-n")
             else:

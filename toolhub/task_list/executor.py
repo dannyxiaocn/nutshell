@@ -22,7 +22,11 @@ class TaskListExecutor:
             return "No task cards found." if not status else f"No task cards with status '{status}'."
         lines = []
         for c in cards:
-            interval_str = f"{c.interval}s" if c.interval else "one-shot"
+            # `interval is None` means one-shot; 0 is technically valid and
+            # should NOT be mislabelled as one-shot (it would fire every tick
+            # by design, and the schema now rejects it at ingress — but we
+            # keep the display honest in case old cards exist on disk).
+            interval_str = f"{c.interval}s" if c.interval is not None else "one-shot"
             last = c.last_finished_at or c.last_started_at or "never"
             lines.append(f"{c.name} [{c.status}] interval={interval_str} last={last}")
         return "\n".join(lines)

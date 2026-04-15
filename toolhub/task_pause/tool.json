@@ -1,6 +1,6 @@
 {
   "name": "task_pause",
-  "description": "Pause a recurring task card. It stops firing until you resume it.",
+  "description": "Pause a task card (works for recurring OR one-shot pending cards). It stops firing until you call `task_resume`.",
   "input_schema": {
     "type": "object",
     "properties": {

@@ -37,11 +37,15 @@ import secrets
 import signal
 import subprocess
 import time
+from collections import deque
 from typing import Any, Callable, Optional
 
 from butterfly.tool_engine.executor.base import BaseExecutor
 
 _MAX_OUTPUT = 10_000
+# Ring-buffer the incoming lines at 2x the cap so we can cheaply keep the
+# trailing `_MAX_OUTPUT` chars without letting a `yes`-style firehose OOM us.
+_BUFFER_FACTOR = 2
 
 
 class SessionShellExecutor(BaseExecutor):
@@ -167,7 +171,16 @@ class SessionShellExecutor(BaseExecutor):
         command = kwargs.get("command")
         if not isinstance(command, str):
             return "Error: `command` (string) is required.\n[exit unknown]"
-        timeout = float(kwargs.get("timeout") or 60.0)
+        # Explicit None check so `timeout=0` isn't silently coerced to 60 by
+        # the `or` idiom — 0 is a valid (though cruel) caller intent.
+        raw_timeout = kwargs.get("timeout")
+        if raw_timeout is None:
+            timeout = 60.0
+        else:
+            try:
+                timeout = float(raw_timeout)
+            except (TypeError, ValueError):
+                timeout = 60.0
         reset = bool(kwargs.get("reset", False))
 
         async with self._lock:
@@ -205,7 +218,21 @@ class SessionShellExecutor(BaseExecutor):
             await self._spawn()
             return prefix + "[shell died before command; restarted]\n[exit unknown]"
 
-        collected: list[str] = []
+        # Ring-buffer output lines with a soft cap on total length. A command
+        # like `yes | head -c 1G` would otherwise fill memory; here we drop
+        # the head once we exceed 2× the final output cap, preserving the
+        # tail (which is what `_cap` would keep anyway).
+        collected: "deque[str]" = deque()
+        collected_len = 0
+        buffer_cap = max(self._max_output * _BUFFER_FACTOR, self._max_output)
+
+        def _append(line: str) -> None:
+            nonlocal collected_len
+            collected.append(line)
+            collected_len += len(line)
+            while collected_len > buffer_cap and collected:
+                popped = collected.popleft()
+                collected_len -= len(popped)
 
         async def _read_until_marker() -> int | None:
             """Read lines until the sentinel is seen; return exit code or None."""
@@ -222,9 +249,9 @@ class SessionShellExecutor(BaseExecutor):
                     # emits it on its own line) gets preserved.
                     before = line[: m.start()]
                     if before and before != "\n":
-                        collected.append(before)
+                        _append(before)
                     return int(m.group(1))
-                collected.append(line)
+                _append(line)
 
         try:
             exit_code = await asyncio.wait_for(_read_until_marker(), timeout=timeout)

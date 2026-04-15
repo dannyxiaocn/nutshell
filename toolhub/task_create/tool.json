@@ -14,7 +14,8 @@
       },
       "interval": {
         "type": ["number", "null"],
-        "description": "Recurring interval in seconds. Omit or set null for a one-shot task."
+        "exclusiveMinimum": 0,
+        "description": "Recurring interval in seconds (must be > 0). Omit or set null for a one-shot task."
       },
       "start_at": {
         "type": ["number", "null"],

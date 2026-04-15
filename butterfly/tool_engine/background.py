@@ -72,6 +72,11 @@ class BackgroundTaskManager:
             subprocesses (for venv activation). None = inherit the parent env.
     """
 
+    # Bound on the event queue so a stalled/dead daemon loop can't OOM us.
+    # Drop-oldest policy: we prefer the fresh events when a slow consumer
+    # falls behind. 1024 is ~hours of activity at reasonable polling rates.
+    _EVENT_QUEUE_MAXSIZE = 1024
+
     def __init__(
         self,
         panel_dir: Path,
@@ -82,7 +87,28 @@ class BackgroundTaskManager:
         self._tool_results_dir = tool_results_dir
         self._venv_env_provider = venv_env_provider
         self._tasks: dict[str, asyncio.Task] = {}
-        self._events: asyncio.Queue[BackgroundEvent] = asyncio.Queue()
+        self._events: asyncio.Queue[BackgroundEvent] = asyncio.Queue(
+            maxsize=self._EVENT_QUEUE_MAXSIZE
+        )
+        self._dropped_events = 0
+
+    def _emit_event(self, evt: BackgroundEvent) -> None:
+        """Non-blocking enqueue with drop-oldest policy when saturated."""
+        try:
+            self._events.put_nowait(evt)
+            return
+        except asyncio.QueueFull:
+            # Drop the oldest event, then try again. If that also fails
+            # (shouldn't — we just removed one), count the loss and give up.
+            try:
+                self._events.get_nowait()
+                self._dropped_events += 1
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self._events.put_nowait(evt)
+            except asyncio.QueueFull:
+                self._dropped_events += 1
 
     @property
     def events(self) -> asyncio.Queue[BackgroundEvent]:
@@ -149,12 +175,9 @@ class BackgroundTaskManager:
         """
         updated = sweep_killed_by_restart(self._panel_dir)
         for entry in updated:
-            try:
-                self._events.put_nowait(BackgroundEvent(
-                    tid=entry.tid, kind="killed_by_restart", entry=entry,
-                ))
-            except asyncio.QueueFull:
-                pass
+            self._emit_event(BackgroundEvent(
+                tid=entry.tid, kind="killed_by_restart", entry=entry,
+            ))
         return updated
 
     async def shutdown(self) -> None:
@@ -288,7 +311,7 @@ class BackgroundTaskManager:
                 if not stall_fired and silent >= _STALL_SECONDS:
                     entry.status = STATUS_STALLED
                     save_entry(self._panel_dir, entry)
-                    self._events.put_nowait(BackgroundEvent(
+                    self._emit_event(BackgroundEvent(
                         tid=tid, kind="stalled", entry=entry,
                     ))
                     stall_fired = True
@@ -296,7 +319,7 @@ class BackgroundTaskManager:
                 if polling_interval and (now - last_progress_tick) >= polling_interval:
                     delta = self._read_delta(entry)
                     if delta:
-                        self._events.put_nowait(BackgroundEvent(
+                        self._emit_event(BackgroundEvent(
                             tid=tid, kind="progress", entry=entry, delta_text=delta,
                         ))
                     last_progress_tick = now
@@ -340,6 +363,6 @@ class BackgroundTaskManager:
             except OSError:
                 pass
         save_entry(self._panel_dir, entry)
-        self._events.put_nowait(BackgroundEvent(
+        self._emit_event(BackgroundEvent(
             tid=tid, kind="completed", entry=entry,
         ))

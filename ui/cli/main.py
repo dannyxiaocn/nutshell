@@ -20,8 +20,10 @@ a running server — they read/write the _sessions/ directory directly.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
+import shutil
 import sys
 import time
 import uuid
@@ -762,13 +764,16 @@ def cmd_panel(args) -> int:
 
         output_path = _resolve_output_file(entry.output_file)
 
-        # --output: raw dump, no JSON, no footer
+        # --output: raw dump, streamed so huge output files don't explode memory.
         if args.output:
             if output_path is None or not output_path.exists():
                 print(f"No output file for {entry.tid}.")
                 return 0
             try:
-                sys.stdout.write(output_path.read_text(encoding="utf-8", errors="replace"))
+                sys.stdout.flush()
+                with output_path.open("rb") as fh:
+                    shutil.copyfileobj(fh, sys.stdout.buffer)
+                sys.stdout.buffer.flush()
             except OSError as exc:
                 print(f"Error: failed to read {output_path}: {exc}", file=sys.stderr)
                 return 1
@@ -788,16 +793,21 @@ def cmd_panel(args) -> int:
             )
             return 0
 
-        # Default --tid: pretty JSON + last 40 lines of output + footer
+        # Default --tid: pretty JSON + last 40 lines of output + footer.
+        # Use a bounded deque so gigabyte output files don't materialise in
+        # RAM just to extract a 40-line tail.
         print(json.dumps(entry.to_json(), indent=2, default=str, ensure_ascii=False))
         if output_path is not None and output_path.exists():
+            tail: collections.deque[str] | None = None
             try:
-                lines = output_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                tail = collections.deque(maxlen=40)
+                with output_path.open("r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        tail.append(line.rstrip("\n"))
             except OSError as exc:
                 print(f"\n[output_file read error: {exc}]")
-                lines = None
-            if lines is not None:
-                tail = lines[-40:]
+                tail = None
+            if tail is not None:
                 print()
                 print(f"── last {len(tail)} line(s) of {output_path} ──")
                 for line in tail:

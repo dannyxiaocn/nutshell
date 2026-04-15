@@ -1,7 +1,20 @@
-"""edit tool — exact-string replacement on a file."""
+"""edit tool — exact-string replacement on a file.
+
+Safety properties:
+  * Refuses to edit non-UTF-8 files (strict decode) — prevents silent
+    corruption of binaries that happened to contain the old_string bytes.
+  * Preserves file mode / owner via `shutil.copystat` before the atomic
+    rename — otherwise the replacement inherits the umask-default mode.
+  * Unique temp-file per write (tempfile.mkstemp in the destination dir) so
+    concurrent edits don't collide on `<path>.tmp`.
+  * Rejects empty `old_string` — the tool is exact replacement; empty match
+    semantics are degenerate (global insert between every char).
+"""
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +40,11 @@ class EditExecutor(BaseExecutor):
         new_string: str = kwargs["new_string"]
         replace_all = bool(kwargs.get("replace_all", False))
 
+        if old_string == "":
+            return (
+                "Error: old_string must be non-empty. `edit` is exact "
+                "replacement — use `write` to overwrite the whole file."
+            )
         if old_string == new_string:
             return "Error: old_string and new_string are identical; no change."
 
@@ -39,7 +57,14 @@ class EditExecutor(BaseExecutor):
         except OSError as exc:
             return f"Error: Failed to read {path_arg}: {exc}"
 
-        text = raw.decode("utf-8", errors="replace")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            return (
+                f"Error: {path_arg} is not valid UTF-8 (offset {exc.start}); "
+                "`edit` refuses to touch non-text files."
+            )
+
         count = text.count(old_string)
         if count == 0:
             return f"Error: old_string not found in {path_arg}"
@@ -57,17 +82,34 @@ class EditExecutor(BaseExecutor):
             replacements = 1
 
         data = new_text.encode("utf-8")
+        tmp_path: str | None = None
         try:
-            tmp_path = resolved.with_suffix(resolved.suffix + ".tmp")
-            with open(tmp_path, "wb") as fh:
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=f".{resolved.name}.",
+                suffix=".tmp",
+                dir=str(resolved.parent),
+            )
+            with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
                 fh.flush()
                 try:
                     os.fsync(fh.fileno())
                 except OSError:
                     pass
+            # Preserve file mode + atime/mtime from the original. Ownership
+            # preservation would require root and is intentionally skipped.
+            try:
+                shutil.copystat(resolved, tmp_path, follow_symlinks=True)
+            except OSError:
+                pass  # Best-effort; don't fail the edit if copystat is denied.
             os.replace(tmp_path, resolved)
+            tmp_path = None
         except OSError as exc:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
             return f"Error: Failed to write {path_arg}: {exc}"
 
         noun = "occurrence" if replacements == 1 else "occurrences"

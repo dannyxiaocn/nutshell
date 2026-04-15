@@ -94,8 +94,13 @@ class PanelEntry:
 # ── TID generation ────────────────────────────────────────────────────────────
 
 def new_tid(prefix: str = "bg") -> str:
-    """Generate a stable, short task id. Used as both dict key and filename stem."""
-    return f"{prefix}_{secrets.token_hex(3)}"
+    """Generate a stable, short task id. Used as both dict key and filename stem.
+
+    4 hex bytes = 32 bits of entropy; long-lived sessions can accumulate many
+    panel entries, and 24-bit ids had a non-negligible birthday-collision
+    chance once you got into the hundreds.
+    """
+    return f"{prefix}_{secrets.token_hex(4)}"
 
 
 # ── Filesystem helpers ────────────────────────────────────────────────────────
@@ -125,11 +130,17 @@ def load_entry(panel_dir: Path, tid: str) -> PanelEntry | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
-    return PanelEntry.from_json(data)
+    # from_json can raise TypeError on a truncated / schema-invalid blob
+    # (e.g. missing required dataclass fields). Treat as "not loadable".
+    try:
+        return PanelEntry.from_json(data)
+    except (TypeError, ValueError, KeyError):
+        return None
 
 
 def list_entries(panel_dir: Path) -> list[PanelEntry]:
-    """Return all panel entries, sorted by created_at ascending."""
+    """Return all panel entries, sorted by created_at ascending. Skips files
+    that are JSON-invalid or schema-invalid rather than crashing the listing."""
     if not panel_dir.is_dir():
         return []
     entries: list[PanelEntry] = []
@@ -138,7 +149,10 @@ def list_entries(panel_dir: Path) -> list[PanelEntry]:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
-        entries.append(PanelEntry.from_json(data))
+        try:
+            entries.append(PanelEntry.from_json(data))
+        except (TypeError, ValueError, KeyError):
+            continue
     entries.sort(key=lambda e: e.created_at)
     return entries
 
@@ -170,14 +184,19 @@ def create_pending_tool_entry(
 
 
 def sweep_killed_by_restart(panel_dir: Path) -> list[PanelEntry]:
-    """Mark every currently-running entry as killed_by_restart.
+    """Mark every non-terminal entry as killed_by_restart.
+
+    Covers both `running` and `stalled` — the latter also holds an orphan
+    subprocess from our POV after a daemon restart (a stalled entry means the
+    old manager had hit the 5-min watchdog but the process was still alive).
 
     Called once when the server/daemon starts. Returns the updated entries so
     the caller can emit notifications for each.
     """
+    non_terminal = {STATUS_RUNNING, STATUS_STALLED}
     updated: list[PanelEntry] = []
     for entry in list_entries(panel_dir):
-        if entry.status == STATUS_RUNNING:
+        if entry.status in non_terminal:
             entry.status = STATUS_KILLED_BY_RESTART
             entry.finished_at = time.time()
             save_entry(panel_dir, entry)

@@ -371,8 +371,22 @@ async def _execute_tools(
                 content = f"Error starting background task '{tc.name}': {exc}"
                 is_error = True
         else:
+            # Strip the backgrounding control flags even when we're executing
+            # inline — the tool executor doesn't know about run_in_background /
+            # polling_interval and some future backgroundable tool with an
+            # explicit signature would raise TypeError on unexpected kwargs.
+            # (bash accepts **kwargs today so it silently ignored them; this
+            # guards the invariant going forward.)
+            exec_input = tc.input
+            if tool.backgroundable and (
+                "run_in_background" in exec_input or "polling_interval" in exec_input
+            ):
+                exec_input = {
+                    k: v for k, v in exec_input.items()
+                    if k not in ("run_in_background", "polling_interval")
+                }
             try:
-                content = await tool.execute(**tc.input)
+                content = await tool.execute(**exec_input)
             except Exception as exc:
                 content = f"Error executing '{tc.name}': {exc}"
                 is_error = True

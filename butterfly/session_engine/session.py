@@ -599,12 +599,26 @@ class Session:
         except asyncio.CancelledError:
             self._set_model_status("idle", "system")
             self._append_event({"type": "status", "value": "cancelled"})
+            await self._shutdown_background_manager()
             self._clear_pid()
             raise
 
         self._set_model_status("idle", "system")
         self._append_event({"type": "status", "value": "stopped"})
+        await self._shutdown_background_manager()
         self._clear_pid()
+
+    async def _shutdown_background_manager(self) -> None:
+        """Best-effort cancel of in-flight bg asyncio tasks on daemon exit.
+
+        Running subprocesses themselves keep going (Python can't sync-join
+        detached processes here); the next daemon startup marks any still-
+        `running` panel entries as `killed_by_restart`.
+        """
+        try:
+            await self._bg_manager.shutdown()
+        except Exception as exc:
+            self._append_event({"type": "error", "content": f"bg_manager shutdown: {exc}"})
 
     # ── Properties ─────────────────────────────────────────────────
 

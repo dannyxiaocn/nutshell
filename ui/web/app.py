@@ -354,9 +354,15 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
                 candidate = sessions_dir.parent / candidate
             try:
                 if candidate.exists():
-                    text = candidate.read_text(encoding="utf-8", errors="replace")
-                    lines = text.splitlines()
-                    tail = "\n".join(lines[-40:])
+                    # Stream + bounded deque instead of whole-file load, so a
+                    # multi-GB log doesn't materialise in RAM just to extract
+                    # a 40-line tail.
+                    from collections import deque
+                    buf: "deque[str]" = deque(maxlen=40)
+                    with candidate.open("r", encoding="utf-8", errors="replace") as fh:
+                        for line in fh:
+                            buf.append(line.rstrip("\n"))
+                    tail = "\n".join(buf)
             except OSError as exc:
                 console_msg = f"[panel] could not read output_file {candidate}: {exc}"
                 print(console_msg)

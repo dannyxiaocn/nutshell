@@ -6,7 +6,9 @@
     "properties": {
       "url": {
         "type": "string",
-        "description": "The URL to fetch (must include scheme, e.g. https://...)."
+        "format": "uri",
+        "pattern": "^https?://",
+        "description": "The URL to fetch. Must start with http:// or https://. Loopback, link-local, private (RFC1918), and metadata addresses are refused by the runtime SSRF guard."
       },
       "max_chars": {
         "type": "integer",

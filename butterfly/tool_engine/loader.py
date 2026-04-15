@@ -132,7 +132,10 @@ class ToolLoader:
         elif tool_name == "tool_output":
             executor_cls = getattr(mod, "ToolOutputExecutor", None)
             if executor_cls:
-                executor = executor_cls(panel_dir=self._panel_dir)
+                executor = executor_cls(
+                    panel_dir=self._panel_dir,
+                    tool_results_dir=self._tool_results_dir,
+                )
                 async def _impl(**kwargs: Any) -> str:
                     return await executor.execute(**kwargs)
                 return _impl

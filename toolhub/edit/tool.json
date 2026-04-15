@@ -10,7 +10,8 @@
       },
       "old_string": {
         "type": "string",
-        "description": "Exact substring to replace. Must appear exactly once unless replace_all=true."
+        "minLength": 1,
+        "description": "Exact substring to replace. Must be non-empty and must appear exactly once unless replace_all=true."
       },
       "new_string": {
         "type": "string",

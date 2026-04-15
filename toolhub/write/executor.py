@@ -1,7 +1,12 @@
-"""write tool — atomic whole-file write with parent-dir creation."""
+"""write tool — atomic whole-file write with parent-dir creation.
+
+Uses a unique temp file per call (tempfile.mkstemp) so concurrent writes to
+the same path don't collide on a fixed `<path>.tmp` name.
+"""
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -27,20 +32,42 @@ class WriteExecutor(BaseExecutor):
 
         resolved = self._resolve(path_arg)
         data = content.encode("utf-8")
+        tmp_path: str | None = None
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = resolved.with_suffix(resolved.suffix + ".tmp")
-            with open(tmp_path, "wb") as fh:
-                fh.write(data)
-                fh.flush()
+            # mkstemp gives us a unique name in the destination dir so two
+            # concurrent writes to the same path don't collide on `<path>.tmp`.
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=f".{resolved.name}.",
+                suffix=".tmp",
+                dir=str(resolved.parent),
+            )
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(data)
+                    fh.flush()
+                    try:
+                        os.fsync(fh.fileno())
+                    except OSError:
+                        pass
+            except BaseException:
+                # Close-on-error handled by fdopen context; nothing more to do.
+                raise
+            os.replace(tmp_path, resolved)
+            tmp_path = None  # replace consumed it
+        except OSError as exc:
+            if tmp_path is not None:
                 try:
-                    os.fsync(fh.fileno())
+                    os.unlink(tmp_path)
                 except OSError:
                     pass
-            os.replace(tmp_path, resolved)
-        except OSError as exc:
             return f"Error: Failed to write {path_arg}: {exc}"
         except Exception as exc:  # pragma: no cover - defensive
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
             return f"Error: Failed to write {path_arg}: {exc}"
 
         return f"Wrote {len(data)} bytes to {path_arg}."

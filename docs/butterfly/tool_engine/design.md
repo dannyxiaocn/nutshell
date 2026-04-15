@@ -1,6 +1,6 @@
 # Tool Engine — Design
 
-The tool engine turns tool definitions into executable `Tool` objects. Tools live in `toolhub/` (centralized, repo-wide) and are enabled per-entity via `tool.md`. The `ToolLoader` dynamically imports executors at session init and injects session context (workdir, tasks_dir, memory_dir, etc.) into their constructors so agents never pass environmental parameters.
+The tool engine turns tool definitions into executable `Tool` objects. Tools live in `toolhub/` (centralized, repo-wide) and are enabled per-entity via `tools.md` (one tool name per line; legacy `tool.md` is still accepted as a fallback but `tools.md` is canonical). The `ToolLoader` dynamically imports executors at session init and injects session context (workdir, tasks_dir, memory_dir, etc.) into their constructors so agents never pass environmental parameters.
 
 This file is the authoritative spec for v2.0.5. It covers the catalog, the backgroundable protocol, the panel, and the shell / bash split.
 
@@ -256,15 +256,19 @@ Per-tool context injection table (v2.0.5):
 
 | Tool | Auto-injected |
 |---|---|
-| `bash` | `workdir`, `venv_env_provider`, `max_output_chars`, `panel_dir` (for backgrounded spawns), `tool_results_dir` |
+| `bash` | `workdir`, `tool_results_dir` (for disk spillover) |
 | `session_shell` | `workdir`, `venv_env_provider` |
-| `read`/`write`/`edit` | `workdir` (for relative paths), `tool_results_dir` |
+| `read`/`write`/`edit` | `workdir` (for relative path resolution) |
 | `glob`/`grep` | `workdir` |
-| `web_search`/`web_fetch` | provider config |
+| `web_search`/`web_fetch` | (provider-registry driven; no constructor injection) |
 | `skill` | skills list |
-| `recall_memory`/`update_memory` | `memory_dir`, `main_memory_path` |
+| `recall_memory` | `memory_dir` |
+| `update_memory` | `memory_dir`, `main_memory_path` |
 | `task_*` | `tasks_dir` |
 | `tool_output` | `panel_dir`, `tool_results_dir` |
+
+`bash` itself does NOT receive `panel_dir` — the agent-loop layer owns the
+routing to `BackgroundTaskManager`; the bash executor only runs the sync path.
 
 ---
 
