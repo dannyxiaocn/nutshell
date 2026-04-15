@@ -1162,6 +1162,73 @@ button:disabled {
 .task-status-finished { background: rgba(139,148,158,0.1); color: var(--muted); }
 .task-status-paused { background: rgba(210,153,34,0.1); color: var(--yellow); }
 
+/* Panel entry status badges (reuse .task-status-badge) */
+.panel-status-running { background: rgba(210,153,34,0.1); color: var(--yellow); }
+.panel-status-completed { background: rgba(63,185,80,0.1); color: var(--green); }
+.panel-status-stalled { background: rgba(219,109,40,0.12); color: #db6d28; }
+.panel-status-killed { background: rgba(248,81,73,0.12); color: var(--red); }
+.panel-status-killed_by_restart { background: rgba(140,40,40,0.18); color: #8c2828; }
+
+/* Panel row (reuses .task-card styles + one-line tail preview) */
+.panel-row .panel-tid {
+  font-family: var(--mono);
+  font-size: 10px;
+  background: rgba(139,148,158,0.12);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.panel-row-header {
+  cursor: pointer;
+}
+
+.panel-tail {
+  font-size: 11px;
+  color: var(--dimmed);
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-height: none;
+  border-left: none;
+  padding-left: 0;
+  margin: 4px 0 0 0;
+}
+
+.panel-json {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  margin: 8px 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.panel-output-tail {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  margin: 4px 0 8px 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.panel-output-empty {
+  color: var(--muted);
+  font-style: italic;
+  white-space: normal;
+}
+
 .task-card-meta {
   display: flex;
   flex-wrap: wrap;

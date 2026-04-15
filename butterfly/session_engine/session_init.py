@@ -214,6 +214,9 @@ def init_session(
     # Create task cards directory; seed duty card if config defines one
     tasks_dir = core_dir / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create panel directory (non-blocking tool state + future sub-agent refs)
+    (core_dir / "panel").mkdir(parents=True, exist_ok=True)
     session_cfg = read_config(session_dir)
     duty = session_cfg.get("duty")
     if isinstance(duty, dict) and duty.get("interval"):

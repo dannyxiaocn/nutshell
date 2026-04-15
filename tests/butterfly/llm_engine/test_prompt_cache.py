@@ -198,16 +198,6 @@ def test_agent_build_system_parts_no_memory_empty_suffix():
     assert suffix == ""
 
 
-def test_agent_build_system_parts_memory_layers_in_suffix():
-    agent = _make_agent(
-        system_prompt="sys",
-        memory_layers=[("project", "project content")],
-    )
-    prefix, suffix = agent._build_system_parts()
-    assert "project content" in suffix
-    assert "project content" not in prefix
-
-
 # ── History caching ────────────────────────────────────────────────────────────
 
 from butterfly.llm_engine.providers.anthropic import (

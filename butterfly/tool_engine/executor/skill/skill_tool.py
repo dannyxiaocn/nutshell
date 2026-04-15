@@ -25,14 +25,10 @@ def _split_args(args: str | None) -> list[str]:
 def _substitute_skill_vars(text: str, skill: Skill, args: str | None) -> str:
     root_dir = skill.root_dir
     if root_dir is not None:
-        skill_dir = root_dir.as_posix()
-        for var in ("${BUTTERFLY_SKILL_DIR}", "${CLAUDE_SKILL_DIR}", "${CODEX_SKILL_DIR}"):
-            text = text.replace(var, skill_dir)
+        text = text.replace("${BUTTERFLY_SKILL_DIR}", root_dir.as_posix())
 
     raw_args = (args or "").strip()
     text = text.replace("${BUTTERFLY_SKILL_ARGS}", raw_args)
-    text = text.replace("${CLAUDE_SKILL_ARGS}", raw_args)
-    text = text.replace("${CODEX_SKILL_ARGS}", raw_args)
     text = text.replace("$ARGUMENTS", raw_args)
 
     arg_names = skill.metadata.get("arguments")

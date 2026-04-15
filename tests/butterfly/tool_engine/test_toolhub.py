@@ -1,4 +1,9 @@
-"""Tests for toolhub tools: manage_task, recall_memory, web_search, and ToolLoader toolhub integration."""
+"""Tests for toolhub tools: recall_memory, web_search, and ToolLoader toolhub integration.
+
+The unified `manage_task` executor was replaced in v2.0.5 by per-verb toolhub
+modules (task_create/task_update/task_list/task_pause/task_resume/task_finish);
+coverage lives in tests/butterfly/tool_engine/test_pr19_task_verbs.py.
+"""
 from __future__ import annotations
 
 import json
@@ -10,76 +15,6 @@ from butterfly.tool_engine.loader import (
     _load_tool_schema,
     _read_tool_md,
 )
-
-
-# ── manage_task executor ─────────────────────────────────────────────────────
-
-
-class TestManageTaskExecutor:
-    @pytest.fixture
-    def executor(self, tmp_path):
-        from toolhub.manage_task.executor import ManageTaskExecutor
-        return ManageTaskExecutor(tasks_dir=tmp_path)
-
-    @pytest.mark.asyncio
-    async def test_list_empty(self, executor):
-        result = await executor.execute(action="list")
-        assert "No tasks found" in result
-
-    @pytest.mark.asyncio
-    async def test_create_and_list(self, executor, tmp_path):
-        result = await executor.execute(action="create", name="test_task", description="Do stuff")
-        assert "created" in result
-
-        result = await executor.execute(action="list")
-        assert "test_task" in result
-        assert "Do stuff" in result
-
-    @pytest.mark.asyncio
-    async def test_create_duplicate_fails(self, executor):
-        await executor.execute(action="create", name="dup")
-        result = await executor.execute(action="create", name="dup")
-        assert "already exists" in result
-
-    @pytest.mark.asyncio
-    async def test_update(self, executor):
-        await executor.execute(action="create", name="upd", description="old")
-        result = await executor.execute(action="update", name="upd", description="new")
-        assert "updated" in result
-
-        data = json.loads((executor._tasks_dir / "upd.json").read_text())
-        assert data["description"] == "new"
-
-    @pytest.mark.asyncio
-    async def test_pause_and_finish(self, executor):
-        await executor.execute(action="create", name="pf")
-
-        result = await executor.execute(action="finish", name="pf")
-        assert "finished" in result
-
-        data = json.loads((executor._tasks_dir / "pf.json").read_text())
-        assert data["status"] == "finished"
-        assert data["last_finished_at"] is not None
-
-        result = await executor.execute(action="pause", name="pf")
-        assert "paused" in result
-
-    @pytest.mark.asyncio
-    async def test_missing_name_error(self, executor):
-        result = await executor.execute(action="create")
-        assert "required" in result.lower() or "Error" in result
-
-    @pytest.mark.asyncio
-    async def test_unknown_action_error(self, executor):
-        result = await executor.execute(action="unknown")
-        assert "unknown" in result.lower() or "Error" in result
-
-    @pytest.mark.asyncio
-    async def test_no_tasks_dir_error(self):
-        from toolhub.manage_task.executor import ManageTaskExecutor
-        executor = ManageTaskExecutor(tasks_dir=None)
-        result = await executor.execute(action="list")
-        assert "not configured" in result
 
 
 # ── recall_memory executor ───────────────────────────────────────────────────

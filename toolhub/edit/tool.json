@@ -1,0 +1,27 @@
+{
+  "name": "edit",
+  "description": "Exact-string replacement on a file. `old_string` must be unique unless you set `replace_all=true`. Not a regex. Match exactly, including whitespace. Relative paths resolve against session workdir.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the file. Relative paths resolve against the session workdir."
+      },
+      "old_string": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Exact substring to replace. Must be non-empty and must appear exactly once unless replace_all=true."
+      },
+      "new_string": {
+        "type": "string",
+        "description": "Replacement text."
+      },
+      "replace_all": {
+        "type": "boolean",
+        "description": "If true, replace every occurrence. Default false."
+      }
+    },
+    "required": ["path", "old_string", "new_string"]
+  }
+}

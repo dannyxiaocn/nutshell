@@ -1,0 +1,31 @@
+{
+  "name": "task_create",
+  "description": "Create a new task card. Recurring if `interval` is set (seconds between runs); one-shot otherwise. Use for work the agent wants to pick up later or on a schedule.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Task name. Must be unique within the session; used as the JSON filename in core/tasks/."
+      },
+      "description": {
+        "type": "string",
+        "description": "What this task should do when it fires."
+      },
+      "interval": {
+        "type": ["number", "null"],
+        "exclusiveMinimum": 0,
+        "description": "Recurring interval in seconds (must be > 0). Omit or set null for a one-shot task."
+      },
+      "start_at": {
+        "type": ["number", "null"],
+        "description": "Earliest fire time (unix epoch seconds). Omit for the default (recurring: created + interval; one-shot: immediately)."
+      },
+      "end_at": {
+        "type": ["number", "null"],
+        "description": "Auto-expire time (unix epoch seconds). Omit for the default (created + 7 days, or 10*interval if interval > 7 days)."
+      }
+    },
+    "required": ["name", "description"]
+  }
+}

@@ -1,4 +1,11 @@
-import type { DisplayEvent, Params, Session, TaskCard } from './types';
+import type {
+  DisplayEvent,
+  Params,
+  PanelEntry,
+  PanelEntryDetail,
+  Session,
+  TaskCard,
+} from './types';
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const opts: RequestInit = { method, headers: { 'Content-Type': 'application/json' } };
@@ -60,4 +67,13 @@ export const api = {
 
   getHud: (id: string): Promise<{ cwd: string; context_bytes: number; model: string | null; git: { files: number; added: number; deleted: number }; usage: { input?: number; output?: number; cache_read?: number; cache_write?: number } | null }> =>
     request('GET', `/api/sessions/${encodeURIComponent(id)}/hud`),
+
+  getPanel: (id: string): Promise<PanelEntry[]> =>
+    request('GET', `/api/sessions/${encodeURIComponent(id)}/panel`),
+
+  getPanelEntry: (id: string, tid: string): Promise<PanelEntryDetail> =>
+    request('GET', `/api/sessions/${encodeURIComponent(id)}/panel/${encodeURIComponent(tid)}`),
+
+  killPanelEntry: (id: string, tid: string): Promise<{ status: string }> =>
+    request('POST', `/api/sessions/${encodeURIComponent(id)}/panel/${encodeURIComponent(tid)}/kill`),
 };

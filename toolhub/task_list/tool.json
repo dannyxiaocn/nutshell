@@ -1,0 +1,15 @@
+{
+  "name": "task_list",
+  "description": "List task cards. Optionally filter by status (`pending`, `working`, `finished`, `paused`).",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string",
+        "enum": ["pending", "working", "finished", "paused"],
+        "description": "If set, only cards with this status are returned."
+      }
+    },
+    "required": []
+  }
+}

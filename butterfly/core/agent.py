@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from butterfly.core.hook import OnLoopEnd, OnLoopStart, OnTextChunk, OnToolCall, OnToolDone
 from butterfly.core.provider import Provider
@@ -10,6 +10,11 @@ from butterfly.core.tool import Tool
 from butterfly.core.types import AgentResult, Message, ToolCall
 
 _log = logging.getLogger(__name__)
+
+
+# Signature of the injectable callable Session uses to route non-blocking tool
+# calls to the BackgroundTaskManager. Returns the newly-created tid.
+BackgroundSpawn = Callable[[str, dict[str, Any], int | None], Awaitable[str]]
 
 
 _DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -62,15 +67,16 @@ class Agent:
         # Not constructor params; Session owns the values, Agent owns the rendering.
         self.memory: str = ""
         self.caller_type: str = "human"  # "human" or "agent" — set per-run
-        # Extra named memory layers from core/memory/*.md, sorted by filename.
-        # Each entry is (label, content) where label is the .md file stem.
-        self.memory_layers: list[tuple[str, str]] = []
         # App notifications from core/apps/*.md, injected as system-prompt block.
         self.app_notifications: list[tuple[str, str]] = []
         self.env_context: str = ""
         self.thinking: bool = False
         self.thinking_budget: int = 8000
         self.thinking_effort: str = "high"
+        # Optional routing for non-blocking tool calls. When set, tool calls
+        # with `run_in_background=true` on a backgroundable tool are routed
+        # here instead of executed synchronously.
+        self.background_spawn: BackgroundSpawn | None = None
 
     @property
     def provider(self) -> Provider:
@@ -103,24 +109,6 @@ class Agent:
         self._fallback_provider = self.provider
         return self._fallback_provider
 
-    # Memory layers longer than this many lines are truncated in the prompt.
-    # The agent reads the full layer on demand via bash: cat core/memory/<name>.md
-    _MEMORY_LAYER_INLINE_LINES: int = 60
-
-    @classmethod
-    def _render_memory_layer(cls, name: str, content: str) -> str:
-        """Render a named memory layer, truncating large ones for prompt efficiency."""
-        # splitlines() handles \r\n / \r / \n uniformly; re-joining on \n
-        # on both branches strips stray \r on Windows-style files.
-        lines = content.splitlines()
-        normalised = "\n".join(lines)
-        if len(lines) <= cls._MEMORY_LAYER_INLINE_LINES:
-            return f"## Memory: {name}\n\n{normalised}"
-        head = "\n".join(lines[: cls._MEMORY_LAYER_INLINE_LINES])
-        omitted = len(lines) - cls._MEMORY_LAYER_INLINE_LINES
-        hint = f"... ({omitted} lines omitted — full content: `cat core/memory/{name}.md`)"
-        return f"## Memory: {name}\n\n{head}\n{hint}"
-
     def _build_system_parts(self) -> tuple[str, str]:
         """Return (static_prefix, dynamic_suffix) for cache-aware prompt building.
 
@@ -134,13 +122,12 @@ class Agent:
             static_parts.append("\n\n---\n" + self.env_context)
 
         dynamic_parts: list[str] = []
-        if self.memory or self.memory_layers:
-            memory_parts = []
-            if self.memory:
-                memory_parts.append(f"## Session Memory\n\n{self.memory}")
-            for name, content in self.memory_layers:
-                memory_parts.append(self._render_memory_layer(name, content))
-            dynamic_parts.append("\n\n---\n" + "\n\n".join(memory_parts))
+        # v2.0.5 memory (β): only the main memory.md is injected. Sub-memory
+        # layers under core/memory/*.md are fetched on demand via recall_memory.
+        if self.memory:
+            dynamic_parts.append(
+                "\n\n---\n## Session Memory\n\n" + self.memory
+            )
         # App notifications — core/apps/*.md, always-visible persistent channel
         if self.app_notifications:
             notif_parts = []
@@ -290,7 +277,12 @@ class Agent:
                 for tc in tool_calls:
                     on_tool_call(tc.name, tc.input)
 
-            tool_results = await _execute_tools(tool_calls, tool_map, on_tool_done=on_tool_done)
+            tool_results = await _execute_tools(
+                tool_calls,
+                tool_map,
+                on_tool_done=on_tool_done,
+                background_spawn=self.background_spawn,
+            )
             messages.append(Message(role="tool", content=tool_results))
 
         self._history = list(messages)
@@ -342,17 +334,59 @@ async def _execute_tools(
     tool_map: dict[str, Tool],
     *,
     on_tool_done: OnToolDone | None = None,
+    background_spawn: BackgroundSpawn | None = None,
 ) -> list[dict]:
-    """Execute tool calls concurrently and return Anthropic-format tool_result blocks."""
+    """Execute tool calls concurrently and return Anthropic-format tool_result blocks.
+
+    Mixed non-blocking: if a tool call targets a backgroundable tool and the
+    agent set `run_in_background=true`, the call is routed to `background_spawn`
+    and returns a placeholder result immediately (agent keeps iterating). Its
+    real output arrives later as a notification appended to `context.jsonl` by
+    the session daemon (see docs/butterfly/tool_engine/design.md §4 and §8).
+    """
     async def _call(tc: ToolCall) -> dict:
         tool = tool_map.get(tc.name)
         is_error = False
         if tool is None:
             content = f"Error: tool '{tc.name}' not found."
             is_error = True
-        else:
+        elif (
+            tool.backgroundable
+            and bool(tc.input.get("run_in_background"))
+            and background_spawn is not None
+        ):
             try:
-                content = await tool.execute(**tc.input)
+                polling = tc.input.get("polling_interval")
+                bg_input = {
+                    k: v for k, v in tc.input.items()
+                    if k not in ("run_in_background", "polling_interval")
+                }
+                tid = await background_spawn(tc.name, bg_input, polling)
+                content = (
+                    f"Task started. task_id={tid}. Output will arrive in a later "
+                    f'turn as a notification; fetch anytime with '
+                    f'tool_output(task_id="{tid}"). Task is visible in the session panel.'
+                )
+            except Exception as exc:
+                content = f"Error starting background task '{tc.name}': {exc}"
+                is_error = True
+        else:
+            # Strip the backgrounding control flags even when we're executing
+            # inline — the tool executor doesn't know about run_in_background /
+            # polling_interval and some future backgroundable tool with an
+            # explicit signature would raise TypeError on unexpected kwargs.
+            # (bash accepts **kwargs today so it silently ignored them; this
+            # guards the invariant going forward.)
+            exec_input = tc.input
+            if tool.backgroundable and (
+                "run_in_background" in exec_input or "polling_interval" in exec_input
+            ):
+                exec_input = {
+                    k: v for k, v in exec_input.items()
+                    if k not in ("run_in_background", "polling_interval")
+                }
+            try:
+                content = await tool.execute(**exec_input)
             except Exception as exc:
                 content = f"Error executing '{tc.name}': {exc}"
                 is_error = True

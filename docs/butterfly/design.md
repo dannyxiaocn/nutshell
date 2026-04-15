@@ -29,3 +29,17 @@ Entity (static templates)
 - **Self-contained entities**: Each entity in `entity/` is fully self-contained — all prompts, tools, and skills are physically present. New entities are created with `--init-from <source>` (one-time copy) or `--blank`.
 - **Meta sessions**: Each entity seeds a meta session once; the meta session is the authoritative, evolving config. Child sessions are seeded from meta. Version staleness notices inform users when meta has advanced.
 - **File-based IPC**: JSONL append-only logs with byte-offset polling. No sockets, no message queues.
+
+## Versioning
+
+Version format: **`{major}.{stable_minor}.{dev_patch}`**.
+
+- **`major`** = `stable_major + 1`. Dev is always exactly one major ahead of the latest `stable_v{major}` git tag. Today: stable tag is `stable_v1`, so dev major is `2`.
+- **`stable_minor`** only increments when a dev release is promoted to stable and gets tagged `stable_v{major}.{minor}` (e.g. `stable_v1.1`). Until that paired event happens, it stays at the value it had at the last stable cut. Today: `0`.
+- **`dev_patch`** increments on every dev release between stable cuts. Each PR ships as `vX.Y.Z+1`.
+
+Practical rules:
+- Day-to-day PRs bump only the last number (`v2.0.3 → v2.0.4`), even for big features.
+- Bumping the middle number is paired with cutting a new `stable_v{major}.{minor}` tag — never on its own.
+- Major never moves in dev; it advances when the upstream stable major tag advances.
+- `pyproject.toml` `version = ...` must match the dev version after every PR.

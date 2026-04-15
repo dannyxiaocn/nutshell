@@ -27,6 +27,36 @@ export interface Params {
   [key: string]: unknown;
 }
 
+export type PanelEntryStatus =
+  | 'running'
+  | 'completed'
+  | 'stalled'
+  | 'killed'
+  | 'killed_by_restart';
+
+export interface PanelEntry {
+  tid: string;
+  type: string;
+  tool_name: string;
+  input: Record<string, unknown>;
+  status: PanelEntryStatus;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  polling_interval: number | null;
+  last_delivered_bytes: number;
+  last_activity_at: number | null;
+  pid: number | null;
+  exit_code: number | null;
+  output_file: string | null;
+  output_bytes: number;
+  meta: Record<string, unknown>;
+}
+
+export interface PanelEntryDetail extends PanelEntry {
+  output_tail: string | null;
+}
+
 export interface TaskCard {
   name: string;
   description: string;

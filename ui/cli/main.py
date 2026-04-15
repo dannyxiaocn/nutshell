@@ -8,6 +8,7 @@ Usage:
     butterfly start SESSION_ID                Resume a stopped session
     butterfly log [SESSION_ID] [-n N] [--since T] [--watch]  Show conversation history
     butterfly tasks [SESSION_ID]              Show a session's task board
+    butterfly panel [SESSION_ID] [options]    Show a session's panel (pending tools)
     butterfly entity new [options]            Scaffold a new entity directory
 
     butterfly server                          Start the Butterfly server (auto-daemonize)
@@ -19,8 +20,10 @@ a running server — they read/write the _sessions/ directory directly.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
+import shutil
 import sys
 import time
 import uuid
@@ -664,6 +667,178 @@ def cmd_tasks(args) -> int:
     return 0
 
 
+# ── Subcommand: panel ─────────────────────────────────────────────────────────
+
+def _add_panel_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "panel",
+        allow_abbrev=False,
+        help="Show a session's panel entries (core/panel/).",
+        description=(
+            "Display panel entries for a session — the in-loop work surface\n"
+            "that tracks non-blocking tool calls (and, later, sub-agent refs).\n\n"
+            "Examples:\n"
+            "  butterfly panel                              Latest session's panel\n"
+            "  butterfly panel 2026-03-25_10-00-00          Specific session\n"
+            "  butterfly panel <ID> --tid bg_abc            Full entry detail\n"
+            "  butterfly panel <ID> --tid bg_abc --output   Dump output_file\n"
+            "  butterfly panel <ID> --tid bg_abc --kill     Mark entry killed\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("session_id", nargs="?", default=argparse.SUPPRESS,
+                   help="Session ID (default: most recently active session)")
+    p.add_argument("--session", dest="session_id", metavar="ID", default=None,
+                   help="Session ID (alias for positional session_id)")
+    p.add_argument("--tid", metavar="TID", default=None,
+                   help="Show detail for a single panel entry")
+    p.add_argument("--kill", action="store_true", default=False,
+                   help="With --tid: mark the entry killed (file-level only)")
+    p.add_argument("--output", action="store_true", default=False,
+                   help="With --tid: print the full output_file contents")
+    p.add_argument("--system-base", type=Path, default=_DEFAULT_SYSTEM_BASE,
+                   help=argparse.SUPPRESS)
+    p.add_argument("--sessions-base", type=Path, default=_DEFAULT_SESSIONS_BASE,
+                   help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_panel)
+
+
+def _resolve_output_file(raw: str | None) -> Path | None:
+    """Resolve PanelEntry.output_file (often relative to repo root)."""
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = _REPO_ROOT / path
+    return path
+
+
+def _last_nonempty_line(path: Path, max_chars: int = 80) -> str:
+    """Return the last non-empty line of a file (truncated), or '' on any failure."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            last = ""
+            for line in fh:
+                stripped = line.rstrip("\n")
+                if stripped.strip():
+                    last = stripped
+        if len(last) > max_chars:
+            return last[: max_chars - 1] + "…"
+        return last
+    except OSError:
+        return ""
+
+
+def cmd_panel(args) -> int:
+    from butterfly.session_engine.panel import (
+        STATUS_KILLED,
+        TERMINAL_STATUSES,
+        list_entries,
+        load_entry,
+        save_entry,
+    )
+
+    session_id = args.session_id
+    if not session_id:
+        sessions = _read_all_sessions(args.sessions_base, args.system_base, exclude_meta=True)
+        if not sessions:
+            print("No sessions found.", file=sys.stderr)
+            return 1
+        session_id = sessions[0]["id"]
+
+    if not (args.system_base / session_id / "manifest.json").exists():
+        print(f"Error: session '{session_id}' not found.", file=sys.stderr)
+        return 2
+
+    panel_dir = args.sessions_base / session_id / "core" / "panel"
+
+    # ── Detail / kill / output mode ─────────────────────────────────────
+    if args.tid:
+        entry = load_entry(panel_dir, args.tid)
+        if entry is None:
+            print(
+                f"Error: no panel entry with tid '{args.tid}' in session '{session_id}'.",
+                file=sys.stderr,
+            )
+            return 2
+
+        output_path = _resolve_output_file(entry.output_file)
+
+        # --output: raw dump, streamed so huge output files don't explode memory.
+        if args.output:
+            if output_path is None or not output_path.exists():
+                print(f"No output file for {entry.tid}.")
+                return 0
+            try:
+                sys.stdout.flush()
+                with output_path.open("rb") as fh:
+                    shutil.copyfileobj(fh, sys.stdout.buffer)
+                sys.stdout.buffer.flush()
+            except OSError as exc:
+                print(f"Error: failed to read {output_path}: {exc}", file=sys.stderr)
+                return 1
+            return 0
+
+        # --kill: mark entry killed on disk only
+        if args.kill:
+            if entry.status in TERMINAL_STATUSES:
+                print(f"{entry.tid} already terminal (status={entry.status}); no change.")
+                return 0
+            entry.status = STATUS_KILLED
+            entry.finished_at = time.time()
+            save_entry(panel_dir, entry)
+            print(
+                f"Marked {entry.tid} killed. If the process is still alive, "
+                f"it may continue until BackgroundTaskManager reaps it on next daemon tick."
+            )
+            return 0
+
+        # Default --tid: pretty JSON + last 40 lines of output + footer.
+        # Use a bounded deque so gigabyte output files don't materialise in
+        # RAM just to extract a 40-line tail.
+        print(json.dumps(entry.to_json(), indent=2, default=str, ensure_ascii=False))
+        if output_path is not None and output_path.exists():
+            tail: collections.deque[str] | None = None
+            try:
+                tail = collections.deque(maxlen=40)
+                with output_path.open("r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        tail.append(line.rstrip("\n"))
+            except OSError as exc:
+                print(f"\n[output_file read error: {exc}]")
+                tail = None
+            if tail is not None:
+                print()
+                print(f"── last {len(tail)} line(s) of {output_path} ──")
+                for line in tail:
+                    print(line)
+            bytes_n = output_path.stat().st_size if output_path.exists() else 0
+            print(f"\n[bytes={bytes_n} output_file={output_path}]")
+        else:
+            print(f"\n[bytes=0 output_file={entry.output_file or '-'}]")
+        return 0
+
+    # ── List mode ───────────────────────────────────────────────────────
+    entries = list_entries(panel_dir)
+    print(f"[{session_id}] panel entries ({len(entries)})")
+    print("─" * 60)
+    if not entries:
+        print("(empty)")
+        return 0
+
+    # Columns: tid (12) tool_name (20) status (18) tail
+    COL = {"tid": 12, "tool": 20, "status": 18}
+    for e in entries:
+        output_path = _resolve_output_file(e.output_file)
+        tail = _last_nonempty_line(output_path) if output_path and output_path.exists() else ""
+        print(
+            f"  {e.tid:<{COL['tid']}}  {e.tool_name:<{COL['tool']}}  "
+            f"[{e.status}]".ljust(COL['status'] + 2)
+            + f"  {tail}"
+        )
+    return 0
+
+
 # ── Subcommand: entity ────────────────────────────────────────────────────────
 
 def _add_entity_parser(subparsers) -> None:
@@ -773,7 +948,8 @@ def main() -> None:
             "  butterfly stop SESSION_ID            Stop a session\n"
             "  butterfly start SESSION_ID           Resume a session\n"
             "  butterfly log [SESSION_ID] [-n N]    Show conversation history\n"
-            "  butterfly tasks [SESSION_ID]         Show session task board\n\n"
+            "  butterfly tasks [SESSION_ID]         Show session task board\n"
+            "  butterfly panel [SESSION_ID]         Show session panel entries\n\n"
             "Entity management:\n"
             "  butterfly entity new                 Scaffold entity interactively\n"
             "  butterfly entity new -n NAME         Scaffold entity by name\n\n"
@@ -792,6 +968,7 @@ def main() -> None:
     _add_start_parser(subparsers)
     _add_log_parser(subparsers)
     _add_tasks_parser(subparsers)
+    _add_panel_parser(subparsers)
     _add_entity_parser(subparsers)
     _add_exec_parser(subparsers, "server", "Start the Butterfly server daemon.")
     _add_exec_parser(subparsers, "web",    "Start the web UI at http://localhost:8080 (monitoring).")

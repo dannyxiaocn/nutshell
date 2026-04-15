@@ -280,122 +280,11 @@ def test_memory_updated_reflects_on_next_load(tmp_path):
     assert "First memory." not in "\n".join(p for p in agent._build_system_parts() if p)
 
 
-# ── Layered memory (core/memory/) ────────────────────────────────────────────
-
-def test_memory_layer_dir_loaded(tmp_path):
-    """Files in core/memory/ are loaded as extra labeled layers."""
-    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
-    session = make_session(tmp_path, agent)
-
-    memory_dir = session.core_dir / "memory"
-    memory_dir.mkdir()
-    (memory_dir / "facts.md").write_text("fact one")
-    session._load_session_capabilities()
-
-    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
-    assert "## Memory: facts" in full_prompt
-    assert "fact one" in full_prompt
-
-
-def test_memory_layers_sorted_order(tmp_path):
-    """core/memory/ files are loaded in sorted (alphabetical) filename order."""
-    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
-    session = make_session(tmp_path, agent)
-
-    memory_dir = session.core_dir / "memory"
-    memory_dir.mkdir()
-    (memory_dir / "beta.md").write_text("beta content")
-    (memory_dir / "alpha.md").write_text("alpha content")
-    (memory_dir / "gamma.md").write_text("gamma content")
-    session._load_session_capabilities()
-
-    names = [name for name, _ in agent.memory_layers]
-    assert names == ["alpha", "beta", "gamma"]
-
-
-def test_memory_layers_empty_files_skipped(tmp_path):
-    """Empty files in core/memory/ are not included as layers."""
-    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
-    session = make_session(tmp_path, agent)
-
-    memory_dir = session.core_dir / "memory"
-    memory_dir.mkdir()
-    (memory_dir / "empty.md").write_text("")
-    (memory_dir / "nonempty.md").write_text("some content")
-    session._load_session_capabilities()
-
-    names = [name for name, _ in agent.memory_layers]
-    assert "empty" not in names
-    assert "nonempty" in names
-
-
-def test_memory_primary_and_layers_both_rendered(tmp_path):
-    """Primary memory.md and core/memory/ layers are both present in the prompt."""
-    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
-    session = make_session(tmp_path, agent)
-
-    session.memory_path.write_text("primary content")
-    memory_dir = session.core_dir / "memory"
-    memory_dir.mkdir()
-    (memory_dir / "extra.md").write_text("extra content")
-    session._load_session_capabilities()
-
-    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
-    assert "## Session Memory" in full_prompt
-    assert "primary content" in full_prompt
-    assert "## Memory: extra" in full_prompt
-    assert "extra content" in full_prompt
-
-
-def test_memory_only_layers_no_primary(tmp_path):
-    """core/memory/ layers work correctly when memory.md is empty."""
-    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
-    session = make_session(tmp_path, agent)
-
-    # memory.md is empty (default)
-    memory_dir = session.core_dir / "memory"
-    memory_dir.mkdir()
-    (memory_dir / "notes.md").write_text("layer note")
-    session._load_session_capabilities()
-
-    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
-    assert "## Memory: notes" in full_prompt
-    assert "layer note" in full_prompt
-    assert "## Session Memory" not in full_prompt
-
-
-def test_no_memory_dir_backward_compat(tmp_path):
-    """When core/memory/ does not exist, behavior is identical to before."""
-    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
-    session = make_session(tmp_path, agent)
-
-    session.memory_path.write_text("legacy memory")
-    session._load_session_capabilities()
-
-    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
-    assert "## Session Memory\n\nlegacy memory" in full_prompt
-    assert agent.memory_layers == []
-
-
-def test_memory_layers_removed_on_next_reload(tmp_path):
-    """Removing core/memory/ files clears stale layers on the next capability reload."""
-    agent = Agent(system_prompt="Base.", provider=MockProvider([]))
-    session = make_session(tmp_path, agent)
-
-    memory_dir = session.core_dir / "memory"
-    memory_dir.mkdir()
-    layer_path = memory_dir / "facts.md"
-    layer_path.write_text("fact one")
-    session._load_session_capabilities()
-    assert agent.memory_layers == [("facts", "fact one")]
-
-    layer_path.unlink()
-    session._load_session_capabilities()
-
-    assert agent.memory_layers == []
-    full_prompt = "\n".join(p for p in agent._build_system_parts() if p)
-    assert "## Memory: facts" not in full_prompt
-    assert "fact one" not in full_prompt
+# ── Layered memory (core/memory/) removed in v2.0.5 ──────────────────────────
+# The `memory_layers` feature was replaced by on-demand `recall_memory` tool;
+# auto-injection of core/memory/*.md into the system prompt is gone.
+# See toolhub/recall_memory/ and tests/butterfly/tool_engine/test_toolhub.py
+# (TestRecallMemoryExecutor) for the new surface.
 
 
 # ── Tool-provider override ────────────────────────────────────────────────────
@@ -527,51 +416,6 @@ async def test_task_compact_marker_recognized_by_reshape_history(tmp_path):
     assert len(agent._history) == 0  # orphan dropped
 
 
-# ── memory layer truncation (_render_memory_layer) ────────────────────────────
-
-def test_render_memory_layer_short_inline():
-    """Layers within the inline limit are injected verbatim."""
-    content = "\n".join(f"line {i}" for i in range(10))
-    result = Agent._render_memory_layer("notes", content)
-    assert result.startswith("## Memory: notes")
-    assert "line 9" in result
-    assert "omitted" not in result
-
-
-def test_render_memory_layer_long_truncated():
-    """Layers exceeding the inline limit show head + truncation hint."""
-    lines = [f"line {i}" for i in range(Agent._MEMORY_LAYER_INLINE_LINES + 20)]
-    content = "\n".join(lines)
-    result = Agent._render_memory_layer("bigfile", content)
-    assert "## Memory: bigfile" in result
-    assert "line 0" in result
-    assert f"line {Agent._MEMORY_LAYER_INLINE_LINES + 5}" not in result
-    assert "omitted" in result
-    assert "cat core/memory/bigfile.md" in result
-
-
-def test_render_memory_layer_exactly_at_limit():
-    """Layers exactly at the limit are NOT truncated."""
-    content = "\n".join(f"x" for _ in range(Agent._MEMORY_LAYER_INLINE_LINES))
-    result = Agent._render_memory_layer("exact", content)
-    assert "omitted" not in result
-
-
-def test_build_system_parts_large_layer_truncated():
-    """_build_system_parts truncates large memory layers in the dynamic suffix."""
-    agent = Agent(system_prompt="sys", provider=None)
-    big_content = "\n".join(f"row {i}" for i in range(Agent._MEMORY_LAYER_INLINE_LINES + 50))
-    agent.memory_layers = [("big", big_content)]
-    _, suffix = agent._build_system_parts()
-    assert "omitted" in suffix
-    assert "cat core/memory/big.md" in suffix
-
-
-def test_build_system_parts_small_layer_not_truncated():
-    """_build_system_parts does NOT truncate small memory layers."""
-    agent = Agent(system_prompt="sys", provider=None)
-    small_content = "\n".join(f"row {i}" for i in range(5))
-    agent.memory_layers = [("small", small_content)]
-    _, suffix = agent._build_system_parts()
-    assert "omitted" not in suffix
-    assert "row 4" in suffix
+# ── memory layer truncation (_render_memory_layer) removed in v2.0.5 ─────────
+# The inline-vs-truncated rendering logic for core/memory/*.md is gone.
+# Sub-memories are now fetched on demand via the recall_memory tool.

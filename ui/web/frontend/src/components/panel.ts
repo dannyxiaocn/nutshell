@@ -1,10 +1,10 @@
 import { store } from '../store';
 import { api } from '../api';
-import type { Params, TaskCard } from '../types';
+import type { Params, PanelEntry, PanelEntryDetail, TaskCard } from '../types';
 import { formatInterval, formatRelative } from '../markdown';
 import { renderTaskEditor } from './taskEditor';
 
-type PanelTab = 'tasks' | 'config';
+type PanelTab = 'tasks' | 'panel' | 'config';
 
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -17,6 +17,9 @@ export function createPanel(): HTMLElement {
   let activeTab: PanelTab = 'tasks';
   let editingTask: TaskCard | null | 'new' = null; // null = not editing, 'new' = new task
   let editingConfig = false;
+  const expandedPanel = new Set<string>(); // tids currently expanded
+  const panelDetails = new Map<string, PanelEntryDetail>(); // tid → latest detail fetch
+  let panelPollTimer: number | null = null;
 
   function render() {
     if (!store.currentSessionId) {
@@ -27,6 +30,7 @@ export function createPanel(): HTMLElement {
     const tabsHtml = `
       <div class="panel-tabs">
         <button class="panel-tab${activeTab === 'tasks' ? ' active' : ''}" data-tab="tasks">Tasks</button>
+        <button class="panel-tab${activeTab === 'panel' ? ' active' : ''}" data-tab="panel">Panel</button>
         <button class="panel-tab${activeTab === 'config' ? ' active' : ''}" data-tab="config">Config</button>
       </div>
     `;
@@ -35,6 +39,8 @@ export function createPanel(): HTMLElement {
 
     if (activeTab === 'tasks') {
       contentHtml = renderTasksTab();
+    } else if (activeTab === 'panel') {
+      contentHtml = renderPanelTab();
     } else {
       contentHtml = renderConfigTab();
     }
@@ -59,9 +65,13 @@ export function createPanel(): HTMLElement {
     // Bind task actions
     if (activeTab === 'tasks') {
       bindTasksTab();
+    } else if (activeTab === 'panel') {
+      bindPanelTab();
     } else {
       bindConfigTab();
     }
+
+    updatePanelPolling();
   }
 
   function renderTasksTab(): string {
@@ -258,8 +268,178 @@ export function createPanel(): HTMLElement {
     content.appendChild(actions);
   }
 
+  // ================= PANEL TAB =================
+
+  function renderPanelTab(): string {
+    const entries = store.panelEntries;
+    if (!entries.length) {
+      return `
+        <div class="tasks-empty">No panel entries yet.</div>
+        <div class="tasks-footer">
+          <button class="btn-sm" id="btn-refresh-panel">↻ Refresh</button>
+        </div>
+      `;
+    }
+    const rowsHtml = entries.map(e => renderPanelRow(e)).join('');
+    return `
+      <div class="task-cards">${rowsHtml}</div>
+      <div class="tasks-footer">
+        <button class="btn-sm" id="btn-refresh-panel">↻ Refresh</button>
+      </div>
+    `;
+  }
+
+  function renderPanelRow(entry: PanelEntry): string {
+    const statusClass = `panel-status-${entry.status}`;
+    const expanded = expandedPanel.has(entry.tid);
+    const detail = panelDetails.get(entry.tid);
+    const tailOneLine = panelTailOneLine(entry, detail);
+    const fullJsonHtml = expanded
+      ? `<pre class="panel-json">${escHtml(JSON.stringify(entryToJsonView(entry, detail), null, 2))}</pre>`
+      : '';
+    const outputTailHtml = expanded
+      ? renderOutputTailBlock(detail)
+      : '';
+    const actionsHtml = expanded
+      ? `
+        <div class="task-card-actions">
+          <button class="btn-sm" data-panel-action="fetch" data-tid="${escHtml(entry.tid)}">Fetch full output</button>
+          <button class="btn-sm" data-panel-action="kill" data-tid="${escHtml(entry.tid)}">Kill</button>
+        </div>
+      `
+      : '';
+
+    return `
+      <div class="task-card panel-row${expanded ? ' expanded' : ''}" data-tid="${escHtml(entry.tid)}">
+        <div class="task-card-header panel-row-header" data-tid="${escHtml(entry.tid)}">
+          <span class="task-status-badge ${statusClass}">${escHtml(entry.status)}</span>
+          <span class="task-name">${escHtml(entry.tool_name)}</span>
+          <span class="hb-pill panel-tid">${escHtml(entry.tid)}</span>
+        </div>
+        <div class="task-preview panel-tail" title="${escHtml(tailOneLine)}">${escHtml(tailOneLine) || '<span class="cfg-null">(no output yet)</span>'}</div>
+        ${fullJsonHtml}
+        ${outputTailHtml}
+        ${actionsHtml}
+      </div>
+    `;
+  }
+
+  function entryToJsonView(entry: PanelEntry, detail: PanelEntryDetail | undefined): Record<string, unknown> {
+    // Prefer the detail payload (same shape + output_tail) if loaded.
+    return detail ? { ...detail } : { ...entry };
+  }
+
+  function renderOutputTailBlock(detail: PanelEntryDetail | undefined): string {
+    if (!detail) {
+      return `<div class="panel-output-tail panel-output-empty">Click “Fetch full output” to load the last 40 lines.</div>`;
+    }
+    if (detail.output_tail == null) {
+      return `<div class="panel-output-tail panel-output-empty">(no output file)</div>`;
+    }
+    return `<pre class="panel-output-tail">${escHtml(detail.output_tail)}</pre>`;
+  }
+
+  function panelTailOneLine(_entry: PanelEntry, detail: PanelEntryDetail | undefined): string {
+    const tail = detail?.output_tail;
+    if (!tail) return '';
+    const lines = tail.split('\n').filter(l => l.length > 0);
+    return lines.length ? lines[lines.length - 1] : '';
+  }
+
+  function bindPanelTab() {
+    el.querySelector('#btn-refresh-panel')?.addEventListener('click', () => {
+      refreshPanel();
+    });
+
+    el.querySelectorAll('.panel-row-header').forEach(hdr => {
+      hdr.addEventListener('click', () => {
+        const tid = (hdr as HTMLElement).dataset.tid;
+        if (!tid) return;
+        if (expandedPanel.has(tid)) {
+          expandedPanel.delete(tid);
+        } else {
+          expandedPanel.add(tid);
+        }
+        render();
+      });
+    });
+
+    el.querySelectorAll('[data-panel-action]').forEach(btn => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const action = (btn as HTMLElement).dataset.panelAction;
+        const tid = (btn as HTMLElement).dataset.tid;
+        const sid = store.currentSessionId;
+        if (!sid || !tid) return;
+        if (action === 'kill') {
+          try {
+            await api.killPanelEntry(sid, tid);
+          } catch (e) {
+            console.error('Failed to kill panel entry:', e);
+            return;
+          }
+          if (store.currentSessionId !== sid) return;
+          await refreshPanel();
+        } else if (action === 'fetch') {
+          try {
+            const detail = await api.getPanelEntry(sid, tid);
+            if (store.currentSessionId !== sid) return;
+            panelDetails.set(tid, detail);
+            render();
+          } catch (e) {
+            console.error('Failed to fetch panel entry:', e);
+          }
+        }
+      });
+    });
+  }
+
+  async function refreshPanel(): Promise<void> {
+    const sid = store.currentSessionId;
+    if (!sid) return;
+    try {
+      const entries = await api.getPanel(sid);
+      if (store.currentSessionId !== sid) return; // stale (Problem 2)
+      store.panelEntries = entries;
+      store.emit('panel');
+      // If user has entries expanded, refresh their details too so the
+      // tail-one-line on the collapsed row and the output block stay fresh.
+      if (activeTab === 'panel' && expandedPanel.size > 0) {
+        await Promise.all([...expandedPanel].map(async tid => {
+          try {
+            const detail = await api.getPanelEntry(sid, tid);
+            if (store.currentSessionId !== sid) return;
+            panelDetails.set(tid, detail);
+          } catch (e) {
+            console.error('Failed to refresh panel detail:', e);
+          }
+        }));
+      }
+      if (activeTab === 'panel') render();
+    } catch (e) {
+      console.error('Failed to refresh panel:', e);
+    }
+  }
+
+  function updatePanelPolling() {
+    const shouldPoll = activeTab === 'panel' && !!store.currentSessionId;
+    if (shouldPoll && panelPollTimer == null) {
+      panelPollTimer = window.setInterval(refreshPanel, 2000);
+      // Fire an immediate refresh so the tab populates without waiting 2s.
+      refreshPanel();
+    } else if (!shouldPoll && panelPollTimer != null) {
+      window.clearInterval(panelPollTimer);
+      panelPollTimer = null;
+    }
+  }
+
+  // ================= STORE WIRING =================
+
   store.on('tasks', () => {
     if (activeTab === 'tasks' && editingTask === null) render();
+  });
+  store.on('panel', () => {
+    if (activeTab === 'panel') render();
   });
   store.on('config', () => {
     if (activeTab === 'config' && !editingConfig) render();
@@ -267,6 +447,9 @@ export function createPanel(): HTMLElement {
   store.on('currentSession', () => {
     editingTask = null;
     editingConfig = false;
+    expandedPanel.clear();
+    panelDetails.clear();
+    store.panelEntries = [];
     render();
   });
 

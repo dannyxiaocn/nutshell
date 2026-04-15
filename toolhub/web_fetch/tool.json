@@ -1,0 +1,21 @@
+{
+  "name": "web_fetch",
+  "description": "Fetch a URL and return its main text content (article extraction). Returns a readable summary with title + body, without nav/ads/markup.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "format": "uri",
+        "pattern": "^https?://",
+        "description": "The URL to fetch. Must start with http:// or https://. Loopback, link-local, private (RFC1918), and metadata addresses are refused by the runtime SSRF guard."
+      },
+      "max_chars": {
+        "type": "integer",
+        "description": "Maximum characters of extracted body text to return. Default: 20000.",
+        "minimum": 100
+      }
+    },
+    "required": ["url"]
+  }
+}
