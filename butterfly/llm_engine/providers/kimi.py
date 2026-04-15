@@ -40,21 +40,6 @@ from butterfly.llm_engine.providers.openai_api import (
 )
 
 
-# Canonical env var for the Kimi For Coding API key. Shared by both provider
-# variants. The provider ONLY supports this path — there is no ``KIMI_API_KEY``
-# / ``MOONSHOT_API_KEY`` fallback.
-_KIMI_ENV_KEY = "KIMI_FOR_CODING_API_KEY"
-
-# Dashboard URL surfaced by ``butterfly kimi login`` when asking the user to
-# paste a key. Kept here so the CLI helper and any future tooling read the
-# same source of truth.
-_KIMI_DASHBOARD_URL = "https://platform.moonshot.ai/console/api-keys"
-
-# Default model used for the login-helper validation ping. Real sessions pick
-# their own model via entity config; this only needs to be a valid Kimi For
-# Coding model slug that accepts a 16-token echo request.
-_KIMI_DEFAULT_VERIFY_MODEL = "kimi-k2-turbo-preview"
-
 # The Anthropic-compatible surface lives at the root of ``/coding/``; the
 # anthropic SDK appends ``/v1/messages`` itself.
 _KIMI_ANTHROPIC_BASE_URL = "https://api.kimi.com/coding/"
@@ -76,10 +61,10 @@ def _resolve_kimi_api_key(explicit: str | None, *, provider_label: str) -> str:
     ``/coding/`` gateway. Fail-fast on missing key prevents the SDK from
     raising an opaque "auth method unresolved" error at first-request time.
     """
-    resolved = explicit or os.environ.get(_KIMI_ENV_KEY)
+    resolved = explicit or os.environ.get("KIMI_FOR_CODING_API_KEY")
     if not resolved:
         raise AuthError(
-            f"{provider_label} requires {_KIMI_ENV_KEY} to be set, "
+            f"{provider_label} requires KIMI_FOR_CODING_API_KEY to be set, "
             "or an explicit api_key argument.",
             provider="kimi-coding-plan",
             status=401,
@@ -199,12 +184,11 @@ class KimiOpenAIProvider(OpenAIProvider):
 # Back-compat shim
 # ---------------------------------------------------------------------------
 
-# Older code (entity configs, live sessions, external callers, the
-# ``butterfly kimi login`` helper) imports ``KimiForCodingProvider`` directly.
-# The class has been split in two; keep the historical name as an alias to
-# the Anthropic variant so existing sessions and the login-verify ping keep
-# working unchanged. Callers that want the new default should import
-# ``KimiOpenAIProvider`` explicitly or resolve via the registry key
+# Older code (entity configs, live sessions, external callers) imports
+# ``KimiForCodingProvider`` directly. The class has been split in two; keep
+# the historical name as an alias to the Anthropic variant so existing
+# sessions keep working unchanged. Callers that want the new default should
+# import ``KimiOpenAIProvider`` explicitly or resolve via the registry key
 # ``kimi-coding-plan`` (which now points at the OpenAI variant).
 KimiForCodingProvider = KimiAnthropicProvider
 
@@ -212,9 +196,6 @@ __all__ = [
     "KimiAnthropicProvider",
     "KimiOpenAIProvider",
     "KimiForCodingProvider",
-    "_KIMI_ENV_KEY",
-    "_KIMI_DASHBOARD_URL",
-    "_KIMI_DEFAULT_VERIFY_MODEL",
     "_KIMI_ANTHROPIC_BASE_URL",
     "_KIMI_OPENAI_BASE_URL",
     "_KIMI_BASE_URL",
