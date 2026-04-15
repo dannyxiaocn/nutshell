@@ -22,10 +22,11 @@ from butterfly.llm_engine.errors import (
     BadRequestError,
     ContextWindowExceededError,
     ProviderError,
+    ProviderTimeoutError,
     RateLimitError,
     ServerError,
 )
-from butterfly.llm_engine.providers._common import _parse_json_args
+from butterfly.llm_engine.providers._common import _parse_json_args, stringify_tool_result_content
 
 if TYPE_CHECKING:
     from butterfly.core.types import Message
@@ -77,6 +78,13 @@ class OpenAIResponsesProvider(Provider):
         blocks = self._pending_reasoning
         self._pending_reasoning = []
         return blocks
+
+    async def aclose(self) -> None:
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
 
     async def complete(
         self,
@@ -337,14 +345,7 @@ def _convert_tool_result(msg: "Message") -> list[dict[str, Any]]:
     for block in content:
         if isinstance(block, dict) and block.get("type") == "tool_result":
             tool_use_id = block.get("tool_use_id", "")
-            inner = block.get("content", "")
-            if isinstance(inner, list):
-                text = "".join(
-                    b.get("text", "") for b in inner
-                    if isinstance(b, dict) and b.get("type") == "text"
-                )
-            else:
-                text = str(inner)
+            text = stringify_tool_result_content(block.get("content", ""))
             result.append({
                 "type": "function_call_output",
                 "call_id": tool_use_id,
@@ -549,7 +550,7 @@ def _maybe_raise_mapped_openai_error(exc: BaseException) -> None:
             status=status,
         ) from exc
     if exc_name in ("APITimeoutError",) or "timeout" in lowered:
-        raise ProviderError(
+        raise ProviderTimeoutError(
             f"OpenAI Responses timed out: {message}",
             provider="openai-responses",
             status=status,

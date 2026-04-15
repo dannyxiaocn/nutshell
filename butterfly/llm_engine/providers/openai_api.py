@@ -16,10 +16,11 @@ from butterfly.llm_engine.errors import (
     BadRequestError,
     ContextWindowExceededError,
     ProviderError,
+    ProviderTimeoutError,
     RateLimitError,
     ServerError,
 )
-from butterfly.llm_engine.providers._common import _parse_json_args
+from butterfly.llm_engine.providers._common import _parse_json_args, stringify_tool_result_content
 
 if TYPE_CHECKING:
     from butterfly.core.types import Message
@@ -83,6 +84,13 @@ class OpenAIProvider(Provider):
 
         self._client = AsyncOpenAI(**client_kwargs)
         self.max_tokens = max_tokens
+
+    async def aclose(self) -> None:
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
 
     async def complete(
         self,
@@ -298,27 +306,9 @@ def _build_messages(
     return result
 
 
-def _stringify_tool_result(content: Any) -> str:
-    """Flatten a tool-result content list to a string for Chat Completions.
-
-    Only ``text`` blocks are forwarded verbatim. Non-text blocks (images,
-    documents, opaque dicts) would leak their ``dict.__repr__`` if we
-    ``str(...)``'d them — instead we drop them with a labeled placeholder
-    so the resulting string stays readable by the model.
-    """
-    if isinstance(content, list):
-        parts = []
-        for b in content:
-            if isinstance(b, dict) and b.get("type") == "text":
-                parts.append(b.get("text", ""))
-            elif isinstance(b, str):
-                parts.append(b)
-            elif isinstance(b, dict):
-                btype = b.get("type", "unknown")
-                parts.append(f"[{btype} block omitted]")
-            # silently drop other shapes
-        return "".join(parts)
-    return str(content)
+# Kept for backwards-compat test imports; delegates to the shared helper
+# so rendering is byte-for-byte identical to codex / openai_responses.
+_stringify_tool_result = stringify_tool_result_content
 
 
 def _tool_to_openai(tool: "Tool") -> dict[str, Any]:
@@ -440,7 +430,7 @@ def _maybe_raise_mapped_openai_error(exc: BaseException) -> None:
             f"OpenAI bad request: {message}", provider="openai", status=status
         ) from exc
     if exc_name in ("APITimeoutError",) or "timeout" in lowered:
-        raise ProviderError(
+        raise ProviderTimeoutError(
             f"OpenAI request timed out: {message}", provider="openai", status=status
         ) from exc
     if status and 500 <= status < 600:

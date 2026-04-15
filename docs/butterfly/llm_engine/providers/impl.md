@@ -48,10 +48,19 @@ Every concrete provider inherits `Provider.consume_extra_blocks()` from the ABC 
 | `RateLimitError` | 429 with optional `retry_after` |
 | `ContextWindowExceededError` | server-reported context-length stop |
 | `BadRequestError` | 400 (malformed request) |
+| `ProviderTimeoutError` | client-side or server-side timeout (renamed from `TimeoutError` in v2.0.4 to stop shadowing the Python builtin) |
 | `ServerError` | 5xx (transient) |
 | `ProviderError` | base — fallback for unclassified failures |
 
-Codex parses `response.failed` events into this taxonomy; HTTP non-200 statuses are routed through `_raise_from_status`.
+`str(err)` on any of these renders the message plus a `[provider=… status=…]` tag (and `[retry_after=Ns]` on rate-limits) so logs carry full context without callers having to inspect attributes. Codex parses `response.failed` events into this taxonomy; HTTP non-200 statuses are routed through `_raise_from_status`.
+
+## Lifecycle
+
+Every provider implements `async def aclose(self) -> None`. The base class default is a no-op; `AnthropicProvider`, `OpenAIProvider`, and `OpenAIResponsesProvider` forward to the underlying SDK client's `close()`. `Agent.aclose()` clears history and closes the primary + fallback providers, swallowing per-provider errors so one failure doesn't strand the other's resources. The legacy synchronous `Agent.close()` only clears history — use `aclose()` for full cleanup.
+
+## Tool-result rendering
+
+`butterfly/llm_engine/providers/_common.py::stringify_tool_result_content` is the single source of truth for converting a `tool_result` block payload to a flat string. All three providers (Codex, OpenAI Responses, OpenAI Chat Completions) call it directly, so the same payload renders identically regardless of which backend receives it. Rules: `text` blocks pass through; non-text dict blocks become `[<type> block omitted]` (no `dict.__repr__` leakage); plain string entries pass through; other shapes are dropped.
 
 ## TokenUsage
 

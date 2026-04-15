@@ -42,10 +42,11 @@ from butterfly.llm_engine.errors import (
     BadRequestError,
     ContextWindowExceededError,
     ProviderError,
+    ProviderTimeoutError,
     RateLimitError,
     ServerError,
 )
-from butterfly.llm_engine.providers._common import _parse_json_args
+from butterfly.llm_engine.providers._common import _parse_json_args, stringify_tool_result_content
 
 if TYPE_CHECKING:
     from butterfly.core.types import Message
@@ -186,7 +187,7 @@ class CodexProvider(Provider):
                         self._pending_reasoning = reasoning_items
                         return text, tool_calls, usage
                 except httpx.TimeoutException as exc:
-                    raise ProviderError(
+                    raise ProviderTimeoutError(
                         f"Codex request timed out: {exc}", provider="codex-oauth"
                     ) from exc
 
@@ -544,14 +545,7 @@ def _convert_tool_result(msg: "Message") -> list[dict[str, Any]]:
     for block in content:
         if isinstance(block, dict) and block.get("type") == "tool_result":
             tool_use_id = block.get("tool_use_id", "")
-            inner = block.get("content", "")
-            if isinstance(inner, list):
-                text = "".join(
-                    b.get("text", "") for b in inner
-                    if isinstance(b, dict) and b.get("type") == "text"
-                )
-            else:
-                text = str(inner)
+            text = stringify_tool_result_content(block.get("content", ""))
             result.append({
                 "type": "function_call_output",
                 "call_id": tool_use_id,
@@ -575,6 +569,94 @@ async def _parse_sse_stream(
     reasoning_items: list[dict[str, Any]] = []
     usage = TokenUsage()
 
+    def _process_block(block: str) -> None:
+        """Parse one SSE block (text up to a \\n\\n boundary) and apply events."""
+        nonlocal current_tc_id, usage
+        data_lines = [
+            line[5:].strip()
+            for line in block.splitlines()
+            if line.startswith("data:")
+        ]
+        for data in data_lines:
+            if not data or data == "[DONE]":
+                continue
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
+            etype = event.get("type", "")
+
+            if etype == "response.output_item.added":
+                item = event.get("item", {})
+                if item.get("type") == "function_call":
+                    call_id = item.get("call_id", str(uuid.uuid4()))
+                    tc_map[call_id] = {"name": item.get("name", ""), "args": ""}
+                    current_tc_id = call_id
+
+            elif etype == "response.function_call_arguments.delta":
+                delta_call_id = event.get("call_id") or current_tc_id
+                if delta_call_id and delta_call_id in tc_map:
+                    tc_map[delta_call_id]["args"] += event.get("delta", "")
+
+            elif etype == "response.output_item.done":
+                item = event.get("item", {})
+                itype = item.get("type", "")
+                if itype == "function_call":
+                    call_id = item.get("call_id", "")
+                    if call_id in tc_map:
+                        tc_map[call_id]["args"] = item.get("arguments", tc_map[call_id]["args"])
+                    current_tc_id = None
+                elif itype == "reasoning":
+                    captured: dict[str, Any] = {
+                        "type": "reasoning",
+                        "id": item.get("id") or "",
+                        "summary": item.get("summary") or [],
+                    }
+                    if "encrypted_content" in item:
+                        captured["encrypted_content"] = item["encrypted_content"]
+                    reasoning_items.append(captured)
+
+            elif etype == "response.output_text.delta":
+                delta = event.get("delta", "")
+                if delta:
+                    text_parts.append(delta)
+                    if on_text_chunk:
+                        on_text_chunk(delta)
+
+            elif etype == "response.reasoning_text.delta":
+                delta = event.get("delta", "")
+                if delta and on_text_chunk:
+                    on_text_chunk(delta)
+
+            elif etype == "response.reasoning_summary_text.delta":
+                delta = event.get("delta", "")
+                if delta and on_text_chunk:
+                    on_text_chunk(delta)
+
+            elif etype in ("response.completed", "response.done"):
+                resp_data = event.get("response", {})
+                usage = _extract_usage(resp_data.get("usage") or {})
+
+            elif etype == "response.incomplete":
+                resp_data = event.get("response", {})
+                reason = (
+                    (resp_data.get("incomplete_details") or {}).get("reason")
+                    or event.get("incomplete_details", {}).get("reason")
+                    or "incomplete"
+                )
+                if reason == "context_length":
+                    raise ContextWindowExceededError(
+                        "Codex response incomplete: context length exceeded",
+                        provider="codex-oauth",
+                    )
+                raise ProviderError(
+                    f"Codex response incomplete: {reason}", provider="codex-oauth"
+                )
+
+            elif etype in ("error", "response.failed"):
+                _raise_stream_error(event)
+
     buffer = ""
     async for raw_chunk in resp.aiter_bytes():
         buffer += raw_chunk.decode("utf-8", errors="replace")
@@ -588,90 +670,14 @@ async def _parse_sse_stream(
             )
         while "\n\n" in buffer:
             block, buffer = buffer.split("\n\n", 1)
-            data_lines = [
-                line[5:].strip()
-                for line in block.splitlines()
-                if line.startswith("data:")
-            ]
-            for data in data_lines:
-                if not data or data == "[DONE]":
-                    continue
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+            _process_block(block)
 
-                etype = event.get("type", "")
-
-                if etype == "response.output_item.added":
-                    item = event.get("item", {})
-                    if item.get("type") == "function_call":
-                        call_id = item.get("call_id", str(uuid.uuid4()))
-                        tc_map[call_id] = {"name": item.get("name", ""), "args": ""}
-                        current_tc_id = call_id
-
-                elif etype == "response.function_call_arguments.delta":
-                    delta_call_id = event.get("call_id") or current_tc_id
-                    if delta_call_id and delta_call_id in tc_map:
-                        tc_map[delta_call_id]["args"] += event.get("delta", "")
-
-                elif etype == "response.output_item.done":
-                    item = event.get("item", {})
-                    itype = item.get("type", "")
-                    if itype == "function_call":
-                        call_id = item.get("call_id", "")
-                        if call_id in tc_map:
-                            tc_map[call_id]["args"] = item.get("arguments", tc_map[call_id]["args"])
-                        current_tc_id = None
-                    elif itype == "reasoning":
-                        captured: dict[str, Any] = {
-                            "type": "reasoning",
-                            "id": item.get("id") or "",
-                            "summary": item.get("summary", []),
-                        }
-                        if "encrypted_content" in item:
-                            captured["encrypted_content"] = item["encrypted_content"]
-                        reasoning_items.append(captured)
-
-                elif etype == "response.output_text.delta":
-                    delta = event.get("delta", "")
-                    if delta:
-                        text_parts.append(delta)
-                        if on_text_chunk:
-                            on_text_chunk(delta)
-
-                elif etype == "response.reasoning_text.delta":
-                    delta = event.get("delta", "")
-                    if delta and on_text_chunk:
-                        on_text_chunk(delta)
-
-                elif etype == "response.reasoning_summary_text.delta":
-                    delta = event.get("delta", "")
-                    if delta and on_text_chunk:
-                        on_text_chunk(delta)
-
-                elif etype in ("response.completed", "response.done"):
-                    resp_data = event.get("response", {})
-                    usage = _extract_usage(resp_data.get("usage") or {})
-
-                elif etype == "response.incomplete":
-                    resp_data = event.get("response", {})
-                    reason = (
-                        (resp_data.get("incomplete_details") or {}).get("reason")
-                        or event.get("incomplete_details", {}).get("reason")
-                        or "incomplete"
-                    )
-                    if reason == "context_length":
-                        raise ContextWindowExceededError(
-                            "Codex response incomplete: context length exceeded",
-                            provider="codex-oauth",
-                        )
-                    raise ProviderError(
-                        f"Codex response incomplete: {reason}", provider="codex-oauth"
-                    )
-
-                elif etype in ("error", "response.failed"):
-                    _raise_stream_error(event)
+    # Bug 1: the connection may close mid-event without sending the final
+    # \n\n. Try to parse the remaining buffer as one last event so we don't
+    # silently drop a tail event (e.g. the final response.completed). If the
+    # remaining JSON is malformed, _process_block silently skips it.
+    if buffer.strip():
+        _process_block(buffer)
 
     text = "".join(text_parts)
     tool_calls = [

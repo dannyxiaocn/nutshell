@@ -37,6 +37,13 @@ class AnthropicProvider(Provider):
         self._client = _anthropic.AsyncAnthropic(**client_kwargs)
         self.max_tokens = max_tokens
 
+    async def aclose(self) -> None:
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+
     async def complete(
         self,
         messages: list[Message],

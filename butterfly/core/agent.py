@@ -265,7 +265,8 @@ class Agent:
                     thinking_effort=self.thinking_effort,
                 )
             total_usage = total_usage + turn_usage
-            on_text_chunk = None
+            # Bug 26: preserve on_text_chunk so every turn in a multi-step
+            # tool loop streams to the caller, not just the first call.
 
             extra_blocks = active_provider.consume_extra_blocks()
 
@@ -309,8 +310,28 @@ class Agent:
         return result
 
     def close(self) -> None:
-        """Clear conversation history."""
+        """Clear conversation history. Synchronous; does not release HTTP pools.
+
+        For full cleanup (closing the provider's underlying SDK / HTTP pool),
+        await ``aclose()`` instead.
+        """
         self._history = []
+
+    async def aclose(self) -> None:
+        """Async cleanup: clear history and close primary + fallback providers.
+
+        Safe to call multiple times. Errors during provider close are
+        swallowed individually so one failing provider doesn't strand the
+        other's resources.
+        """
+        self._history = []
+        for prov in (self._provider, self._fallback_provider):
+            if prov is None:
+                continue
+            try:
+                await prov.aclose()
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                _log.debug("provider aclose failed", exc_info=True)
 
 
 async def _execute_tools(
