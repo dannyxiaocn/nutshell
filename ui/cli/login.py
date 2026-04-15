@@ -127,7 +127,22 @@ def _verify_codex_auth() -> int:
         print(f"Error: could not parse {path}: {exc}", file=sys.stderr)
         return 1
 
+    if not isinstance(data, dict):
+        print(
+            f"Error: {path} has unexpected shape (expected JSON object, "
+            f"got {type(data).__name__}).",
+            file=sys.stderr,
+        )
+        return 1
+
     tokens = data.get("tokens") or {}
+    if not isinstance(tokens, dict):
+        print(
+            f"Error: {path} has a non-object `tokens` field (got "
+            f"{type(tokens).__name__}).",
+            file=sys.stderr,
+        )
+        return 1
     access = tokens.get("access_token")
     refresh = tokens.get("refresh_token")
     if not access or not refresh:
@@ -234,7 +249,9 @@ def _kimi_login(
     print(f"  Env file:  {env_file}")
     print()
 
-    if key_arg:
+    if key_arg is not None:
+        # An explicit ``--key`` (even an empty one) signals non-interactive
+        # intent — never silently fall through to a blocking getpass prompt.
         key = key_arg.strip()
     else:
         if existing:
@@ -303,7 +320,10 @@ def _prompt_secret(msg: str) -> str:
 def _write_env_key(env_file: Path, key: str, value: str) -> None:
     """Upsert ``key=value`` in *env_file*, creating the file if absent.
 
-    Preserves other lines verbatim. Sets file mode to ``0600``.
+    Preserves other lines verbatim. The file is created with mode ``0600``
+    atomically — we write to a sibling temp file opened with ``O_CREAT|O_EXCL``
+    at mode ``0o600`` and then ``os.replace`` it into place, so the secrets
+    file never exists on disk with broader perms.
     """
     env_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -327,7 +347,35 @@ def _write_env_key(env_file: Path, key: str, value: str) -> None:
     if not found:
         lines.append(new_line)
 
-    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    payload = ("\n".join(lines) + "\n").encode("utf-8")
+
+    # Atomic-create-with-0600 → write → replace. On POSIX, O_EXCL guarantees
+    # we own the inode and the requested mode is honoured (modulo umask, which
+    # we further pin via fchmod for safety on systems with restrictive umasks).
+    tmp_path = env_file.with_suffix(env_file.suffix + ".tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    try:
+        flags |= os.O_NOFOLLOW  # don't follow symlinks for the temp slot
+    except AttributeError:  # pragma: no cover — non-POSIX
+        pass
+    fd = os.open(tmp_path, flags, 0o600)
+    try:
+        try:
+            os.fchmod(fd, 0o600)  # enforce 0600 even if umask broadened it
+        except (AttributeError, OSError):  # pragma: no cover — Windows
+            pass
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+    except Exception:
+        # Don't leave a stray temp file behind on failure.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    os.replace(tmp_path, env_file)
+    # `os.replace` preserves the temp file's perms (0600) on POSIX; tighten
+    # again as a belt-and-braces guard for filesystems that don't honour it.
     try:
         os.chmod(env_file, 0o600)
     except OSError:
