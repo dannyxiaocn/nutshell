@@ -27,7 +27,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 
-_USER_AGENT = "ButterflyAgent/2.0.5 (+https://github.com/dannyxiaocn/butterfly-agent)"
+_USER_AGENT = "ButterflyAgent/2.0.10 (+https://github.com/dannyxiaocn/butterfly-agent)"
 _TIMEOUT_SECONDS = 30
 _DEFAULT_MAX_CHARS = 20000
 # Hard cap on the raw bytes downloaded per fetch. Prevents memory exhaustion

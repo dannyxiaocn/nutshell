@@ -9,7 +9,8 @@
 | `anthropic` | `AnthropicProvider` | `ANTHROPIC_API_KEY` |
 | `openai` | `OpenAIProvider` (Chat Completions) | `OPENAI_API_KEY` |
 | `openai-responses` | `OpenAIResponsesProvider` | `OPENAI_API_KEY` |
-| `kimi-coding-plan` | `KimiForCodingProvider` | `KIMI_FOR_CODING_API_KEY` |
+| `kimi-coding-plan` | `KimiOpenAIProvider` (default) | `KIMI_FOR_CODING_API_KEY` |
+| `kimi-coding-plan-anthropic` | `KimiAnthropicProvider` | `KIMI_FOR_CODING_API_KEY` |
 | `codex-oauth` | `CodexProvider` | `codex login` → `~/.codex/auth.json` |
 
 Usage:
@@ -25,7 +26,8 @@ Pick `openai-responses` for o-series / gpt-5 reasoning models; it uses the Respo
 | Provider | `thinking` | `thinking_budget` | `thinking_effort` |
 |----------|-----------|-------------------|-------------------|
 | `anthropic` | ✓ | ✓ | ignored |
-| `kimi-coding-plan` | ✓ | ignored | ignored |
+| `kimi-coding-plan` (OpenAI-compat) | ✓ | ignored | ignored |
+| `kimi-coding-plan-anthropic` | ✓ | ignored | ignored |
 | `openai` (Chat Completions) | ✓ (reasoning models only) | ignored | ✓ → `reasoning_effort` |
 | `openai-responses` | ✓ | ignored | ✓ → `reasoning.effort` |
 | `codex-oauth` | ✓ | ignored | ✓ |
