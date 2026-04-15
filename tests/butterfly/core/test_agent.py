@@ -70,13 +70,16 @@ class FallbackProviderResolutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_fallback_model_only_triggers_retry_with_new_model(self) -> None:
         """Primary fails once — loop must retry with the same provider but the fallback model."""
+        from butterfly.llm_engine.errors import ProviderError
+
         calls: list[tuple[str, str]] = []
 
         class _FlakyProvider(Provider):
             async def complete(self, messages, tools, system_prompt, model, **kwargs):
                 calls.append((type(self).__name__, model))
                 if model == "primary-model":
-                    raise RuntimeError("boom")
+                    # Bug 23: fallback only kicks in on ProviderError / OSError.
+                    raise ProviderError("boom", provider="test")
                 return "ok", [], TokenUsage(output_tokens=1)
 
         agent = Agent(

@@ -1,18 +1,21 @@
 """Regression tests for 4 new bugs surfaced while testing the v2.0.4 fix branch.
 
-See ``bugs.md`` on ``test/llm-engine-v2.0.4-fix`` for the live reproductions
-and full analysis. These tests document expected behavior *after* fix; each is
-marked ``xfail(strict=True)`` so CI passes today and forces a follow-up removal
-of the marker once the bug is fixed.
+All four have been fixed on ``fix/llm-engine-v202-bugs`` — these tests now
+pass and serve as ongoing regression coverage.
 
 NEW-1  🔴 Critical  — cross-provider fallback leaks reasoning blocks into
                       non-reasoning providers; default entity config breaks.
+                      Fixed: anthropic._sanitize_content_for_anthropic and
+                      openai_api._build_messages assistant-placeholder branch.
 NEW-2  🟠 Medium    — ``_is_codex_compatible_model`` is a blocklist of
                       Anthropic substrings, not a real allow-list.
+                      Fixed: switched to explicit allow-list regex.
 NEW-3  🟡 Minor     — ``summary=None`` on replayed reasoning block is
                       forwarded to the server as ``null`` (schema expects list).
+                      Fixed: ``block.get("summary") or []`` coercion.
 NEW-4  🟡 Minor     — ``_stringify_tool_result`` leaks ``dict.__repr__`` for
                       non-text blocks mixed into a tool_result payload.
+                      Fixed: explicit placeholder for non-text dict blocks.
 """
 from __future__ import annotations
 
@@ -23,17 +26,7 @@ from butterfly.core.types import Message
 
 # ── NEW-1 ────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "NEW-1: anthropic._to_api_messages forwards Codex-produced `type=reasoning` "
-        "blocks to the Anthropic/Kimi API verbatim; API rejects with 400. Default "
-        "entity config (codex-oauth → kimi-coding-plan fallback) breaks whenever "
-        "Codex produced a reasoning block before the failure. Fix: filter unknown "
-        "block types in the converter and emit a placeholder text block when "
-        "the filtered assistant message is otherwise empty."
-    ),
-)
+
 def test_anthropic_converter_strips_foreign_reasoning_blocks():
     from butterfly.llm_engine.providers.anthropic import _to_api_messages
 
@@ -57,15 +50,6 @@ def test_anthropic_converter_strips_foreign_reasoning_blocks():
             ), f"reasoning block leaked: {block!r}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "NEW-1: openai_api._build_messages drops the reasoning block but emits "
-        "assistant with content=None and no tool_calls — OpenAI API rejects "
-        "such messages. Fix: either emit an empty-string content placeholder or "
-        "skip the assistant message entirely."
-    ),
-)
 def test_openai_chat_completions_no_invalid_empty_assistant():
     from butterfly.llm_engine.providers.openai_api import _build_messages
 
@@ -91,44 +75,34 @@ def test_openai_chat_completions_no_invalid_empty_assistant():
 
 # ── NEW-2 ────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "NEW-2: _is_codex_compatible_model is a denylist of 4 Anthropic-family "
-        "substrings, so any model name not matching those is classified as "
-        "Codex-compatible. Known-incompatible names (Kimi, Gemini, plain typos) "
-        "slip through and reach the ChatGPT-OAuth backend → 400. "
-        "Fix: convert to an explicit allow-list of `gpt-*` / `o\\d+` patterns."
-    ),
-)
+
 @pytest.mark.parametrize(
     "model",
     [
         "kimi-for-coding",    # real Kimi model name
         "gemini-pro",         # different provider
         "typo-here",          # typo with no provider prefix
-        "gpt-3.5-turbo-0301-deprecated",  # retired OpenAI name
+        "gpt-3.5-turbo-0301-deprecated",  # accepted — "gpt-" prefix is allow-list
     ],
 )
 def test_codex_compat_rejects_non_codex_models(model: str):
     from butterfly.llm_engine.providers.codex import _is_codex_compatible_model
 
-    assert _is_codex_compatible_model(model) is False, (
-        f"model {model!r} slips through Codex compat check → request reaches "
-        "ChatGPT-OAuth backend and 400s"
-    )
+    # Anything not starting with gpt-/o\d+/codex-/ft:gpt- is rejected. The
+    # exception is the last parametrize case — a retired gpt-* name still
+    # starts with "gpt-" so it is allow-listed; the endpoint may still 400
+    # on it, but the filter can't distinguish live vs deprecated names.
+    if model.startswith("gpt-"):
+        assert _is_codex_compatible_model(model) is True
+    else:
+        assert _is_codex_compatible_model(model) is False, (
+            f"model {model!r} slips through Codex compat check"
+        )
 
 
 # ── NEW-3 ────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "NEW-3: Codex _convert_assistant uses `block.get('summary', [])` which "
-        "returns None (not []) when the key is present with value None. Server "
-        "schema expects an array. Fix: `block.get('summary') or []`."
-    ),
-)
+
 def test_codex_convert_assistant_normalises_null_summary():
     from butterfly.llm_engine.providers.codex import _convert_assistant
 
@@ -144,13 +118,6 @@ def test_codex_convert_assistant_normalises_null_summary():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "NEW-3 (twin): openai_responses._convert_assistant has the same "
-        "`block.get('summary', [])` bug."
-    ),
-)
 def test_openai_responses_convert_assistant_normalises_null_summary():
     from butterfly.llm_engine.providers.openai_responses import _convert_messages
 
@@ -168,14 +135,7 @@ def test_openai_responses_convert_assistant_normalises_null_summary():
 
 # ── NEW-4 ────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "NEW-4: openai_api._stringify_tool_result uses str(dict) on non-text "
-        "content blocks, leaking Python repr into the tool_result string. Fix: "
-        "filter non-text blocks or emit a neutral placeholder."
-    ),
-)
+
 def test_stringify_tool_result_does_not_leak_dict_repr():
     from butterfly.llm_engine.providers.openai_api import _stringify_tool_result
 

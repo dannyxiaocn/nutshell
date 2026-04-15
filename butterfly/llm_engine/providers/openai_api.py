@@ -11,6 +11,14 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 from butterfly.core.provider import Provider
 from butterfly.core.types import TokenUsage, ToolCall
+from butterfly.llm_engine.errors import (
+    AuthError,
+    BadRequestError,
+    ContextWindowExceededError,
+    ProviderError,
+    RateLimitError,
+    ServerError,
+)
 from butterfly.llm_engine.providers._common import _parse_json_args
 
 if TYPE_CHECKING:
@@ -20,10 +28,15 @@ if TYPE_CHECKING:
 
 # Reasoning-family models want ``max_completion_tokens`` and ``reasoning_effort``,
 # and reject ``temperature`` / ``top_p`` / ``presence_penalty`` / ``frequency_penalty``.
-_REASONING_MODEL_RE = re.compile(r"^(o\d|gpt-5|gpt-oss)", re.IGNORECASE)
+# Anchor on word-boundary after the family token so "gpt-5x-legacy" / "gpt-oss-custom"
+# do NOT match — only real family names like "gpt-5", "gpt-5.4", "gpt-5-codex", "o3-mini".
+_REASONING_MODEL_RE = re.compile(r"^(o\d+(?:$|-)|gpt-5(?:$|\.|-)|gpt-oss(?:$|-))", re.IGNORECASE)
 
 # Valid reasoning_effort values per OpenAI schema.
 _OPENAI_EFFORTS = {"minimal", "low", "medium", "high", "xhigh", "none"}
+
+# Params the Chat Completions API rejects on reasoning models.
+_REASONING_DISALLOWED_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty", "logprobs", "top_logprobs")
 
 
 def _is_reasoning_model(model: str) -> bool:
@@ -99,9 +112,13 @@ class OpenAIProvider(Provider):
         if api_tools:
             kwargs["tools"] = api_tools
 
-        if on_text_chunk is not None:
-            return await self._stream_complete(kwargs, on_text_chunk)
-        return await self._non_stream_complete(kwargs)
+        try:
+            if on_text_chunk is not None:
+                return await self._stream_complete(kwargs, on_text_chunk)
+            return await self._non_stream_complete(kwargs)
+        except Exception as exc:  # noqa: BLE001 - mapped below
+            _maybe_raise_mapped_openai_error(exc)
+            raise
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -178,14 +195,19 @@ def _apply_model_specific_params(
     """Normalize per-model Chat Completions params.
 
     Reasoning-family models (o-series, gpt-5) want ``max_completion_tokens`` +
-    ``reasoning_effort`` and reject ``temperature`` / ``top_p``. For everything
-    else we keep the legacy ``max_tokens``.
+    ``reasoning_effort`` and reject ``temperature`` / ``top_p`` /
+    ``presence_penalty`` / ``frequency_penalty`` / ``logprobs``. We scrub
+    those unconditionally so upstream defaults or accidentally-passed params
+    don't 400 the request. Legacy models keep ``max_tokens``.
     """
     if _is_reasoning_model(model):
         kwargs["max_completion_tokens"] = max_tokens
+        for disallowed in _REASONING_DISALLOWED_PARAMS:
+            kwargs.pop(disallowed, None)
         if thinking:
             effort = thinking_effort if thinking_effort in _OPENAI_EFFORTS else "medium"
-            kwargs["reasoning_effort"] = effort
+            if effort != "none":
+                kwargs["reasoning_effort"] = effort
     else:
         kwargs["max_tokens"] = max_tokens
 
@@ -242,9 +264,17 @@ def _build_messages(
                         # skipped — they don't round-trip through Chat Completions.
                     else:
                         text_parts.append(str(block))
+                text = "".join(text_parts)
+                # NEW-1: an assistant message whose ONLY blocks were
+                # provider-opaque (e.g. Codex reasoning) filters down to
+                # empty text + no tool_calls. Chat Completions rejects a
+                # message with both `content=None` and no `tool_calls`, so
+                # substitute a minimal placeholder to keep the turn valid.
+                if not text and not tool_calls_api:
+                    text = "[continued]"
                 entry: dict[str, Any] = {
                     "role": "assistant",
-                    "content": "".join(text_parts) or None,
+                    "content": text if text else None,
                 }
                 if tool_calls_api:
                     entry["tool_calls"] = tool_calls_api
@@ -269,13 +299,24 @@ def _build_messages(
 
 
 def _stringify_tool_result(content: Any) -> str:
+    """Flatten a tool-result content list to a string for Chat Completions.
+
+    Only ``text`` blocks are forwarded verbatim. Non-text blocks (images,
+    documents, opaque dicts) would leak their ``dict.__repr__`` if we
+    ``str(...)``'d them — instead we drop them with a labeled placeholder
+    so the resulting string stays readable by the model.
+    """
     if isinstance(content, list):
         parts = []
         for b in content:
             if isinstance(b, dict) and b.get("type") == "text":
                 parts.append(b.get("text", ""))
-            else:
-                parts.append(str(b))
+            elif isinstance(b, str):
+                parts.append(b)
+            elif isinstance(b, dict):
+                btype = b.get("type", "unknown")
+                parts.append(f"[{btype} block omitted]")
+            # silently drop other shapes
         return "".join(parts)
     return str(content)
 
@@ -359,3 +400,55 @@ def _tc_map_to_list(tc_map: dict[int, dict[str, Any]]) -> list[ToolCall]:
             )
         )
     return result
+
+
+def _maybe_raise_mapped_openai_error(exc: BaseException) -> None:
+    """Translate an openai-SDK exception into the butterfly error taxonomy.
+
+    The OpenAI SDK raises types like ``openai.RateLimitError``,
+    ``AuthenticationError``, ``APIConnectionError`` etc. Callers wrap
+    ``complete`` in ``try/except`` and pass the raised exception in; we
+    inspect status + type + message, raise the mapped butterfly error when
+    recognized, and return silently (so the caller re-raises the original)
+    for unrecognized cases. No-op on BaseException subclasses like
+    ``KeyboardInterrupt`` so cancellation still propagates.
+    """
+    import asyncio
+
+    if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+        return
+
+    exc_name = type(exc).__name__
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    message = str(exc) or exc_name
+
+    if exc_name in ("AuthenticationError", "PermissionDeniedError") or status in (401, 403):
+        raise AuthError(f"OpenAI auth error: {message}", provider="openai", status=status) from exc
+    if exc_name == "RateLimitError" or status == 429:
+        raise RateLimitError(
+            f"OpenAI rate limit: {message}", provider="openai", status=status
+        ) from exc
+    lowered = message.lower()
+    if "context_length_exceeded" in lowered or "maximum context length" in lowered:
+        raise ContextWindowExceededError(
+            f"OpenAI context length exceeded: {message}", provider="openai", status=status
+        ) from exc
+    if exc_name == "BadRequestError" or status == 400:
+        raise BadRequestError(
+            f"OpenAI bad request: {message}", provider="openai", status=status
+        ) from exc
+    if exc_name in ("APITimeoutError",) or "timeout" in lowered:
+        raise ProviderError(
+            f"OpenAI request timed out: {message}", provider="openai", status=status
+        ) from exc
+    if status and 500 <= status < 600:
+        raise ServerError(
+            f"OpenAI server error: {message}", provider="openai", status=status
+        ) from exc
+    if exc_name in ("APIConnectionError",):
+        raise ProviderError(
+            f"OpenAI connection error: {message}", provider="openai", status=status
+        ) from exc
+    # Unrecognized — caller re-raises the original exception.

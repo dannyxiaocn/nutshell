@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import logging
 from typing import Any
 
 from butterfly.core.hook import OnLoopEnd, OnLoopStart, OnTextChunk, OnToolCall, OnToolDone
@@ -7,6 +8,8 @@ from butterfly.core.provider import Provider
 from butterfly.core.skill import Skill
 from butterfly.core.tool import Tool
 from butterfly.core.types import AgentResult, Message, ToolCall
+
+_log = logging.getLogger(__name__)
 
 
 _DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -107,7 +110,9 @@ class Agent:
     @classmethod
     def _render_memory_layer(cls, name: str, content: str) -> str:
         """Render a named memory layer, truncating large ones for prompt efficiency."""
-        lines = content.split("\n")
+        # Bug 27: splitlines() handles \r\n / \r / \n uniformly so Windows
+        # memory files don't leave stray \r in the prompt.
+        lines = content.splitlines()
         if len(lines) <= cls._MEMORY_LAYER_INLINE_LINES:
             return f"## Memory: {name}\n\n{content}"
         head = "\n".join(lines[: cls._MEMORY_LAYER_INLINE_LINES])
@@ -215,7 +220,20 @@ class Agent:
                     thinking_budget=self.thinking_budget,
                     thinking_effort=self.thinking_effort,
                 )
-            except Exception as primary_exc:
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                # Bug 23: cancellation / interrupt must propagate, not be
+                # swallowed as a "provider failure".
+                raise
+            except Exception as primary_exc:  # noqa: BLE001 - narrowed below
+                # Bug 23: only fallback on the butterfly error taxonomy +
+                # low-level transport errors (connection resets, TLS, DNS).
+                # Plain Python errors (TypeError, ValueError) indicate logic
+                # bugs and should propagate. Import is deferred to avoid a
+                # circular import on module load.
+                from butterfly.llm_engine.errors import ProviderError as _ProviderError
+
+                if not isinstance(primary_exc, (_ProviderError, OSError)):
+                    raise
                 fb_provider = self._get_fallback_provider()
                 fb_model = self.fallback_model or active_model
                 # Only block the retry if both provider class AND model would be
@@ -226,7 +244,12 @@ class Agent:
                     active_provider is fb_provider and fb_model == active_model
                 ):
                     raise
-                print(f"[agent] Primary provider failed ({primary_exc}), switching to fallback")
+                # Bug 24: log the exception TYPE, not str(exc) — provider
+                # error messages can contain request bodies / tokens / tracebacks.
+                _log.warning(
+                    "primary provider failed (%s); switching to fallback",
+                    type(primary_exc).__name__,
+                )
                 active_provider = fb_provider
                 active_model = fb_model
                 content, tool_calls, turn_usage = await active_provider.complete(

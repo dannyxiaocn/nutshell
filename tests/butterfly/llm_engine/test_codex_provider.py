@@ -460,10 +460,66 @@ def test_convert_tool_result_multi_text_concatenated_without_space():
 # ── BUG-6 regression: invalid thinking_effort falls back to "medium" ──
 
 
-def test_build_request_body_via_provider_defaults_invalid_effort_to_medium(monkeypatch):
-    """Sanity check that the codex invalid-effort path lands on "medium"."""
-    # Exercise the code path indirectly — _VALID_EFFORTS and default are
-    # tested by observing the shape of the body the caller uses.
-    from butterfly.llm_engine.providers.codex import _VALID_EFFORTS
-    assert "medium" in _VALID_EFFORTS
-    assert "bogus" not in _VALID_EFFORTS
+@pytest.mark.asyncio
+async def test_complete_invalid_effort_sends_medium_in_body(monkeypatch):
+    """An invalid thinking_effort must produce reasoning.effort=medium on the wire.
+
+    Addresses the cubic P3 comment on PR #20: the earlier test only asserted
+    set membership, which didn't actually exercise the clamp. This intercepts
+    the real httpx request body and inspects reasoning.effort.
+    """
+    import httpx
+
+    from butterfly.llm_engine.providers import codex as codex_mod
+    from butterfly.core.types import Message
+
+    provider = CodexProvider.__new__(CodexProvider)
+    provider.max_tokens = 100
+    provider._conversation_id = "test-conv"
+    provider._pending_reasoning = []
+
+    async def fake_get_auth_async(self, *, force_refresh=False, rejected_token=""):
+        return "token", "acct-1"
+
+    provider._get_auth_async = fake_get_auth_async.__get__(provider, CodexProvider)
+
+    captured_body: dict = {}
+
+    class _FakeResponse:
+        status_code = 200
+        async def aread(self):
+            return b""
+        async def aiter_bytes(self):
+            # Emit a single response.completed event so _parse_sse_stream terminates cleanly.
+            yield b'data: {"type":"response.completed","response":{"usage":{}}}\n\n'
+
+    class _FakeStreamCtx:
+        def __init__(self, body):
+            captured_body.update(body)
+        async def __aenter__(self):
+            return _FakeResponse()
+        async def __aexit__(self, *args):
+            return False
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        def stream(self, method, url, *, headers, json, **kw):
+            return _FakeStreamCtx(json)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    await provider.complete(
+        messages=[Message(role="user", content="hi")],
+        tools=[],
+        system_prompt="sys",
+        model="gpt-5.4",
+        thinking=True,
+        thinking_effort="bogus",  # invalid — must clamp to "medium"
+    )
+
+    assert captured_body.get("reasoning", {}).get("effort") == "medium"

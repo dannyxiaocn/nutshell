@@ -26,6 +26,7 @@ Behavioral notes (aligned with openai/codex rust CLI `codex-rs`):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -58,22 +59,33 @@ _CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 _JWT_AUTH_CLAIM = "https://api.openai.com/auth"
 _DEFAULT_READ_TIMEOUT = 600.0  # gpt-5 xhigh routinely exceeds 120s before first token
 _ORIGINATOR = "codex_cli_rs"  # matches openai/codex; "pi" is not on the server allowlist
+_MAX_SSE_BUFFER_BYTES = 1_048_576  # 1 MiB — defend against a server that never sends \n\n
+
+# Module-level lock serializes token-refresh writes to ~/.codex/auth.json
+# across concurrent providers in the same process. File-level cross-process
+# locking is out of scope — the CLI is the only other writer.
+_REFRESH_LOCK = asyncio.Lock()
 
 
-def _is_codex_compatible_model(model: str) -> bool:
-    """True if *model* names an OpenAI/Codex-family model this endpoint accepts.
+# Explicit allow-list: only OpenAI-family model names are forwarded. Anything
+# else (Anthropic / Kimi / Gemini / typos / legacy names) falls back to
+# ``DEFAULT_MODEL``. Covers gpt-*, o-series (o1/o3/o4/...), codex-*, fine-tunes.
+_CODEX_MODEL_ALLOW_RE = re.compile(r"^(gpt-|o\d+(-|$)|codex-|ft:gpt-)", re.IGNORECASE)
 
-    Returns False for empty/None or for Anthropic-family names (which is what
-    the generic ``Agent`` default ``claude-sonnet-4-6`` leaves behind when the
-    caller forgets to override per-provider) — in that case the caller should
-    fall back to ``DEFAULT_MODEL``.
+
+def _is_codex_compatible_model(model: str | None) -> bool:
+    """True if *model* is an OpenAI/Codex-family name the backend accepts.
+
+    Returns False for empty/None/whitespace and for any name that doesn't
+    match the explicit allow-list (Anthropic, Kimi, Gemini, typos...). In
+    those cases the caller falls back to ``DEFAULT_MODEL``.
     """
     if not model:
         return False
-    lowered = model.lower()
-    if any(tag in lowered for tag in ("claude", "sonnet", "opus", "haiku")):
+    stripped = model.strip()
+    if not stripped:
         return False
-    return True
+    return bool(_CODEX_MODEL_ALLOW_RE.match(stripped))
 
 
 class CodexProvider(Provider):
@@ -131,14 +143,19 @@ class CodexProvider(Provider):
             thinking=thinking,
             thinking_effort=effort,
             prompt_cache_key=self._conversation_id,
+            max_output_tokens=self.max_tokens,
         )
 
         import httpx
 
         timeout = httpx.Timeout(connect=10.0, read=_DEFAULT_READ_TIMEOUT, write=30.0, pool=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
+            last_access_token = ""
             for attempt in range(2):
-                access_token, account_id = self._get_auth(force_refresh=attempt > 0)
+                access_token, account_id = await self._get_auth_async(
+                    force_refresh=attempt > 0, rejected_token=last_access_token
+                )
+                last_access_token = access_token
                 headers = _build_headers(access_token, account_id, self._conversation_id)
                 try:
                     async with client.stream("POST", _CODEX_URL, headers=headers, json=body) as resp:
@@ -146,6 +163,18 @@ class CodexProvider(Provider):
                         if status == 401 and attempt == 0:
                             await resp.aread()
                             continue
+                        if status == 401:
+                            # Second attempt after a forced refresh still 401 →
+                            # refresh token itself is the problem. Emit the
+                            # descriptive message instead of the generic
+                            # "Codex API error 401".
+                            await resp.aread()
+                            raise AuthError(
+                                "Codex authentication failed even after token refresh. "
+                                "Run `codex login` to re-authenticate.",
+                                provider="codex-oauth",
+                                status=401,
+                            )
                         if status != 200:
                             body_bytes = await resp.aread()
                             _raise_from_status(
@@ -171,24 +200,41 @@ class CodexProvider(Provider):
     # Auth helpers
     # ------------------------------------------------------------------
 
-    def _get_auth(self, *, force_refresh: bool = False) -> tuple[str, str]:
-        auth = _read_auth()
-        tokens = auth.get("tokens", {})
-        access_token = tokens.get("access_token", "")
-        refresh_token = tokens.get("refresh_token", "")
+    async def _get_auth_async(
+        self,
+        *,
+        force_refresh: bool = False,
+        rejected_token: str = "",
+    ) -> tuple[str, str]:
+        """Return (access_token, account_id), refreshing under the module lock.
 
-        if force_refresh or _is_token_expired(access_token):
-            if not refresh_token:
-                raise AuthError(
-                    "Codex access token expired and no refresh_token available. "
-                    "Run `codex login` to re-authenticate.",
-                    provider="codex-oauth",
-                    status=401,
-                )
-            tokens = _refresh_access_token(refresh_token)
-            auth["tokens"] = tokens
-            _write_auth(auth)
-            access_token = tokens["access_token"]
+        Under the lock we re-read the auth file — if another coroutine just
+        refreshed while we were queued, we reuse its token. ``rejected_token``
+        carries the token the server just 401'd on; if the file token is
+        still that same string, we force a refresh; otherwise the token
+        changed under us and we try it first.
+        """
+        async with _REFRESH_LOCK:
+            auth = _read_auth()
+            tokens = auth.get("tokens", {})
+            access_token = tokens.get("access_token", "")
+            refresh_token = tokens.get("refresh_token", "")
+
+            needs_refresh = _is_token_expired(access_token) or (
+                force_refresh and access_token and access_token == rejected_token
+            )
+            if needs_refresh:
+                if not refresh_token:
+                    raise AuthError(
+                        "Codex access token expired and no refresh_token available. "
+                        "Run `codex login` to re-authenticate.",
+                        provider="codex-oauth",
+                        status=401,
+                    )
+                tokens = await _refresh_access_token_async(refresh_token)
+                auth["tokens"] = tokens
+                _write_auth(auth)
+                access_token = tokens["access_token"]
 
         account_id = _extract_account_id(access_token, tokens.get("id_token", ""))
         return access_token, account_id
@@ -212,6 +258,11 @@ def _read_auth() -> dict[str, Any]:
 
 def _write_auth(auth: dict[str, Any]) -> None:
     _AUTH_PATH.write_text(json.dumps(auth, indent=2), encoding="utf-8")
+    # Restrict to owner-only; OAuth refresh tokens must not be world-readable.
+    try:
+        os.chmod(_AUTH_PATH, 0o600)
+    except OSError:
+        pass
 
 
 def _is_token_expired(token: str, buffer_seconds: int = 300) -> bool:
@@ -254,32 +305,39 @@ def _extract_account_id(access_token: str, id_token: str = "") -> str:
     )
 
 
-def _refresh_access_token(refresh_token: str) -> dict[str, str]:
-    import urllib.error
-    import urllib.request
+async def _refresh_access_token_async(refresh_token: str) -> dict[str, str]:
+    """Async token refresh via httpx — does not block the event loop."""
+    import httpx
 
-    payload = json.dumps({
+    payload = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
         "client_id": _CLIENT_ID,
-    }).encode()
-    req = urllib.request.Request(
-        _TOKEN_URL,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    }
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                _TOKEN_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+    except httpx.HTTPError as exc:
         raise AuthError(
-            f"Codex token refresh failed ({exc.code}): {body[:200] or exc.reason}. "
+            f"Codex token refresh transport error: {exc}. "
+            "Check network / proxy configuration.",
+            provider="codex-oauth",
+            status=None,
+        ) from exc
+
+    if resp.status_code != 200:
+        body = resp.text[:200] if resp.text else ""
+        raise AuthError(
+            f"Codex token refresh failed ({resp.status_code}): {body or resp.reason_phrase}. "
             "The refresh token may be expired or revoked — run `codex login` again.",
             provider="codex-oauth",
-            status=exc.code,
-        ) from exc
+            status=resp.status_code,
+        )
+    result = resp.json()
 
     if "access_token" not in result or "refresh_token" not in result:
         raise AuthError(
@@ -326,6 +384,7 @@ def _build_request_body(
     thinking: bool = False,
     thinking_effort: str = "high",
     prompt_cache_key: str = "",
+    max_output_tokens: int | None = None,
 ) -> dict[str, Any]:
     model_id = model.split("/")[-1] if "/" in model else model
 
@@ -339,6 +398,8 @@ def _build_request_body(
         "tool_choice": "auto",
         "parallel_tool_calls": True,
     }
+    if max_output_tokens and max_output_tokens > 0:
+        body["max_output_tokens"] = max_output_tokens
     if prompt_cache_key:
         body["prompt_cache_key"] = prompt_cache_key
     if thinking:
@@ -443,7 +504,10 @@ def _convert_assistant(msg: "Message") -> list[dict[str, Any]]:
             item: dict[str, Any] = {
                 "type": "reasoning",
                 "id": block.get("id") or f"rs_{uuid.uuid4().hex[:24]}",
-                "summary": block.get("summary", []),
+                # NEW-3: dict.get returns default only when key is ABSENT; None
+            # passes through. Coerce with `or []` so the server never sees
+            # summary: null (schema expects an array).
+            "summary": block.get("summary") or [],
             }
             if "encrypted_content" in block:
                 item["encrypted_content"] = block["encrypted_content"]
@@ -514,6 +578,14 @@ async def _parse_sse_stream(
     buffer = ""
     async for raw_chunk in resp.aiter_bytes():
         buffer += raw_chunk.decode("utf-8", errors="replace")
+        # Bug 10: bound the buffer so a server that never sends \n\n can't
+        # exhaust memory. 1 MiB is ~10× the largest legitimate SSE event.
+        if len(buffer) > _MAX_SSE_BUFFER_BYTES:
+            raise ProviderError(
+                f"Codex SSE buffer exceeded {_MAX_SSE_BUFFER_BYTES} bytes "
+                "without an event boundary — aborting.",
+                provider="codex-oauth",
+            )
         while "\n\n" in buffer:
             block, buffer = buffer.split("\n\n", 1)
             data_lines = [
@@ -554,7 +626,7 @@ async def _parse_sse_stream(
                     elif itype == "reasoning":
                         captured: dict[str, Any] = {
                             "type": "reasoning",
-                            "id": item.get("id", ""),
+                            "id": item.get("id") or "",
                             "summary": item.get("summary", []),
                         }
                         if "encrypted_content" in item:
@@ -623,8 +695,43 @@ def _extract_usage(u: dict[str, Any]) -> TokenUsage:
     )
 
 
+_CTX_LENGTH_CODES = frozenset({
+    "context_length_exceeded",
+    "context_window_exceeded",
+    "content_too_long",
+    "max_tokens_exceeded",
+})
+_RATE_LIMIT_CODES = frozenset({
+    "rate_limit_exceeded",
+    "quota_exceeded",
+    "insufficient_quota",
+    "requests_rate_limit",
+    "tokens_rate_limit",
+})
+_AUTH_CODES = frozenset({
+    "invalid_api_key",
+    "invalid_token",
+    "expired_token",
+    "unauthorized",
+    "authentication_error",
+    "authentication_failed",
+})
+_SERVER_CODES = frozenset({
+    "server_overloaded",
+    "server_error",
+    "internal_server_error",
+    "service_unavailable",
+})
+
+
 def _raise_stream_error(event: dict[str, Any]) -> None:
-    """Classify a response.failed / error event into the butterfly error taxonomy."""
+    """Classify a response.failed / error event into the butterfly error taxonomy.
+
+    Match strategy: prefer exact ``code`` matching on a small enumerated set
+    of known OpenAI/Codex error codes; fall back to phrase matching only on
+    the message. Avoids substring false-positives like ``authority_not_found``
+    → AuthError or ``invalid_server_url`` → ServerError.
+    """
     err_obj: dict[str, Any] = {}
     resp_data = event.get("response") or {}
     if isinstance(resp_data, dict):
@@ -634,23 +741,22 @@ def _raise_stream_error(event: dict[str, Any]) -> None:
         or err_obj.get("message")
         or json.dumps(event)[:300]
     )
-    code = event.get("code") or err_obj.get("code") or ""
-
-    code_l = (code or "").lower()
+    code = (event.get("code") or err_obj.get("code") or "").lower()
     msg_l = (message or "").lower()
-    if "context" in code_l or ("context" in msg_l and "length" in msg_l):
+
+    if code in _CTX_LENGTH_CODES or "context length exceeded" in msg_l or "context window" in msg_l:
         raise ContextWindowExceededError(
             f"Codex context length exceeded: {message}", provider="codex-oauth"
         )
-    if "quota" in code_l or "rate_limit" in code_l or "rate limit" in msg_l:
+    if code in _RATE_LIMIT_CODES or "rate limit" in msg_l or "quota exceeded" in msg_l:
         raise RateLimitError(
             f"Codex rate/quota error: {message}",
             provider="codex-oauth",
             retry_after=_parse_retry_after(message),
         )
-    if "auth" in code_l or "invalid_api_key" in code_l:
+    if code in _AUTH_CODES:
         raise AuthError(f"Codex auth error: {message}", provider="codex-oauth", status=401)
-    if "overloaded" in code_l or "server" in code_l:
+    if code in _SERVER_CODES or "server overloaded" in msg_l:
         raise ServerError(f"Codex server error: {message}", provider="codex-oauth")
     raise ProviderError(f"Codex stream error: {message}", provider="codex-oauth")
 

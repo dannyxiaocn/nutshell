@@ -17,6 +17,14 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 from butterfly.core.provider import Provider
 from butterfly.core.types import TokenUsage, ToolCall
+from butterfly.llm_engine.errors import (
+    AuthError,
+    BadRequestError,
+    ContextWindowExceededError,
+    ProviderError,
+    RateLimitError,
+    ServerError,
+)
 from butterfly.llm_engine.providers._common import _parse_json_args
 
 if TYPE_CHECKING:
@@ -109,9 +117,15 @@ class OpenAIResponsesProvider(Provider):
             kwargs["reasoning"] = {"effort": effort, "summary": "auto"}
             kwargs["include"] = ["reasoning.encrypted_content"]
 
-        if on_text_chunk is not None:
-            return await self._stream(kwargs, on_text_chunk)
-        return await self._non_stream(kwargs)
+        try:
+            if on_text_chunk is not None:
+                return await self._stream(kwargs, on_text_chunk)
+            return await self._non_stream(kwargs)
+        except ProviderError:
+            raise  # already mapped
+        except Exception as exc:  # noqa: BLE001 - mapped below
+            _maybe_raise_mapped_openai_error(exc)
+            raise
 
     # ------------------------------------------------------------------
 
@@ -119,7 +133,13 @@ class OpenAIResponsesProvider(Provider):
         self, kwargs: dict[str, Any]
     ) -> tuple[str, list[ToolCall], TokenUsage]:
         response = await self._client.responses.create(**kwargs)
-        return _parse_response_object(response, pending=self._pending_reasoning)
+        # Bug 19: _parse_response_object APPENDS to ``pending`` — feed it a fresh
+        # list so back-to-back non-stream calls without consume_extra_blocks()
+        # don't accumulate stale reasoning items.
+        captured: list[dict[str, Any]] = []
+        text, tool_calls, usage = _parse_response_object(response, pending=captured)
+        self._pending_reasoning = captured
+        return text, tool_calls, usage
 
     async def _stream(
         self,
@@ -177,6 +197,12 @@ class OpenAIResponsesProvider(Provider):
                         current_tc_id = None
                     elif itype == "reasoning":
                         reasoning_items.append(_capture_reasoning(item))
+
+                # Bug 17: incomplete / failed / error events were silently dropped.
+                elif etype == "response.incomplete":
+                    _raise_incomplete(_event_response_as_dict(event))
+                elif etype in ("response.failed", "error"):
+                    _raise_stream_error_event(_event_response_as_dict(event), event)
 
             final = await stream.get_final_response()
             usage = _extract_usage_from_obj(getattr(final, "usage", None))
@@ -265,7 +291,7 @@ def _convert_assistant(msg: "Message") -> list[dict[str, Any]]:
             item: dict[str, Any] = {
                 "type": "reasoning",
                 "id": block.get("id") or f"rs_{uuid.uuid4().hex[:24]}",
-                "summary": block.get("summary", []),
+                "summary": block.get("summary") or [],
             }
             if "encrypted_content" in block:
                 item["encrypted_content"] = block["encrypted_content"]
@@ -296,6 +322,15 @@ def _assistant_message_item(text: str) -> dict[str, Any]:
 
 def _convert_tool_result(msg: "Message") -> list[dict[str, Any]]:
     content = msg.content
+    if isinstance(content, str):
+        # Bug 20: the agent loop encodes tool results as block lists, but any
+        # direct construction that passes a raw string used to be silently
+        # dropped. Emit a single function_call_output so the turn survives.
+        return [{
+            "type": "function_call_output",
+            "call_id": "",
+            "output": content,
+        }]
     if not isinstance(content, list):
         return []
     result = []
@@ -334,7 +369,7 @@ def _capture_reasoning(item: dict[str, Any]) -> dict[str, Any]:
     captured: dict[str, Any] = {
         "type": "reasoning",
         "id": item.get("id", ""),
-        "summary": item.get("summary", []),
+        "summary": item.get("summary") or [],
     }
     if "encrypted_content" in item:
         captured["encrypted_content"] = item["encrypted_content"]
@@ -398,3 +433,131 @@ def _extract_usage_from_obj(usage: Any) -> TokenUsage:
         cache_write_tokens=0,
         reasoning_tokens=reasoning,
     )
+
+
+# ======================================================================
+# Stream error handling (Bugs 17/18)
+# ======================================================================
+
+
+def _event_response_as_dict(event: Any) -> dict[str, Any]:
+    """Best-effort: extract the response payload from an SDK event object."""
+    resp = getattr(event, "response", None)
+    if isinstance(resp, dict):
+        return resp
+    dump = getattr(resp, "model_dump", None) if resp is not None else None
+    if callable(dump):
+        return dump(exclude_none=True)
+    if resp is not None:
+        return {k: v for k, v in vars(resp).items() if not k.startswith("_")}
+    return {}
+
+
+def _raise_incomplete(resp_data: dict[str, Any]) -> None:
+    details = resp_data.get("incomplete_details") or {}
+    reason = details.get("reason") if isinstance(details, dict) else None
+    reason = reason or "incomplete"
+    if reason == "context_length":
+        raise ContextWindowExceededError(
+            "OpenAI Responses stream incomplete: context length exceeded",
+            provider="openai-responses",
+        )
+    raise ProviderError(
+        f"OpenAI Responses stream incomplete: {reason}",
+        provider="openai-responses",
+    )
+
+
+def _raise_stream_error_event(resp_data: dict[str, Any], event: Any) -> None:
+    err = resp_data.get("error") if isinstance(resp_data, dict) else None
+    if not isinstance(err, dict):
+        err = {}
+    message = (
+        err.get("message")
+        or getattr(event, "message", "")
+        or "OpenAI Responses stream error"
+    )
+    code = (err.get("code") or getattr(event, "code", "") or "").lower()
+    lowered = (message or "").lower()
+    if "context" in code or "context length" in lowered or "context window" in lowered:
+        raise ContextWindowExceededError(
+            f"OpenAI Responses context length exceeded: {message}",
+            provider="openai-responses",
+        )
+    if code in {"rate_limit_exceeded", "insufficient_quota"} or "rate limit" in lowered:
+        raise RateLimitError(
+            f"OpenAI Responses rate/quota error: {message}",
+            provider="openai-responses",
+        )
+    if code in {"invalid_api_key", "authentication_error"}:
+        raise AuthError(
+            f"OpenAI Responses auth error: {message}",
+            provider="openai-responses",
+            status=401,
+        )
+    if code in {"server_error", "internal_server_error", "server_overloaded"}:
+        raise ServerError(
+            f"OpenAI Responses server error: {message}",
+            provider="openai-responses",
+        )
+    raise ProviderError(
+        f"OpenAI Responses stream error: {message}",
+        provider="openai-responses",
+    )
+
+
+def _maybe_raise_mapped_openai_error(exc: BaseException) -> None:
+    """Translate an openai-SDK exception into the butterfly error taxonomy.
+
+    Mirrors the mapper in ``openai_api`` — same status / name heuristics,
+    different ``provider`` string so callers can distinguish.
+    """
+    import asyncio
+
+    if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+        return
+
+    exc_name = type(exc).__name__
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    message = str(exc) or exc_name
+
+    if exc_name in ("AuthenticationError", "PermissionDeniedError") or status in (401, 403):
+        raise AuthError(
+            f"OpenAI Responses auth error: {message}",
+            provider="openai-responses",
+            status=status,
+        ) from exc
+    if exc_name == "RateLimitError" or status == 429:
+        raise RateLimitError(
+            f"OpenAI Responses rate limit: {message}",
+            provider="openai-responses",
+            status=status,
+        ) from exc
+    lowered = message.lower()
+    if "context_length_exceeded" in lowered or "maximum context length" in lowered:
+        raise ContextWindowExceededError(
+            f"OpenAI Responses context length exceeded: {message}",
+            provider="openai-responses",
+            status=status,
+        ) from exc
+    if exc_name == "BadRequestError" or status == 400:
+        raise BadRequestError(
+            f"OpenAI Responses bad request: {message}",
+            provider="openai-responses",
+            status=status,
+        ) from exc
+    if exc_name in ("APITimeoutError",) or "timeout" in lowered:
+        raise ProviderError(
+            f"OpenAI Responses timed out: {message}",
+            provider="openai-responses",
+            status=status,
+        ) from exc
+    if status and 500 <= status < 600:
+        raise ServerError(
+            f"OpenAI Responses server error: {message}",
+            provider="openai-responses",
+            status=status,
+        ) from exc
+    # Unrecognized — caller re-raises the original.

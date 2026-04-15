@@ -162,11 +162,18 @@ def _extract_usage(response: Any) -> TokenUsage:
     usage = getattr(response, "usage", None)
     if usage is None:
         return TokenUsage()
+    # Bug 21: propagate reasoning_tokens when the upstream reports it
+    # (Kimi thinking mode). Anthropic proper folds reasoning into
+    # output_tokens and doesn't expose this field, in which case
+    # the getattr default of 0 is correct.
+    out_details = getattr(usage, "output_tokens_details", None)
+    reasoning = getattr(out_details, "reasoning_tokens", 0) if out_details else 0
     return TokenUsage(
         input_tokens=getattr(usage, "input_tokens", 0) or 0,
         output_tokens=getattr(usage, "output_tokens", 0) or 0,
         cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
         cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        reasoning_tokens=reasoning or 0,
     )
 
 
@@ -220,6 +227,34 @@ def _find_cache_breakpoint(messages: list[Message]) -> int | None:
     return None
 
 
+# Block types the Anthropic Messages API accepts on assistant content. We
+# strip anything else (notably "reasoning" from Codex/OpenAI Responses) so
+# a cross-provider fallback doesn't send opaque blocks the server rejects.
+_ANTHROPIC_ALLOWED_BLOCK_TYPES = frozenset({
+    "text", "thinking", "redacted_thinking",
+    "tool_use", "tool_result",
+    "image", "document",
+})
+
+
+def _sanitize_content_for_anthropic(content: Any) -> Any:
+    """Filter assistant content blocks down to Anthropic-accepted types.
+
+    String content is returned as-is. A list with every block stripped
+    collapses to a single ``[continued]`` text block so the turn stays
+    valid (Anthropic rejects empty content arrays).
+    """
+    if not isinstance(content, list):
+        return content
+    filtered = [
+        b for b in content
+        if not isinstance(b, dict) or b.get("type") in _ANTHROPIC_ALLOWED_BLOCK_TYPES
+    ]
+    if not filtered:
+        return [{"type": "text", "text": "[continued]"}]
+    return filtered
+
+
 def _to_api_messages(
     messages: list[Message],
     cache_breakpoint_index: int | None = None,
@@ -227,7 +262,7 @@ def _to_api_messages(
     result = []
     for i, msg in enumerate(messages):
         role = "user" if msg.role == "tool" else msg.role
-        content = msg.content
+        content = _sanitize_content_for_anthropic(msg.content)
 
         # Add cache_control at the specified breakpoint
         if i == cache_breakpoint_index:

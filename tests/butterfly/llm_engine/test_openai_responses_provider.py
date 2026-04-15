@@ -128,11 +128,13 @@ def test_convert_tool_result_list_content_joined():
     assert items[0]["output"] == "ab"
 
 
-def test_convert_tool_result_ignores_non_list_content():
+def test_convert_tool_result_wraps_string_content():
+    """Bug 20 fix: string-typed tool content is wrapped, not dropped."""
     from butterfly.llm_engine.providers.openai_responses import _convert_tool_result
 
     msg = Message(role="tool", content="flat")
-    assert _convert_tool_result(msg) == []
+    out = _convert_tool_result(msg)
+    assert out == [{"type": "function_call_output", "call_id": "", "output": "flat"}]
 
 
 # ── non-streaming response parsing ──────────────────────────────────
