@@ -141,9 +141,9 @@ class OpenAIResponsesProvider(Provider):
         self, kwargs: dict[str, Any]
     ) -> tuple[str, list[ToolCall], TokenUsage]:
         response = await self._client.responses.create(**kwargs)
-        # Bug 19: _parse_response_object APPENDS to ``pending`` — feed it a fresh
-        # list so back-to-back non-stream calls without consume_extra_blocks()
-        # don't accumulate stale reasoning items.
+        # ``_parse_response_object`` APPENDS to ``pending`` — feed it a fresh
+        # list so back-to-back non-stream calls without
+        # ``consume_extra_blocks()`` don't accumulate stale reasoning items.
         captured: list[dict[str, Any]] = []
         text, tool_calls, usage = _parse_response_object(response, pending=captured)
         self._pending_reasoning = captured
@@ -206,7 +206,6 @@ class OpenAIResponsesProvider(Provider):
                     elif itype == "reasoning":
                         reasoning_items.append(_capture_reasoning(item))
 
-                # Bug 17: incomplete / failed / error events were silently dropped.
                 elif etype == "response.incomplete":
                     _raise_incomplete(_event_response_as_dict(event))
                 elif etype in ("response.failed", "error"):
@@ -331,9 +330,9 @@ def _assistant_message_item(text: str) -> dict[str, Any]:
 def _convert_tool_result(msg: "Message") -> list[dict[str, Any]]:
     content = msg.content
     if isinstance(content, str):
-        # Bug 20: the agent loop encodes tool results as block lists, but any
-        # direct construction that passes a raw string used to be silently
-        # dropped. Emit a single function_call_output so the turn survives.
+        # The agent loop encodes tool results as block lists, but a direct
+        # caller may pass a raw string; emit a single function_call_output
+        # so the turn survives instead of silently dropping it.
         return [{
             "type": "function_call_output",
             "call_id": "",

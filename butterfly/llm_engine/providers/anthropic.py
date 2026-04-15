@@ -169,10 +169,9 @@ def _extract_usage(response: Any) -> TokenUsage:
     usage = getattr(response, "usage", None)
     if usage is None:
         return TokenUsage()
-    # Bug 21: propagate reasoning_tokens when the upstream reports it
-    # (Kimi thinking mode). Anthropic proper folds reasoning into
-    # output_tokens and doesn't expose this field, in which case
-    # the getattr default of 0 is correct.
+    # Kimi thinking mode reports reasoning_tokens via output_tokens_details.
+    # Anthropic proper folds reasoning into output_tokens and doesn't expose
+    # this field, in which case the getattr default of 0 is correct.
     out_details = getattr(usage, "output_tokens_details", None)
     reasoning = getattr(out_details, "reasoning_tokens", 0) if out_details else 0
     return TokenUsage(
@@ -271,9 +270,9 @@ def _to_api_messages(
         role = "user" if msg.role == "tool" else msg.role
         # Only sanitize ASSISTANT content — user messages and tool_result
         # payloads may legitimately contain custom block types (images,
-        # documents, etc.) that the filter would otherwise strip away.
-        # The cross-provider fallback hazard (NEW-1) is purely about
-        # assistant-origin reasoning blocks.
+        # documents, etc.) that the filter would otherwise strip away. The
+        # cross-provider fallback hazard is purely about assistant-origin
+        # provider-opaque blocks (e.g. Codex-produced reasoning).
         content = (
             _sanitize_content_for_anthropic(msg.content)
             if msg.role == "assistant"

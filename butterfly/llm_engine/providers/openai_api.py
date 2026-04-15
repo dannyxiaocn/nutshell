@@ -277,11 +277,11 @@ def _build_messages(
                     else:
                         text_parts.append(str(block))
                 text = "".join(text_parts)
-                # NEW-1: an assistant message whose ONLY blocks were
-                # provider-opaque (e.g. Codex reasoning) filters down to
-                # empty text + no tool_calls. Chat Completions rejects a
-                # message with both `content=None` and no `tool_calls`, so
-                # substitute a minimal placeholder to keep the turn valid.
+                # If the only blocks were provider-opaque (e.g. Codex
+                # reasoning) the assistant turn filters down to empty text +
+                # no tool_calls. Chat Completions rejects a message with
+                # both `content=None` and no `tool_calls`, so substitute a
+                # minimal placeholder to keep the turn valid.
                 if not text and not tool_calls_api:
                     text = "[continued]"
                 entry: dict[str, Any] = {

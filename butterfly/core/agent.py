@@ -110,10 +110,8 @@ class Agent:
     @classmethod
     def _render_memory_layer(cls, name: str, content: str) -> str:
         """Render a named memory layer, truncating large ones for prompt efficiency."""
-        # Bug 27: splitlines() handles \r\n / \r / \n uniformly. Join with \n
-        # on BOTH branches so short memory layers are also normalised — the
-        # short-path used to return raw ``content`` which kept stray \r on
-        # Windows-style files.
+        # splitlines() handles \r\n / \r / \n uniformly; re-joining on \n
+        # on both branches strips stray \r on Windows-style files.
         lines = content.splitlines()
         normalised = "\n".join(lines)
         if len(lines) <= cls._MEMORY_LAYER_INLINE_LINES:
@@ -224,15 +222,15 @@ class Agent:
                     thinking_effort=self.thinking_effort,
                 )
             except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
-                # Bug 23: cancellation / interrupt must propagate, not be
-                # swallowed as a "provider failure".
+                # Cancellation / interrupt must propagate, not be swallowed
+                # as a "provider failure".
                 raise
             except Exception as primary_exc:  # noqa: BLE001 - narrowed below
-                # Bug 23: only fallback on the butterfly error taxonomy +
-                # low-level transport errors (connection resets, TLS, DNS).
-                # Plain Python errors (TypeError, ValueError) indicate logic
-                # bugs and should propagate. Import is deferred to avoid a
-                # circular import on module load.
+                # Only fall back on the butterfly error taxonomy + low-level
+                # transport errors (connection resets, TLS, DNS). Plain
+                # Python errors (TypeError, ValueError) indicate logic bugs
+                # and should propagate. Deferred import avoids a circular
+                # dependency at module load.
                 from butterfly.llm_engine.errors import ProviderError as _ProviderError
 
                 if not isinstance(primary_exc, (_ProviderError, OSError)):
@@ -247,8 +245,8 @@ class Agent:
                     active_provider is fb_provider and fb_model == active_model
                 ):
                     raise
-                # Bug 24: log the exception TYPE, not str(exc) — provider
-                # error messages can contain request bodies / tokens / tracebacks.
+                # Log the exception TYPE, not str(exc) — provider error
+                # messages can contain request bodies, tokens, or tracebacks.
                 _log.warning(
                     "primary provider failed (%s); switching to fallback",
                     type(primary_exc).__name__,
@@ -268,8 +266,6 @@ class Agent:
                     thinking_effort=self.thinking_effort,
                 )
             total_usage = total_usage + turn_usage
-            # Bug 26: preserve on_text_chunk so every turn in a multi-step
-            # tool loop streams to the caller, not just the first call.
 
             extra_blocks = active_provider.consume_extra_blocks()
 

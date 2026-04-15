@@ -99,11 +99,10 @@ class CodexProvider(Provider):
     DEFAULT_MODEL: ClassVar[str] = "gpt-5.4"
 
     def __init__(self, max_tokens: int | None = None) -> None:
-        # NEW-5: the ChatGPT-OAuth Codex backend rejects ``max_output_tokens``
-        # with HTTP 400 even though the public Responses API accepts it. Make
-        # the field opt-in — ``max_tokens=None`` (default) means "don't send
-        # ``max_output_tokens`` in the body"; callers who know their endpoint
-        # supports it can pass an explicit integer.
+        # The ChatGPT-OAuth backend rejects ``max_output_tokens`` with HTTP
+        # 400 even though the public Responses API accepts it. Make the field
+        # opt-in: ``None`` (default) skips emission; pass an explicit integer
+        # only when the target endpoint supports it.
         self.max_tokens = max_tokens
         # Per-instance conversation id — used for prompt_cache_key + session_id header.
         # One provider instance = one conversation bucket from the server's POV.
@@ -509,10 +508,11 @@ def _convert_assistant(msg: "Message") -> list[dict[str, Any]]:
             item: dict[str, Any] = {
                 "type": "reasoning",
                 "id": block.get("id") or f"rs_{uuid.uuid4().hex[:24]}",
-                # NEW-3: dict.get returns default only when key is ABSENT; None
-            # passes through. Coerce with `or []` so the server never sees
-            # summary: null (schema expects an array).
-            "summary": block.get("summary") or [],
+                # ``dict.get`` returns the default only when the key is
+                # ABSENT; ``None`` passes through. Coerce with ``or []`` so
+                # the server never sees ``summary: null`` (schema expects an
+                # array).
+                "summary": block.get("summary") or [],
             }
             if "encrypted_content" in block:
                 item["encrypted_content"] = block["encrypted_content"]
@@ -664,8 +664,8 @@ async def _parse_sse_stream(
     buffer = ""
     async for raw_chunk in resp.aiter_bytes():
         buffer += raw_chunk.decode("utf-8", errors="replace")
-        # Bug 10: bound the buffer so a server that never sends \n\n can't
-        # exhaust memory. 1 MiB is ~10× the largest legitimate SSE event.
+        # Bound the buffer so a server that never sends \n\n can't exhaust
+        # memory. 1 MiB is ~10× the largest legitimate SSE event.
         if len(buffer) > _MAX_SSE_BUFFER_BYTES:
             raise ProviderError(
                 f"Codex SSE buffer exceeded {_MAX_SSE_BUFFER_BYTES} bytes "
@@ -676,10 +676,10 @@ async def _parse_sse_stream(
             block, buffer = buffer.split("\n\n", 1)
             _process_block(block)
 
-    # Bug 1: the connection may close mid-event without sending the final
-    # \n\n. Try to parse the remaining buffer as one last event so we don't
-    # silently drop a tail event (e.g. the final response.completed). If the
-    # remaining JSON is malformed, _process_block silently skips it.
+    # The connection may close mid-event without sending the final \n\n.
+    # Try to parse the remaining buffer as one last event so a tail event
+    # (e.g. the final response.completed) isn't silently dropped. Malformed
+    # JSON is skipped by _process_block.
     if buffer.strip():
         _process_block(buffer)
 

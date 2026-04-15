@@ -40,10 +40,10 @@ class KimiForCodingProvider(AnthropicProvider):
             or os.environ.get("KIMI_FOR_CODING_API_KEY")
             or os.environ.get("KIMI_API_KEY")
         )
-        # NEW-6: fail fast instead of letting the Anthropic SDK raise an
-        # opaque "Could not resolve authentication method" at first request.
-        # The practical trigger is an agent switching from a failing primary
-        # to kimi-coding-plan without the env var being set.
+        # Fail fast instead of letting the Anthropic SDK raise an opaque
+        # "Could not resolve authentication method" at first-request time.
+        # The practical trigger is an agent falling over to kimi-coding-plan
+        # from a failing primary without the env var being set.
         if not resolved_key:
             raise AuthError(
                 "KimiForCodingProvider requires KIMI_FOR_CODING_API_KEY (or "
