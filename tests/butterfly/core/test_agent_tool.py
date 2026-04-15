@@ -29,6 +29,8 @@ class _SequenceProvider(Provider):
         thinking=False,
         thinking_budget=8000,
         thinking_effort="high",
+        on_thinking_start=None,
+        on_thinking_end=None,
     ):
         return next(self._responses)
 
@@ -47,6 +49,8 @@ class _FailingProvider(Provider):
         thinking=False,
         thinking_budget=8000,
         thinking_effort="high",
+        on_thinking_start=None,
+        on_thinking_end=None,
     ):
         # Bug 23: Agent.run only fails over on ProviderError / OSError now.
         # Raise ProviderError to mimic a real provider failure.

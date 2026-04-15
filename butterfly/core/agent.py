@@ -3,7 +3,15 @@ import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
-from butterfly.core.hook import OnLoopEnd, OnLoopStart, OnTextChunk, OnToolCall, OnToolDone
+from butterfly.core.hook import (
+    OnLoopEnd,
+    OnLoopStart,
+    OnTextChunk,
+    OnThinkingEnd,
+    OnThinkingStart,
+    OnToolCall,
+    OnToolDone,
+)
 from butterfly.core.provider import Provider
 from butterfly.core.skill import Skill
 from butterfly.core.tool import Tool
@@ -164,6 +172,8 @@ class Agent:
         *,
         clear_history: bool = False,
         on_text_chunk: OnTextChunk | None = None,
+        on_thinking_start: OnThinkingStart | None = None,
+        on_thinking_end: OnThinkingEnd | None = None,
         on_tool_call: OnToolCall | None = None,
         on_tool_done: OnToolDone | None = None,
         on_loop_start: OnLoopStart | None = None,
@@ -202,6 +212,8 @@ class Agent:
                     system_prompt=system_dynamic,
                     model=active_model,
                     on_text_chunk=on_text_chunk,
+                    on_thinking_start=on_thinking_start,
+                    on_thinking_end=on_thinking_end,
                     cache_system_prefix=system_prefix,
                     cache_last_human_turn=_cache_history,
                     thinking=self.thinking,
@@ -246,6 +258,8 @@ class Agent:
                     system_prompt=system_dynamic,
                     model=active_model,
                     on_text_chunk=on_text_chunk,
+                    on_thinking_start=on_thinking_start,
+                    on_thinking_end=on_thinking_end,
                     cache_system_prefix=system_prefix,
                     cache_last_human_turn=_cache_history,
                     thinking=self.thinking,

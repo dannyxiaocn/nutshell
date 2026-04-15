@@ -1,13 +1,21 @@
 import { store } from '../store';
 import { api } from '../api';
-import type { Params, PanelEntry, PanelEntryDetail, TaskCard } from '../types';
+import type { ModelsCatalog, Params, PanelEntry, PanelEntryDetail, ProviderCatalogEntry, TaskCard } from '../types';
 import { formatInterval, formatRelative } from '../markdown';
 import { renderTaskEditor } from './taskEditor';
 
 type PanelTab = 'tasks' | 'panel' | 'config';
 
 function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // Escape single quotes too (defense-in-depth — no current sink uses
+  // single-quoted attrs, but the cost is zero and future refactors can't
+  // regress silently). Matches the canonical HTML escape set.
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export function createPanel(): HTMLElement {
@@ -16,10 +24,26 @@ export function createPanel(): HTMLElement {
 
   let activeTab: PanelTab = 'tasks';
   let editingTask: TaskCard | null | 'new' = null; // null = not editing, 'new' = new task
-  let editingConfig = false;
+  type ConfigMode = 'view' | 'form' | 'yaml';
+  let configMode: ConfigMode = 'view';
+  let modelsCatalog: ModelsCatalog | null = null;
+  let modelsCatalogPromise: Promise<ModelsCatalog | null> | null = null;
   const expandedPanel = new Set<string>(); // tids currently expanded
   const panelDetails = new Map<string, PanelEntryDetail>(); // tid → latest detail fetch
   let panelPollTimer: number | null = null;
+
+  function ensureModelsCatalog(): Promise<ModelsCatalog | null> {
+    if (modelsCatalog) return Promise.resolve(modelsCatalog);
+    if (modelsCatalogPromise) return modelsCatalogPromise;
+    modelsCatalogPromise = api.getModels().then(c => {
+      modelsCatalog = c;
+      return c;
+    }).catch(err => {
+      console.error('Failed to load /api/models:', err);
+      return null;
+    });
+    return modelsCatalogPromise;
+  }
 
   function render() {
     if (!store.currentSessionId) {
@@ -57,7 +81,7 @@ export function createPanel(): HTMLElement {
       btn.addEventListener('click', () => {
         activeTab = (btn as HTMLElement).dataset.tab as PanelTab;
         editingTask = null;
-        editingConfig = false;
+        configMode = 'view';
         render();
       });
     });
@@ -175,97 +199,544 @@ export function createPanel(): HTMLElement {
   }
 
   function renderConfigTab(): string {
-    if (editingConfig) return ''; // replaced by textarea below
+    if (configMode !== 'view') return ''; // editor rendered imperatively below
 
     const params = store.currentParams;
     if (!params) return '<div class="config-empty">No config loaded.</div>';
 
+    // Order the key config fields first, then everything else.
+    const ordered: string[] = [
+      'name', 'description',
+      'provider', 'model',
+      'fallback_provider', 'fallback_model',
+      'max_iterations',
+      'thinking', 'thinking_budget', 'thinking_effort',
+      'tool_providers', 'prompts', 'tools', 'skills', 'duty',
+    ];
     const excluded = new Set(['is_meta_session']);
-    const rows = Object.entries(params)
-      .filter(([k]) => !excluded.has(k))
-      .map(([k, v]) => {
-        let displayVal: string;
-        if (v === null || v === undefined) {
-          displayVal = '<span class="cfg-null">— (default)</span>';
-        } else if (typeof v === 'object') {
-          displayVal = `<code>${escHtml(JSON.stringify(v))}</code>`;
-        } else if (typeof v === 'boolean') {
-          displayVal = v ? '<span class="cfg-true">true</span>' : '<span class="cfg-false">false</span>';
-        } else {
-          displayVal = escHtml(String(v));
-        }
-        return `<tr><td class="cfg-key">${escHtml(k)}</td><td class="cfg-val">${displayVal}</td></tr>`;
-      })
-      .join('');
+    const seen = new Set<string>();
+    const rows: string[] = [];
+    const renderRow = (k: string, v: unknown): string => {
+      let displayVal: string;
+      if (v === null || v === undefined) {
+        displayVal = '<span class="cfg-null">— (default)</span>';
+      } else if (typeof v === 'object') {
+        displayVal = `<code>${escHtml(JSON.stringify(v))}</code>`;
+      } else if (typeof v === 'boolean') {
+        displayVal = v ? '<span class="cfg-true">true</span>' : '<span class="cfg-false">false</span>';
+      } else {
+        displayVal = escHtml(String(v));
+      }
+      return `<tr><td class="cfg-key">${escHtml(k)}</td><td class="cfg-val">${displayVal}</td></tr>`;
+    };
+    for (const k of ordered) {
+      if (excluded.has(k)) continue;
+      if (!(k in params)) continue;
+      seen.add(k);
+      rows.push(renderRow(k, (params as Record<string, unknown>)[k]));
+    }
+    for (const [k, v] of Object.entries(params)) {
+      if (excluded.has(k) || seen.has(k)) continue;
+      rows.push(renderRow(k, v));
+    }
 
     return `
       <table class="config-table">
-        <tbody>${rows}</tbody>
+        <tbody>${rows.join('')}</tbody>
       </table>
       <div class="config-footer">
-        <button class="btn-sm btn-primary" id="btn-edit-config">Edit JSON</button>
+        <button class="btn-sm btn-primary" id="btn-edit-config-form">Edit</button>
+        <button class="btn-sm" id="btn-edit-config-yaml">Edit raw YAML</button>
       </div>
     `;
   }
 
   function bindConfigTab() {
-    el.querySelector('#btn-edit-config')?.addEventListener('click', () => {
-      editingConfig = true;
-      showConfigEditor();
+    el.querySelector('#btn-edit-config-form')?.addEventListener('click', () => {
+      configMode = 'form';
+      showConfigFormEditor();
+    });
+    el.querySelector('#btn-edit-config-yaml')?.addEventListener('click', () => {
+      configMode = 'yaml';
+      showConfigYamlEditor();
     });
   }
 
-  function showConfigEditor() {
+  /** Structured form: dropdowns for provider/model, text/number inputs, booleans,
+   *  JSON textareas for complex fields (tool_providers, prompts, duty, tools, skills). */
+  async function showConfigFormEditor() {
     const content = el.querySelector('#panel-content');
     if (!content || !store.currentSessionId) return;
     const sessionId = store.currentSessionId;
-    const params = store.currentParams;
+    const params = { ...(store.currentParams ?? {}) } as Record<string, unknown>;
 
-    const textarea = document.createElement('textarea');
-    textarea.className = 'config-json-editor';
-    textarea.rows = 20;
-    textarea.value = JSON.stringify(params, null, 2);
+    content.innerHTML = `<div class="config-empty">Loading model catalog…</div>`;
+    const catalog = await ensureModelsCatalog();
+    if (store.currentSessionId !== sessionId || configMode !== 'form') return;
 
-    const errorEl = document.createElement('div');
-    errorEl.className = 'form-error hidden';
+    const providerOptions: ProviderCatalogEntry[] = catalog?.providers ?? [];
+    const efforts = catalog?.thinking_efforts ?? ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
+    // Build the form as a real DOM tree so we can keep input handles and
+    // re-render the model dropdown when the provider changes.
+    const form = document.createElement('div');
+    form.className = 'config-form';
+
+    const err = document.createElement('div');
+    err.className = 'form-error hidden';
+
+    // ---- Text fields ----
+    const nameInput = textRow(form, 'name', String(params.name ?? ''));
+    const descInput = textRow(form, 'description', String(params.description ?? ''));
+
+    // ---- Provider + model (paired) ----
+    const providerSelect = selectRow(form, 'provider', providerNames(providerOptions), String(params.provider ?? ''), '(default)');
+    const modelWrap = document.createElement('div');
+    modelWrap.className = 'cfg-row';
+    form.appendChild(modelWrap);
+
+    function renderModelRow() {
+      modelWrap.innerHTML = '';
+      const providerKey = providerSelect.value;
+      const entry = providerOptions.find(p => p.provider === providerKey) ?? null;
+      const models = entry?.models ?? [];
+      const current = String(params.model ?? '');
+      const label = document.createElement('label');
+      label.className = 'cfg-label';
+      label.textContent = 'model';
+      modelWrap.appendChild(label);
+
+      const select = document.createElement('select');
+      select.className = 'cfg-input';
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = entry ? `(default: ${entry.default_model})` : '(default)';
+      select.appendChild(blank);
+      for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        select.appendChild(opt);
+      }
+      const customOpt = document.createElement('option');
+      customOpt.value = '__custom__';
+      customOpt.textContent = 'Custom…';
+      select.appendChild(customOpt);
+
+      const customInput = document.createElement('input');
+      customInput.type = 'text';
+      customInput.className = 'cfg-input cfg-input-custom';
+      customInput.placeholder = 'custom model id';
+
+      // Initial state
+      if (current && models.includes(current)) {
+        select.value = current;
+        customInput.classList.add('hidden');
+      } else if (current) {
+        select.value = '__custom__';
+        customInput.value = current;
+      } else {
+        select.value = '';
+        customInput.classList.add('hidden');
+      }
+
+      select.addEventListener('change', () => {
+        if (select.value === '__custom__') {
+          customInput.classList.remove('hidden');
+          customInput.focus();
+        } else {
+          customInput.classList.add('hidden');
+          params.model = select.value || null;
+        }
+      });
+      customInput.addEventListener('input', () => {
+        params.model = customInput.value.trim() || null;
+      });
+
+      modelWrap.appendChild(select);
+      modelWrap.appendChild(customInput);
+
+      // Keep params.model up to date with initial dropdown state too
+      params.model = select.value === '__custom__' ? (customInput.value.trim() || null) : (select.value || null);
+    }
+    renderModelRow();
+    providerSelect.addEventListener('change', () => {
+      params.provider = providerSelect.value || null;
+      // When provider changes, clear model — user picks fresh from the new list
+      params.model = null;
+      renderModelRow();
+    });
+
+    // ---- Fallback provider + model ----
+    // Model becomes a provider-keyed dropdown (mirrors the primary row) —
+    // prevents mis-paired fallback_provider vs. fallback_model strings
+    // that 500 at agent-start time (PR #24 review item 6).
+    const fbProviderSelect = selectRow(form, 'fallback_provider', providerNames(providerOptions), String(params.fallback_provider ?? ''), '(none)');
+    const fbModelWrap = document.createElement('div');
+    fbModelWrap.className = 'cfg-row';
+    form.appendChild(fbModelWrap);
+
+    let fbSelect: HTMLSelectElement;
+    let fbCustomInput: HTMLInputElement;
+    function renderFallbackModelRow() {
+      fbModelWrap.innerHTML = '';
+      const providerKey = fbProviderSelect.value;
+      const entry = providerOptions.find(p => p.provider === providerKey) ?? null;
+      const models = entry?.models ?? [];
+      const current = String(params.fallback_model ?? '');
+      const label = document.createElement('label');
+      label.className = 'cfg-label';
+      label.textContent = 'fallback_model';
+      fbModelWrap.appendChild(label);
+
+      fbSelect = document.createElement('select');
+      fbSelect.className = 'cfg-input';
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = entry ? `(default: ${entry.default_model})` : '(none)';
+      fbSelect.appendChild(blank);
+      for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        fbSelect.appendChild(opt);
+      }
+      const customOpt = document.createElement('option');
+      customOpt.value = '__custom__';
+      customOpt.textContent = 'Custom…';
+      fbSelect.appendChild(customOpt);
+
+      fbCustomInput = document.createElement('input');
+      fbCustomInput.type = 'text';
+      fbCustomInput.className = 'cfg-input cfg-input-custom';
+      fbCustomInput.placeholder = 'custom model id';
+
+      if (current && models.includes(current)) {
+        fbSelect.value = current;
+        fbCustomInput.classList.add('hidden');
+      } else if (current) {
+        fbSelect.value = '__custom__';
+        fbCustomInput.value = current;
+      } else {
+        fbSelect.value = '';
+        fbCustomInput.classList.add('hidden');
+      }
+
+      fbSelect.addEventListener('change', () => {
+        if (fbSelect.value === '__custom__') {
+          fbCustomInput.classList.remove('hidden');
+          fbCustomInput.focus();
+          params.fallback_model = fbCustomInput.value.trim() || null;
+        } else {
+          fbCustomInput.classList.add('hidden');
+          params.fallback_model = fbSelect.value || null;
+        }
+      });
+      fbCustomInput.addEventListener('input', () => {
+        params.fallback_model = fbCustomInput.value.trim() || null;
+      });
+
+      fbModelWrap.appendChild(fbSelect);
+      fbModelWrap.appendChild(fbCustomInput);
+      params.fallback_model = fbSelect.value === '__custom__'
+        ? (fbCustomInput.value.trim() || null)
+        : (fbSelect.value || null);
+    }
+    renderFallbackModelRow();
+    fbProviderSelect.addEventListener('change', () => {
+      params.fallback_provider = fbProviderSelect.value || null;
+      params.fallback_model = null;
+      renderFallbackModelRow();
+    });
+
+    // ---- Numbers ----
+    const maxIterInput = numberRow(form, 'max_iterations', Number(params.max_iterations ?? 20));
+
+    // ---- Thinking ----
+    // thinking_effort list is provider-specific. `xhigh` is codex-only (model
+    // catalog flags it); without filtering we'd let the user persist an
+    // invalid effort for e.g. openai-responses and it'd 400 at agent start
+    // (PR #24 review items 7/13).
+    const thinkingCheckbox = boolRow(form, 'thinking', Boolean(params.thinking));
+    const thinkingBudgetInput = numberRow(form, 'thinking_budget', Number(params.thinking_budget ?? 8000));
+    function effortsForProvider(key: string): string[] {
+      const entry = providerOptions.find(p => p.provider === key);
+      // Providers with no effort vocabulary (Anthropic/Kimi = budget-style,
+      // plain OpenAI = no thinking) still accept the field on the YAML but
+      // the value is ignored. Surface the full union so the form doesn't
+      // look empty for those providers.
+      const supported = entry?.supported_efforts ?? [];
+      return supported.length ? supported : efforts.filter(e => e !== 'xhigh');
+    }
+    const initialProviderKey = String(params.provider ?? '');
+    const effortOptions = effortsForProvider(initialProviderKey);
+    const thinkingEffortSelect = selectRow(form, 'thinking_effort', effortOptions, String(params.thinking_effort ?? 'high'));
+    // Re-filter when the primary provider flips mid-edit so an invalid
+    // effort can't be persisted for a non-capable provider.
+    providerSelect.addEventListener('change', () => {
+      const newOptions = effortsForProvider(providerSelect.value);
+      const current = thinkingEffortSelect.value;
+      thinkingEffortSelect.innerHTML = '';
+      for (const opt of newOptions) {
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        thinkingEffortSelect.appendChild(o);
+      }
+      thinkingEffortSelect.value = newOptions.includes(current) ? current : 'high';
+    });
+
+    // ---- JSON/YAML-ish complex fields as compact textareas ----
+    const toolProvidersInput = jsonRow(form, 'tool_providers', params.tool_providers);
+    const promptsInput = jsonRow(form, 'prompts', params.prompts);
+    const toolsInput = jsonRow(form, 'tools', params.tools);
+    const skillsInput = jsonRow(form, 'skills', params.skills);
+    const dutyInput = jsonRow(form, 'duty', params.duty);
+
+    // ---- Actions ----
+    const actions = document.createElement('div');
+    actions.className = 'form-row';
     const saveBtn = document.createElement('button');
     saveBtn.className = 'btn-primary';
     saveBtn.textContent = 'Save';
-
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'btn-sm';
     cancelBtn.textContent = 'Cancel';
-
-    saveBtn.addEventListener('click', async () => {
-      try {
-        const parsed = JSON.parse(textarea.value) as Params;
-        const res = await api.setConfig(sessionId, parsed);
-        if (store.currentSessionId !== sessionId) return; // stale guard (Problem 2)
-        store.currentParams = res.params;
-        store.emit('config');
-        editingConfig = false;
-        render();
-      } catch (e) {
-        errorEl.textContent = `Error: ${e}`;
-        errorEl.classList.remove('hidden');
-      }
-    });
-
-    cancelBtn.addEventListener('click', () => {
-      editingConfig = false;
-      render();
-    });
-
-    const actions = document.createElement('div');
-    actions.className = 'form-row';
     actions.appendChild(saveBtn);
     actions.appendChild(cancelBtn);
 
+    cancelBtn.addEventListener('click', () => {
+      configMode = 'view';
+      render();
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      err.classList.add('hidden');
+      err.textContent = '';
+      // Collect values
+      const next: Record<string, unknown> = {
+        name: nameInput.value,
+        description: descInput.value,
+        provider: providerSelect.value || null,
+        model: params.model ?? null,
+        fallback_provider: fbProviderSelect.value || null,
+        fallback_model: (params.fallback_model as string | null) ?? null,
+        max_iterations: Number(maxIterInput.value) || 20,
+        thinking: thinkingCheckbox.checked,
+        thinking_budget: Number(thinkingBudgetInput.value) || 8000,
+        thinking_effort: thinkingEffortSelect.value,
+      };
+      try {
+        next.tool_providers = parseJsonField(toolProvidersInput.value, 'tool_providers');
+        next.prompts = parseJsonField(promptsInput.value, 'prompts');
+        next.tools = parseJsonField(toolsInput.value, 'tools');
+        next.skills = parseJsonField(skillsInput.value, 'skills');
+        next.duty = parseJsonField(dutyInput.value, 'duty');
+      } catch (e) {
+        err.textContent = String(e);
+        err.classList.remove('hidden');
+        return;
+      }
+      try {
+        const res = await api.setConfig(sessionId, next as Params);
+        if (store.currentSessionId !== sessionId) return;
+        store.currentParams = res.params;
+        store.emit('config');
+        configMode = 'view';
+        render();
+      } catch (e) {
+        console.error('setConfig failed:', e);
+        err.textContent = `Save failed: ${e}`;
+        err.classList.remove('hidden');
+      }
+    });
+
     content.innerHTML = '';
-    content.appendChild(textarea);
-    content.appendChild(errorEl);
+    content.appendChild(form);
+    content.appendChild(err);
     content.appendChild(actions);
+  }
+
+  /** Raw YAML editor — edits config.yaml text directly, round-trips via the
+   *  /config/yaml endpoint. */
+  async function showConfigYamlEditor() {
+    const content = el.querySelector('#panel-content');
+    if (!content || !store.currentSessionId) return;
+    const sessionId = store.currentSessionId;
+
+    content.innerHTML = `<div class="config-empty">Loading config.yaml…</div>`;
+    let yamlText = '';
+    try {
+      const resp = await api.getConfigYaml(sessionId);
+      if (store.currentSessionId !== sessionId || configMode !== 'yaml') return;
+      yamlText = resp.yaml;
+    } catch (e) {
+      console.error('getConfigYaml failed:', e);
+      content.innerHTML = `<div class="form-error">Failed to load config.yaml: ${escHtml(String(e))}</div>`;
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'config-json-editor';
+    textarea.rows = 22;
+    textarea.value = yamlText;
+
+    const err = document.createElement('div');
+    err.className = 'form-error hidden';
+
+    const actions = document.createElement('div');
+    actions.className = 'form-row';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn-primary';
+    saveBtn.textContent = 'Save YAML';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-sm';
+    cancelBtn.textContent = 'Cancel';
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+
+    cancelBtn.addEventListener('click', () => {
+      configMode = 'view';
+      render();
+    });
+    saveBtn.addEventListener('click', async () => {
+      err.classList.add('hidden');
+      try {
+        const res = await api.setConfigYaml(sessionId, textarea.value);
+        if (store.currentSessionId !== sessionId) return;
+        store.currentParams = res.params;
+        store.emit('config');
+        configMode = 'view';
+        render();
+      } catch (e) {
+        console.error('setConfigYaml failed:', e);
+        err.textContent = `Save failed: ${e}`;
+        err.classList.remove('hidden');
+      }
+    });
+
+    const hint = document.createElement('div');
+    hint.className = 'cfg-hint';
+    hint.textContent = 'YAML is parsed server-side; comments will be dropped on save.';
+
+    content.innerHTML = '';
+    content.appendChild(hint);
+    content.appendChild(textarea);
+    content.appendChild(err);
+    content.appendChild(actions);
+  }
+
+  function providerNames(options: ProviderCatalogEntry[]): string[] {
+    return options.map(p => p.provider);
+  }
+
+  function textRow(parent: HTMLElement, key: string, value: string, placeholder = ''): HTMLInputElement {
+    const row = document.createElement('div');
+    row.className = 'cfg-row';
+    const label = document.createElement('label');
+    label.className = 'cfg-label';
+    label.textContent = key;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'cfg-input';
+    input.value = value;
+    if (placeholder) input.placeholder = placeholder;
+    row.appendChild(label);
+    row.appendChild(input);
+    parent.appendChild(row);
+    return input;
+  }
+
+  function numberRow(parent: HTMLElement, key: string, value: number): HTMLInputElement {
+    const row = document.createElement('div');
+    row.className = 'cfg-row';
+    const label = document.createElement('label');
+    label.className = 'cfg-label';
+    label.textContent = key;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'cfg-input';
+    input.value = String(value);
+    row.appendChild(label);
+    row.appendChild(input);
+    parent.appendChild(row);
+    return input;
+  }
+
+  function boolRow(parent: HTMLElement, key: string, value: boolean): HTMLInputElement {
+    const row = document.createElement('div');
+    row.className = 'cfg-row';
+    const label = document.createElement('label');
+    label.className = 'cfg-label';
+    label.textContent = key;
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'cfg-checkbox';
+    input.checked = value;
+    row.appendChild(label);
+    row.appendChild(input);
+    parent.appendChild(row);
+    return input;
+  }
+
+  function selectRow(parent: HTMLElement, key: string, options: string[], value: string, blankLabel?: string): HTMLSelectElement {
+    const row = document.createElement('div');
+    row.className = 'cfg-row';
+    const label = document.createElement('label');
+    label.className = 'cfg-label';
+    label.textContent = key;
+    const select = document.createElement('select');
+    select.className = 'cfg-input';
+    if (blankLabel !== undefined) {
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = blankLabel;
+      select.appendChild(blank);
+    }
+    for (const opt of options) {
+      const o = document.createElement('option');
+      o.value = opt;
+      o.textContent = opt;
+      select.appendChild(o);
+    }
+    // If the current value isn't in the list, append it so we don't silently drop it.
+    if (value && !options.includes(value)) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = value;
+      select.appendChild(o);
+    }
+    select.value = value;
+    row.appendChild(label);
+    row.appendChild(select);
+    parent.appendChild(row);
+    return select;
+  }
+
+  function jsonRow(parent: HTMLElement, key: string, value: unknown): HTMLTextAreaElement {
+    const row = document.createElement('div');
+    row.className = 'cfg-row cfg-row-block';
+    const label = document.createElement('label');
+    label.className = 'cfg-label';
+    label.textContent = `${key} (JSON)`;
+    const textarea = document.createElement('textarea');
+    textarea.className = 'cfg-input cfg-textarea';
+    textarea.rows = 3;
+    textarea.value = value === undefined || value === null ? 'null' : JSON.stringify(value, null, 2);
+    row.appendChild(label);
+    row.appendChild(textarea);
+    parent.appendChild(row);
+    return textarea;
+  }
+
+  function parseJsonField(raw: string, field: string): unknown {
+    const text = raw.trim();
+    if (!text || text === 'null') return null;
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error(`${field}: invalid JSON — ${(e as Error).message}`);
+    }
   }
 
   // ================= PANEL TAB =================
@@ -442,11 +913,11 @@ export function createPanel(): HTMLElement {
     if (activeTab === 'panel') render();
   });
   store.on('config', () => {
-    if (activeTab === 'config' && !editingConfig) render();
+    if (activeTab === 'config' && configMode === 'view') render();
   });
   store.on('currentSession', () => {
     editingTask = null;
-    editingConfig = false;
+    configMode = 'view';
     expandedPanel.clear();
     panelDetails.clear();
     store.panelEntries = [];

@@ -22,7 +22,7 @@ class MockProvider(Provider):
 
     async def complete(self, messages, tools, system_prompt, model, *,
                        on_text_chunk=None, cache_system_prefix="",
-                       cache_last_human_turn=False, thinking: bool = False, thinking_budget: int = 8000, thinking_effort: str = "high"):
+                       cache_last_human_turn=False, thinking: bool = False, thinking_budget: int = 8000, thinking_effort: str = "high", on_thinking_start=None, on_thinking_end=None):
         from butterfly.core.types import TokenUsage
         r = next(self._responses)
         text = r[0]

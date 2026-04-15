@@ -349,12 +349,15 @@ class Session:
         self._set_model_status("running", "user")
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
         on_chunk = self._make_text_chunk_callback()
+        on_thinking_start, on_thinking_end, had_thinking = self._make_thinking_callbacks()
         try:
             async with self._agent_lock:
                 self._load_session_capabilities()
                 result = await self._agent.run(
                     message,
                     on_text_chunk=on_chunk,
+                    on_thinking_start=on_thinking_start,
+                    on_thinking_end=on_thinking_end,
                     on_tool_call=tool_call_cb,
                     on_tool_done=self._make_tool_done_callback(),
                     on_loop_start=self._make_loop_start_callback(),
@@ -378,6 +381,8 @@ class Session:
             turn["user_input_id"] = user_input_id
         if get_tool_call_count() > 0:
             turn["has_streaming_tools"] = True
+        if had_thinking():
+            turn["has_streaming_thinking"] = True
         if result.usage and result.usage.total_tokens > 0:
             turn["usage"] = result.usage.as_dict()
         self._append_context(turn)
@@ -420,12 +425,15 @@ class Session:
         self._set_model_status("running", triggered_by)
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
         on_chunk = self._make_text_chunk_callback()
+        on_thinking_start, on_thinking_end, had_thinking = self._make_thinking_callbacks()
         try:
             async with self._agent_lock:
                 self._load_session_capabilities()
                 result = await self._agent.run(
                     prompt,
                     on_text_chunk=on_chunk,
+                    on_thinking_start=on_thinking_start,
+                    on_thinking_end=on_thinking_end,
                     on_tool_call=tool_call_cb,
                     on_tool_done=self._make_tool_done_callback(),
                     on_loop_start=self._make_loop_start_callback(),
@@ -465,6 +473,8 @@ class Session:
                 turn["pre_triggered"] = True
                 if get_tool_call_count() > 0:
                     turn["has_streaming_tools"] = True
+                if had_thinking():
+                    turn["has_streaming_thinking"] = True
                 if result.usage and result.usage.total_tokens > 0:
                     turn["usage"] = result.usage.as_dict()
                 self._append_context(turn)
@@ -891,6 +901,58 @@ class Session:
             return new_content
         # Orphaned real user message — merge with new input
         return f"{last_content}\n\n{new_content}"
+
+    def _make_thinking_callbacks(self):
+        """Return ``(on_thinking_start, on_thinking_end, had_any)``.
+
+        Thinking blocks render as a dedicated tool-like cell in the web UI:
+        ``on_thinking_start`` opens a cell showing "Thinking…" and
+        ``on_thinking_end`` replaces it with the full body (collapsible).
+
+        Each call allocates a fresh ``block_id`` so concurrent / sequential
+        blocks pair correctly on the frontend. Duration is measured
+        server-side and embedded in ``thinking_done`` so the UI does not
+        depend on a wall clock that may have drifted between tabs.
+
+        ``had_any()`` returns True if at least one thinking_done was emitted
+        — used by the caller to mark the completed turn with
+        ``has_streaming_thinking`` so history replay doesn't double-emit.
+        """
+        import time as _time
+
+        counter: list[int] = [0]
+        pending: list[tuple[str, float]] = []  # stack of (block_id, started_at)
+        any_closed: list[bool] = [False]
+
+        def on_thinking_start() -> None:
+            counter[0] += 1
+            block_id = f"th:{int(_time.time() * 1000)}:{counter[0]}"
+            pending.append((block_id, _time.time()))
+            self._append_event({"type": "thinking_start", "block_id": block_id})
+
+        def on_thinking_end(text: str) -> None:
+            if not pending:
+                # Defensive — provider emitted end without start. Synthesize
+                # a block_id so the event is still well-formed; the frontend
+                # will treat it as an immediately-closed cell.
+                counter[0] += 1
+                block_id = f"th:{int(_time.time() * 1000)}:{counter[0]}"
+                started_at = _time.time()
+            else:
+                block_id, started_at = pending.pop()
+            duration_ms = int((_time.time() - started_at) * 1000)
+            self._append_event({
+                "type": "thinking_done",
+                "block_id": block_id,
+                "text": text or "",
+                "duration_ms": duration_ms,
+            })
+            any_closed[0] = True
+
+        def had_any() -> bool:
+            return any_closed[0]
+
+        return on_thinking_start, on_thinking_end, had_any
 
     def _make_text_chunk_callback(self):
         """Return a sync callback that writes throttled partial_text events.

@@ -127,6 +127,8 @@ class CodexProvider(Provider):
         model: str,
         *,
         on_text_chunk: Callable[[str], None] | None = None,
+        on_thinking_start: Callable[[], None] | None = None,
+        on_thinking_end: Callable[[str], None] | None = None,
         cache_system_prefix: str = "",
         cache_last_human_turn: bool = False,
         thinking: bool = False,
@@ -186,7 +188,9 @@ class CodexProvider(Provider):
                                 status, body_bytes.decode("utf-8", errors="replace")[:500]
                             )
                         text, tool_calls, usage, reasoning_items = await _parse_sse_stream(
-                            resp, on_text_chunk
+                            resp, on_text_chunk,
+                            on_thinking_start=on_thinking_start,
+                            on_thinking_end=on_thinking_end,
                         )
                         self._pending_reasoning = reasoning_items
                         return text, tool_calls, usage
@@ -566,12 +570,45 @@ def _convert_tool_result(msg: "Message") -> list[dict[str, Any]]:
 async def _parse_sse_stream(
     resp: Any,
     on_text_chunk: Callable[[str], None] | None,
+    *,
+    on_thinking_start: Callable[[], None] | None = None,
+    on_thinking_end: Callable[[str], None] | None = None,
 ) -> tuple[str, list[ToolCall], TokenUsage, list[dict[str, Any]]]:
     text_parts: list[str] = []
     tc_map: dict[str, dict[str, str]] = {}
     current_tc_id: str | None = None
     reasoning_items: list[dict[str, Any]] = []
     usage = TokenUsage()
+    # Thinking block lifecycle: buffer reasoning deltas locally; deliver as
+    # a single block via on_thinking_end when the item closes. Never leaks
+    # into on_text_chunk (which must remain assistant-text only).
+    thinking_parts: list[str] = []
+    thinking_active = False
+
+    def _start_thinking() -> None:
+        nonlocal thinking_active
+        if thinking_active:
+            return
+        thinking_active = True
+        thinking_parts.clear()
+        if on_thinking_start is not None:
+            try:
+                on_thinking_start()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _end_thinking() -> None:
+        nonlocal thinking_active
+        if not thinking_active:
+            return
+        body = "".join(thinking_parts)
+        thinking_parts.clear()
+        thinking_active = False
+        if on_thinking_end is not None:
+            try:
+                on_thinking_end(body)
+            except Exception:  # noqa: BLE001
+                pass
 
     def _process_block(block: str) -> None:
         """Parse one SSE block (text up to a \\n\\n boundary) and apply events."""
@@ -593,10 +630,13 @@ async def _parse_sse_stream(
 
             if etype == "response.output_item.added":
                 item = event.get("item", {})
-                if item.get("type") == "function_call":
+                itype = item.get("type")
+                if itype == "function_call":
                     call_id = item.get("call_id", str(uuid.uuid4()))
                     tc_map[call_id] = {"name": item.get("name", ""), "args": ""}
                     current_tc_id = call_id
+                elif itype == "reasoning":
+                    _start_thinking()
 
             elif etype == "response.function_call_arguments.delta":
                 delta_call_id = event.get("call_id") or current_tc_id
@@ -620,6 +660,13 @@ async def _parse_sse_stream(
                     if "encrypted_content" in item:
                         captured["encrypted_content"] = item["encrypted_content"]
                     reasoning_items.append(captured)
+                    # Some Codex turns emit the reasoning item.done without a
+                    # prior item.added (pure encrypted reasoning). Treat the
+                    # .done event itself as the open+close lifecycle so the UI
+                    # still gets a "Thought for Xs" pill.
+                    if not thinking_active:
+                        _start_thinking()
+                    _end_thinking()
 
             elif etype == "response.output_text.delta":
                 delta = event.get("delta", "")
@@ -630,13 +677,17 @@ async def _parse_sse_stream(
 
             elif etype == "response.reasoning_text.delta":
                 delta = event.get("delta", "")
-                if delta and on_text_chunk:
-                    on_text_chunk(delta)
+                if delta:
+                    if not thinking_active:
+                        _start_thinking()
+                    thinking_parts.append(delta)
 
             elif etype == "response.reasoning_summary_text.delta":
                 delta = event.get("delta", "")
-                if delta and on_text_chunk:
-                    on_text_chunk(delta)
+                if delta:
+                    if not thinking_active:
+                        _start_thinking()
+                    thinking_parts.append(delta)
 
             elif etype in ("response.completed", "response.done"):
                 resp_data = event.get("response", {})
@@ -682,6 +733,12 @@ async def _parse_sse_stream(
     # JSON is skipped by _process_block.
     if buffer.strip():
         _process_block(buffer)
+
+    # If the stream closed with a reasoning block still open (shouldn't
+    # normally happen — output_item.done is always emitted — but guard
+    # anyway so the UI never gets a dangling "Thinking…" spinner).
+    if thinking_active:
+        _end_thinking()
 
     text = "".join(text_parts)
     tool_calls = [

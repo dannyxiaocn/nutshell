@@ -71,6 +71,24 @@ export interface TaskCard {
   progress: string;
 }
 
+export interface ProviderCatalogEntry {
+  provider: string;
+  label: string;
+  env: string[];
+  supports_thinking: boolean;
+  thinking_style: 'budget' | 'effort' | 'extra_body' | null;
+  /** Effort vocabulary this provider accepts. Empty for providers using
+   *  budget / no thinking style (Anthropic, Kimi, plain OpenAI). */
+  supported_efforts: string[];
+  default_model: string;
+  models: string[];
+}
+
+export interface ModelsCatalog {
+  providers: ProviderCatalogEntry[];
+  thinking_efforts: string[];
+}
+
 export interface DisplayEvent {
   type: string;
   content?: string;
@@ -92,6 +110,10 @@ export interface DisplayEvent {
   id?: string;
   card?: string;
   message?: string;
+  // thinking_start / thinking_done
+  block_id?: string;
+  text?: string;
+  duration_ms?: number;
 }
 
 export type SessionTone = 'running' | 'napping' | 'persistent' | 'stopped' | 'idle' | 'meta';

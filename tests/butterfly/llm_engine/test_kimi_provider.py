@@ -303,15 +303,19 @@ async def test_kimi_thinking_stream_routes_to_regular_messages():
 
 
 @pytest.mark.asyncio
-async def test_kimi_thinking_stream_falls_back_to_final_thinking_block():
-    """When stream lacks thinking_delta, final message thinking block is replayed."""
+async def test_kimi_thinking_stream_routes_to_thinking_hooks_not_text_chunks():
+    """v2.0.9: when stream lacks thinking_delta, final message thinking is
+    delivered to on_thinking_start / on_thinking_end — never to on_text_chunk.
+    """
     provider = _make_provider()
 
     events = [
+        SimpleNamespace(type="content_block_start", content_block=SimpleNamespace(type="text")),
         SimpleNamespace(
             type="content_block_delta",
             delta=SimpleNamespace(type="text_delta", text="answer"),
         ),
+        SimpleNamespace(type="content_block_stop"),
     ]
     final_message = SimpleNamespace(
         content=[
@@ -333,6 +337,8 @@ async def test_kimi_thinking_stream_falls_back_to_final_thinking_block():
     )
 
     chunks: list[str] = []
+    thinking_starts: list[None] = []
+    thinking_bodies: list[str] = []
     text, tool_calls, usage = await provider.complete(
         messages=[Message(role="user", content="hi")],
         tools=[],
@@ -340,9 +346,13 @@ async def test_kimi_thinking_stream_falls_back_to_final_thinking_block():
         model="kimi-k2",
         thinking=True,
         on_text_chunk=chunks.append,
+        on_thinking_start=lambda: thinking_starts.append(None),
+        on_thinking_end=thinking_bodies.append,
     )
 
-    assert chunks == ["answer", "reasoning..."]
+    assert chunks == ["answer"]
+    assert len(thinking_starts) == 1
+    assert thinking_bodies == ["reasoning..."]
     assert text == "answer"
     assert tool_calls == []
 

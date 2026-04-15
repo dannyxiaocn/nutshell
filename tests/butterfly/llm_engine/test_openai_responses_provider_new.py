@@ -392,13 +392,19 @@ async def test_stream_text_deltas():
 
 
 @pytest.mark.asyncio
-async def test_stream_reasoning_deltas_forwarded_to_callback():
-    """Reasoning text deltas are forwarded to on_text_chunk."""
+async def test_stream_reasoning_deltas_routed_to_thinking_hooks():
+    """v2.0.9: reasoning deltas go to on_thinking_start / on_thinking_end
+    (buffered, flushed on block close) — they never leak into on_text_chunk.
+    """
     provider = _make_provider()
 
     events = [
         _stream_event("response.reasoning_text.delta", delta="think"),
         _stream_event("response.reasoning_summary_text.delta", delta="sum"),
+        _stream_event(
+            "response.output_item.done",
+            item=SimpleNamespace(type="reasoning", id="rs_1", summary=[]),
+        ),
         _stream_event("response.output_text.delta", delta="ok"),
     ]
     final = _make_final_response()
@@ -410,10 +416,22 @@ async def test_stream_reasoning_deltas_forwarded_to_callback():
     )
 
     chunks: list[str] = []
-    text, tcs, usage = await provider._stream({"model": "gpt-5"}, chunks.append)
+    thinking_starts: list[None] = []
+    thinking_bodies: list[str] = []
+    text, tcs, usage = await provider._stream(
+        {"model": "gpt-5"},
+        chunks.append,
+        on_thinking_start=lambda: thinking_starts.append(None),
+        on_thinking_end=thinking_bodies.append,
+    )
 
-    assert chunks == ["think", "sum", "ok"]
-    assert text == "ok"  # reasoning deltas are NOT accumulated into text
+    # assistant text channel stays clean
+    assert chunks == ["ok"]
+    assert text == "ok"
+    # thinking lifecycle landed on the dedicated hooks (buffered then
+    # flushed as a single body on item.done)
+    assert len(thinking_starts) == 1
+    assert thinking_bodies == ["thinksum"]
 
 
 @pytest.mark.asyncio

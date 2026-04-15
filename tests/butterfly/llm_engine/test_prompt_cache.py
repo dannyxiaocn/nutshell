@@ -414,7 +414,7 @@ async def test_agent_loop_round_trips_reasoning_blocks():
         async def complete(self, messages, tools, system_prompt, model, *,
                            on_text_chunk=None, cache_system_prefix="",
                            cache_last_human_turn=False, thinking=False,
-                           thinking_budget=8000, thinking_effort="high"):
+                           thinking_budget=8000, thinking_effort="high", on_thinking_start=None, on_thinking_end=None):
             seen_messages.append(list(messages))
             self._turn += 1
             if self._turn == 1:
@@ -465,7 +465,7 @@ async def test_agent_loop_handles_provider_without_consume_extra_blocks():
         async def complete(self, messages, tools, system_prompt, model, *,
                            on_text_chunk=None, cache_system_prefix="",
                            cache_last_human_turn=False, thinking=False,
-                           thinking_budget=8000, thinking_effort="high"):
+                           thinking_budget=8000, thinking_effort="high", on_thinking_start=None, on_thinking_end=None):
             return ("plain reply", [], TokenUsage())
 
     # Monkey-patch out the default consume_extra_blocks from the base class to
@@ -488,7 +488,7 @@ async def test_agent_accumulates_usage_over_tool_loops():
     from butterfly.core.tool import tool
 
     class CountingProvider(Provider):
-        async def complete(self, messages, tools, system_prompt, model, *, on_text_chunk=None, cache_system_prefix="", cache_last_human_turn=False, thinking: bool = False, thinking_budget: int = 8000, thinking_effort: str = "high"):
+        async def complete(self, messages, tools, system_prompt, model, *, on_text_chunk=None, cache_system_prefix="", cache_last_human_turn=False, thinking: bool = False, thinking_budget: int = 8000, thinking_effort: str = "high", on_thinking_start=None, on_thinking_end=None):
             from butterfly.core.types import TokenUsage
             if len(messages) <= 2:  # first call: return tool_call
                 return ("", [ToolCall(id="1", name="noop", input={})], TokenUsage(input_tokens=10, output_tokens=5))

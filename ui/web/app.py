@@ -30,8 +30,10 @@ from butterfly.service import (
     create_session as service_create_session,
     delete_session as service_delete_session,
     get_config as service_get_config,
+    get_config_yaml as service_get_config_yaml,
     get_history as service_get_history,
     get_hud as service_get_hud,
+    get_models_catalog as service_get_models_catalog,
     get_session as service_get_session,
     get_tasks as service_get_tasks,
     interrupt_session as service_interrupt_session,
@@ -41,6 +43,7 @@ from butterfly.service import (
     start_session as service_start_session,
     stop_session as service_stop_session,
     update_config as service_update_config,
+    update_config_yaml as service_update_config_yaml,
     upsert_task as service_upsert_task,
     delete_task as service_delete_task,
 )
@@ -414,6 +417,38 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
         except (FileNotFoundError, ValueError) as exc:
             _raise_session_error(exc, session_id)
         return {"ok": True, "params": saved}
+
+    @app.get("/api/sessions/{session_id}/config/yaml")
+    async def get_config_yaml(session_id: str):
+        """Return raw YAML text of the session's config.yaml.
+
+        Web UI uses this for the raw-YAML editor tab so it can round-trip the
+        on-disk file byte-for-byte (comments stripped by PyYAML, but field
+        order and quoting semantics preserved).
+        """
+        try:
+            text = service_get_config_yaml(session_id, sessions_dir, system_sessions_dir)
+        except (FileNotFoundError, ValueError) as exc:
+            _raise_session_error(exc, session_id)
+        return {"yaml": text}
+
+    @app.put("/api/sessions/{session_id}/config/yaml")
+    async def set_config_yaml(session_id: str, body: dict):
+        text = body.get("yaml")
+        if not isinstance(text, str):
+            raise HTTPException(400, "Body must include 'yaml' string")
+        try:
+            saved = service_update_config_yaml(session_id, sessions_dir, system_sessions_dir, text)
+        except (FileNotFoundError,) as exc:
+            _raise_session_error(exc, session_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"ok": True, "params": saved}
+
+    @app.get("/api/models")
+    async def get_models():
+        """Return the provider → models catalog used by the config editor."""
+        return service_get_models_catalog()
 
     @app.delete("/api/sessions/{session_id}")
     async def delete_session(session_id: str):

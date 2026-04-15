@@ -104,12 +104,18 @@ class OpenAIProvider(Provider):
         model: str,
         *,
         on_text_chunk: Callable[[str], None] | None = None,
+        on_thinking_start: Callable[[], None] | None = None,
+        on_thinking_end: Callable[[str], None] | None = None,
         cache_system_prefix: str = "",
         cache_last_human_turn: bool = False,
         thinking: bool = False,
         thinking_budget: int = 8000,  # ignored — Chat Completions uses reasoning_effort
         thinking_effort: str = "high",
     ) -> tuple[str, list[ToolCall], TokenUsage]:
+        # Chat Completions has no thinking visibility — accept the hooks for
+        # interface parity but never invoke them. All text goes to
+        # on_text_chunk as usual.
+        del on_thinking_start, on_thinking_end  # unused
         api_messages = _build_messages(system_prompt, messages, cache_system_prefix)
         api_tools = [_tool_to_openai(t) for t in tools] if tools else []
 

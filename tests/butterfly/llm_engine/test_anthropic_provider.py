@@ -29,7 +29,12 @@ class _FakeStream:
 
 
 @pytest.mark.asyncio
-async def test_complete_streams_thinking_and_text_chunks_in_order():
+async def test_complete_streams_thinking_via_thinking_hooks_not_text_chunks():
+    """Thinking deltas MUST NOT leak into the main on_text_chunk stream.
+
+    v2.0.9 redesign: provider emits on_thinking_start()/on_thinking_end(body)
+    around the thinking block. on_text_chunk only receives assistant text.
+    """
     provider = AnthropicProvider.__new__(AnthropicProvider)
     provider.max_tokens = 123
 
@@ -40,14 +45,18 @@ async def test_complete_streams_thinking_and_text_chunks_in_order():
         ]
     )
     events = [
+        SimpleNamespace(type="content_block_start", content_block=SimpleNamespace(type="thinking")),
         SimpleNamespace(
             type="content_block_delta",
             delta=SimpleNamespace(type="thinking_delta", thinking="reasoning..."),
         ),
+        SimpleNamespace(type="content_block_stop"),
+        SimpleNamespace(type="content_block_start", content_block=SimpleNamespace(type="text")),
         SimpleNamespace(
             type="content_block_delta",
             delta=SimpleNamespace(type="text_delta", text="final answer"),
         ),
+        SimpleNamespace(type="content_block_stop"),
     ]
     provider._client = SimpleNamespace(
         messages=SimpleNamespace(
@@ -56,21 +65,33 @@ async def test_complete_streams_thinking_and_text_chunks_in_order():
     )
 
     chunks: list[str] = []
+    thinking_starts: list[None] = []
+    thinking_bodies: list[str] = []
     content, tool_calls, usage = await provider.complete(
         messages=[Message(role="user", content="hi")],
         tools=[],
         system_prompt="system",
         model="claude-test",
         on_text_chunk=chunks.append,
+        on_thinking_start=lambda: thinking_starts.append(None),
+        on_thinking_end=thinking_bodies.append,
     )
 
-    assert chunks == ["reasoning...", "final answer"]
+    # Assistant-text channel stays clean
+    assert chunks == ["final answer"]
+    # Thinking lifecycle landed on the dedicated hooks
+    assert len(thinking_starts) == 1
+    assert thinking_bodies == ["reasoning..."]
     assert content == "final answer"
     assert tool_calls == []
 
 
 @pytest.mark.asyncio
-async def test_complete_falls_back_to_final_thinking_block_when_stream_has_no_thinking_delta():
+async def test_complete_emits_thinking_lifecycle_when_stream_has_no_thinking_delta():
+    """Non-stream fallback path: final message has a thinking block but the
+    stream never yielded one. We still synthesize on_thinking_start +
+    on_thinking_end from the final message, and the text chunk is clean.
+    """
     provider = AnthropicProvider.__new__(AnthropicProvider)
     provider.max_tokens = 123
 
@@ -81,10 +102,12 @@ async def test_complete_falls_back_to_final_thinking_block_when_stream_has_no_th
         ]
     )
     events = [
+        SimpleNamespace(type="content_block_start", content_block=SimpleNamespace(type="text")),
         SimpleNamespace(
             type="content_block_delta",
             delta=SimpleNamespace(type="text_delta", text="final answer"),
         ),
+        SimpleNamespace(type="content_block_stop"),
     ]
     provider._client = SimpleNamespace(
         messages=SimpleNamespace(
@@ -93,15 +116,21 @@ async def test_complete_falls_back_to_final_thinking_block_when_stream_has_no_th
     )
 
     chunks: list[str] = []
+    thinking_starts: list[None] = []
+    thinking_bodies: list[str] = []
     content, tool_calls, usage = await provider.complete(
         messages=[Message(role="user", content="hi")],
         tools=[],
         system_prompt="system",
         model="claude-test",
         on_text_chunk=chunks.append,
+        on_thinking_start=lambda: thinking_starts.append(None),
+        on_thinking_end=thinking_bodies.append,
     )
 
-    assert chunks == ["final answer", "reasoning..."]
+    assert chunks == ["final answer"]
+    assert len(thinking_starts) == 1
+    assert thinking_bodies == ["reasoning..."]
     assert content == "final answer"
     assert tool_calls == []
 
