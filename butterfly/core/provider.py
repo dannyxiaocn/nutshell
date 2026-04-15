@@ -50,5 +50,14 @@ class Provider(ABC):
         """
         return []
 
+    async def aclose(self) -> None:
+        """Release provider-held resources (HTTP pools, websockets, caches).
+
+        Default is a no-op. Providers that hold a long-lived SDK client
+        (Anthropic, OpenAI) override this to close the underlying connection
+        pool so the caller's shutdown path doesn't leak sockets.
+        """
+        return None
+
 
 __all__ = ["Provider"]

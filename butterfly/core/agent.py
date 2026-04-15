@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import logging
 from typing import Any
 
 from butterfly.core.hook import OnLoopEnd, OnLoopStart, OnTextChunk, OnToolCall, OnToolDone
@@ -7,6 +8,8 @@ from butterfly.core.provider import Provider
 from butterfly.core.skill import Skill
 from butterfly.core.tool import Tool
 from butterfly.core.types import AgentResult, Message, ToolCall
+
+_log = logging.getLogger(__name__)
 
 
 _DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -77,11 +80,27 @@ class Agent:
         return self._provider
 
     def _get_fallback_provider(self) -> "Provider | None":
+        """Resolve the fallback provider, caching the result.
+
+        Precedence:
+          * ``fallback_provider`` (registry key) wins when set — resolved once.
+          * Otherwise, if only ``fallback_model`` is configured, fall back to
+            the primary provider class so the caller can retry the same
+            backend with a different model. (Previously this silently
+            returned ``None`` and the fallback never fired.)
+          * Neither set → no fallback.
+        """
         if not self._fallback_provider_str and not self.fallback_model:
             return None
-        if self._fallback_provider is None and self._fallback_provider_str:
+        if self._fallback_provider is not None:
+            return self._fallback_provider
+        if self._fallback_provider_str:
             from butterfly.llm_engine.registry import resolve_provider
             self._fallback_provider = resolve_provider(self._fallback_provider_str)
+            return self._fallback_provider
+        # fallback_model set but no fallback_provider — reuse the primary
+        # provider instance; the run loop will pass fallback_model as the model.
+        self._fallback_provider = self.provider
         return self._fallback_provider
 
     # Memory layers longer than this many lines are truncated in the prompt.
@@ -91,9 +110,12 @@ class Agent:
     @classmethod
     def _render_memory_layer(cls, name: str, content: str) -> str:
         """Render a named memory layer, truncating large ones for prompt efficiency."""
-        lines = content.split("\n")
+        # splitlines() handles \r\n / \r / \n uniformly; re-joining on \n
+        # on both branches strips stray \r on Windows-style files.
+        lines = content.splitlines()
+        normalised = "\n".join(lines)
         if len(lines) <= cls._MEMORY_LAYER_INLINE_LINES:
-            return f"## Memory: {name}\n\n{content}"
+            return f"## Memory: {name}\n\n{normalised}"
         head = "\n".join(lines[: cls._MEMORY_LAYER_INLINE_LINES])
         omitted = len(lines) - cls._MEMORY_LAYER_INLINE_LINES
         hint = f"... ({omitted} lines omitted — full content: `cat core/memory/{name}.md`)"
@@ -199,13 +221,38 @@ class Agent:
                     thinking_budget=self.thinking_budget,
                     thinking_effort=self.thinking_effort,
                 )
-            except Exception as primary_exc:
-                fb_provider = self._get_fallback_provider()
-                if fb_provider is None or active_provider is fb_provider:
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                # Cancellation / interrupt must propagate, not be swallowed
+                # as a "provider failure".
+                raise
+            except Exception as primary_exc:  # noqa: BLE001 - narrowed below
+                # Only fall back on the butterfly error taxonomy + low-level
+                # transport errors (connection resets, TLS, DNS). Plain
+                # Python errors (TypeError, ValueError) indicate logic bugs
+                # and should propagate. Deferred import avoids a circular
+                # dependency at module load.
+                from butterfly.llm_engine.errors import ProviderError as _ProviderError
+
+                if not isinstance(primary_exc, (_ProviderError, OSError)):
                     raise
-                print(f"[agent] Primary provider failed ({primary_exc}), switching to fallback")
+                fb_provider = self._get_fallback_provider()
+                fb_model = self.fallback_model or active_model
+                # Only block the retry if both provider class AND model would be
+                # unchanged — otherwise a "same provider, different model"
+                # fallback (common when only ``fallback_model`` is set) is a
+                # legitimate retry path.
+                if fb_provider is None or (
+                    active_provider is fb_provider and fb_model == active_model
+                ):
+                    raise
+                # Log the exception TYPE, not str(exc) — provider error
+                # messages can contain request bodies, tokens, or tracebacks.
+                _log.warning(
+                    "primary provider failed (%s); switching to fallback",
+                    type(primary_exc).__name__,
+                )
                 active_provider = fb_provider
-                active_model = self.fallback_model or active_model
+                active_model = fb_model
                 content, tool_calls, turn_usage = await active_provider.complete(
                     messages=messages,
                     tools=self.tools,
@@ -219,9 +266,8 @@ class Agent:
                     thinking_effort=self.thinking_effort,
                 )
             total_usage = total_usage + turn_usage
-            on_text_chunk = None
 
-            extra_blocks = getattr(active_provider, "consume_extra_blocks", lambda: [])()
+            extra_blocks = active_provider.consume_extra_blocks()
 
             assistant_content: Any = content
             if tool_calls or extra_blocks:
@@ -263,8 +309,32 @@ class Agent:
         return result
 
     def close(self) -> None:
-        """Clear conversation history."""
+        """Clear conversation history. Synchronous; does not release HTTP pools.
+
+        For full cleanup (closing the provider's underlying SDK / HTTP pool),
+        await ``aclose()`` instead.
+        """
         self._history = []
+
+    async def aclose(self) -> None:
+        """Async cleanup: clear history and close primary + fallback providers.
+
+        Safe to call multiple times. Errors during provider close are
+        swallowed individually so one failing provider doesn't strand the
+        other's resources. When the fallback provider reuses the primary
+        instance (only-``fallback_model`` path), the underlying SDK client
+        is only closed once.
+        """
+        self._history = []
+        seen: set[int] = set()
+        for prov in (self._provider, self._fallback_provider):
+            if prov is None or id(prov) in seen:
+                continue
+            seen.add(id(prov))
+            try:
+                await prov.aclose()
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                _log.debug("provider aclose failed", exc_info=True)
 
 
 async def _execute_tools(

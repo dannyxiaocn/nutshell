@@ -23,7 +23,9 @@ from butterfly.llm_engine.providers.codex import (
     _build_request_body,
     _convert_assistant,
     _convert_messages,
+    _convert_tool_result,
     _extract_usage,
+    _is_codex_compatible_model,
     _parse_retry_after,
     _raise_from_status,
     _raise_stream_error,
@@ -31,8 +33,11 @@ from butterfly.llm_engine.providers.codex import (
 )
 
 
-def test_default_model_is_gpt5_codex():
-    assert CodexProvider.DEFAULT_MODEL == "gpt-5-codex"
+def test_default_model_is_gpt5():
+    # ChatGPT-OAuth backend rejects "gpt-5-codex" with 400 even though
+    # codex-rs defaults to it; we keep "gpt-5.4" until the backend supports
+    # the codex model IDs.
+    assert CodexProvider.DEFAULT_MODEL == "gpt-5.4"
 
 
 def test_build_request_body_thinking_includes_encrypted_content():
@@ -416,3 +421,105 @@ def test_convert_assistant_reasoning_without_encrypted_content():
     assert items[0]["type"] == "reasoning"
     assert "encrypted_content" not in items[0]
     assert items[0]["id"] == "rs_x"
+
+
+# ── BUG-7 regression: model-substitution no longer couples to claude-sonnet-4-6 ──
+
+
+@pytest.mark.parametrize("model, expected", [
+    ("gpt-5.4", True),
+    ("gpt-5-codex", True),
+    ("o3-mini", True),
+    ("", False),
+    (None, False),
+    ("claude-sonnet-4-6", False),
+    ("claude-opus-4-6", False),
+    ("claude-haiku-4-5", False),
+])
+def test_is_codex_compatible_model(model, expected):
+    assert _is_codex_compatible_model(model) is expected
+
+
+# ── BUG-8 regression: multi-text tool_result concatenation ──
+
+
+def test_convert_tool_result_multi_text_concatenated_without_space():
+    msg = Message(
+        role="tool",
+        content=[{
+            "type": "tool_result",
+            "tool_use_id": "tc-x",
+            "content": [{"type": "text", "text": "foo"}, {"type": "text", "text": "bar"}],
+        }],
+    )
+    items = _convert_tool_result(msg)
+    # Byte-for-byte concatenation — no stray space (BUG-8).
+    assert items[0]["output"] == "foobar"
+
+
+# ── BUG-6 regression: invalid thinking_effort falls back to "medium" ──
+
+
+@pytest.mark.asyncio
+async def test_complete_invalid_effort_sends_medium_in_body(monkeypatch):
+    """An invalid thinking_effort must produce reasoning.effort=medium on the wire.
+
+    Addresses the cubic P3 comment on PR #20: the earlier test only asserted
+    set membership, which didn't actually exercise the clamp. This intercepts
+    the real httpx request body and inspects reasoning.effort.
+    """
+    import httpx
+
+    from butterfly.llm_engine.providers import codex as codex_mod
+    from butterfly.core.types import Message
+
+    provider = CodexProvider.__new__(CodexProvider)
+    provider.max_tokens = 100
+    provider._conversation_id = "test-conv"
+    provider._pending_reasoning = []
+
+    async def fake_get_auth_async(self, *, force_refresh=False, rejected_token=""):
+        return "token", "acct-1"
+
+    provider._get_auth_async = fake_get_auth_async.__get__(provider, CodexProvider)
+
+    captured_body: dict = {}
+
+    class _FakeResponse:
+        status_code = 200
+        async def aread(self):
+            return b""
+        async def aiter_bytes(self):
+            # Emit a single response.completed event so _parse_sse_stream terminates cleanly.
+            yield b'data: {"type":"response.completed","response":{"usage":{}}}\n\n'
+
+    class _FakeStreamCtx:
+        def __init__(self, body):
+            captured_body.update(body)
+        async def __aenter__(self):
+            return _FakeResponse()
+        async def __aexit__(self, *args):
+            return False
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        def stream(self, method, url, *, headers, json, **kw):
+            return _FakeStreamCtx(json)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    await provider.complete(
+        messages=[Message(role="user", content="hi")],
+        tools=[],
+        system_prompt="sys",
+        model="gpt-5.4",
+        thinking=True,
+        thinking_effort="bogus",  # invalid — must clamp to "medium"
+    )
+
+    assert captured_body.get("reasoning", {}).get("effort") == "medium"

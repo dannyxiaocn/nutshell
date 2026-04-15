@@ -101,7 +101,7 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                                 thinking_ev: dict = {"type": "thinking", "content": thinking_text, "ts": ts}
                                 # Always set id (not guarded by for_history) so thinking events
                                 # returned by the history endpoint can also be deduped client-side,
-                                # preventing repeat renders on visibilitychange (Bug 4).
+                                # preventing repeat renders on visibilitychange.
                                 thinking_ev["id"] = f"thinking:{ts}:{thinking_idx}"
                                 thinking_idx += 1
                                 result.append(thinking_ev)

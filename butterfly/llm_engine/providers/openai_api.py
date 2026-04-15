@@ -11,7 +11,16 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 from butterfly.core.provider import Provider
 from butterfly.core.types import TokenUsage, ToolCall
-from butterfly.llm_engine.providers._common import _parse_json_args
+from butterfly.llm_engine.errors import (
+    AuthError,
+    BadRequestError,
+    ContextWindowExceededError,
+    ProviderError,
+    ProviderTimeoutError,
+    RateLimitError,
+    ServerError,
+)
+from butterfly.llm_engine.providers._common import _parse_json_args, stringify_tool_result_content
 
 if TYPE_CHECKING:
     from butterfly.core.types import Message
@@ -20,10 +29,19 @@ if TYPE_CHECKING:
 
 # Reasoning-family models want ``max_completion_tokens`` and ``reasoning_effort``,
 # and reject ``temperature`` / ``top_p`` / ``presence_penalty`` / ``frequency_penalty``.
-_REASONING_MODEL_RE = re.compile(r"^(o\d|gpt-5|gpt-oss)", re.IGNORECASE)
+#
+# Anchoring: ``gpt-5`` is followed only by end-of-string / ``.`` / ``-`` so
+# ``gpt-5x-legacy`` (a hypothetical non-reasoning derivative) does NOT match.
+# In contrast ``gpt-oss-*`` and ``o\d+-*`` match any suffix on purpose — every
+# member of those families (``gpt-oss-20b``, ``gpt-oss-120b``, custom fine-tunes
+# like ``gpt-oss-custom``, ``o3-mini``, ``o4-mini-high`` …) is a reasoning model.
+_REASONING_MODEL_RE = re.compile(r"^(o\d+(?:$|-)|gpt-5(?:$|\.|-)|gpt-oss(?:$|-))", re.IGNORECASE)
 
 # Valid reasoning_effort values per OpenAI schema.
 _OPENAI_EFFORTS = {"minimal", "low", "medium", "high", "xhigh", "none"}
+
+# Params the Chat Completions API rejects on reasoning models.
+_REASONING_DISALLOWED_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty", "logprobs", "top_logprobs")
 
 
 def _is_reasoning_model(model: str) -> bool:
@@ -71,6 +89,13 @@ class OpenAIProvider(Provider):
         self._client = AsyncOpenAI(**client_kwargs)
         self.max_tokens = max_tokens
 
+    async def aclose(self) -> None:
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+
     async def complete(
         self,
         messages: list["Message"],
@@ -99,9 +124,13 @@ class OpenAIProvider(Provider):
         if api_tools:
             kwargs["tools"] = api_tools
 
-        if on_text_chunk is not None:
-            return await self._stream_complete(kwargs, on_text_chunk)
-        return await self._non_stream_complete(kwargs)
+        try:
+            if on_text_chunk is not None:
+                return await self._stream_complete(kwargs, on_text_chunk)
+            return await self._non_stream_complete(kwargs)
+        except Exception as exc:  # noqa: BLE001 - mapped below
+            _maybe_raise_mapped_openai_error(exc)
+            raise
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -178,14 +207,19 @@ def _apply_model_specific_params(
     """Normalize per-model Chat Completions params.
 
     Reasoning-family models (o-series, gpt-5) want ``max_completion_tokens`` +
-    ``reasoning_effort`` and reject ``temperature`` / ``top_p``. For everything
-    else we keep the legacy ``max_tokens``.
+    ``reasoning_effort`` and reject ``temperature`` / ``top_p`` /
+    ``presence_penalty`` / ``frequency_penalty`` / ``logprobs``. We scrub
+    those unconditionally so upstream defaults or accidentally-passed params
+    don't 400 the request. Legacy models keep ``max_tokens``.
     """
     if _is_reasoning_model(model):
         kwargs["max_completion_tokens"] = max_tokens
+        for disallowed in _REASONING_DISALLOWED_PARAMS:
+            kwargs.pop(disallowed, None)
         if thinking:
             effort = thinking_effort if thinking_effort in _OPENAI_EFFORTS else "medium"
-            kwargs["reasoning_effort"] = effort
+            if effort != "none":
+                kwargs["reasoning_effort"] = effort
     else:
         kwargs["max_tokens"] = max_tokens
 
@@ -242,9 +276,17 @@ def _build_messages(
                         # skipped — they don't round-trip through Chat Completions.
                     else:
                         text_parts.append(str(block))
+                text = "".join(text_parts)
+                # If the only blocks were provider-opaque (e.g. Codex
+                # reasoning) the assistant turn filters down to empty text +
+                # no tool_calls. Chat Completions rejects a message with
+                # both `content=None` and no `tool_calls`, so substitute a
+                # minimal placeholder to keep the turn valid.
+                if not text and not tool_calls_api:
+                    text = "[continued]"
                 entry: dict[str, Any] = {
                     "role": "assistant",
-                    "content": "".join(text_parts) or None,
+                    "content": text if text else None,
                 }
                 if tool_calls_api:
                     entry["tool_calls"] = tool_calls_api
@@ -268,16 +310,9 @@ def _build_messages(
     return result
 
 
-def _stringify_tool_result(content: Any) -> str:
-    if isinstance(content, list):
-        parts = []
-        for b in content:
-            if isinstance(b, dict) and b.get("type") == "text":
-                parts.append(b.get("text", ""))
-            else:
-                parts.append(str(b))
-        return "".join(parts)
-    return str(content)
+# Kept for backwards-compat test imports; delegates to the shared helper
+# so rendering is byte-for-byte identical to codex / openai_responses.
+_stringify_tool_result = stringify_tool_result_content
 
 
 def _tool_to_openai(tool: "Tool") -> dict[str, Any]:
@@ -340,13 +375,74 @@ def _extract_usage_from_obj(usage: Any) -> TokenUsage:
 
 
 def _tc_map_to_list(tc_map: dict[int, dict[str, Any]]) -> list[ToolCall]:
-    """Convert accumulated streaming tool-call fragments to ToolCall list."""
-    return [
-        ToolCall(
-            id=entry["id"],
-            name=entry["name"],
-            input=_parse_json_args(entry["arguments"]),
+    """Convert accumulated streaming tool-call fragments to ToolCall list.
+
+    Skips entries where the name never arrived — matches the filter in the
+    Codex and OpenAI Responses providers, so a malformed stream doesn't
+    surface an unnamed ``ToolCall`` downstream.
+    """
+    result: list[ToolCall] = []
+    for idx in sorted(tc_map):
+        entry = tc_map[idx]
+        if not entry["name"]:
+            continue
+        result.append(
+            ToolCall(
+                id=entry["id"],
+                name=entry["name"],
+                input=_parse_json_args(entry["arguments"]),
+            )
         )
-        for idx in sorted(tc_map)
-        for entry in (tc_map[idx],)
-    ]
+    return result
+
+
+def _maybe_raise_mapped_openai_error(exc: BaseException) -> None:
+    """Translate an openai-SDK exception into the butterfly error taxonomy.
+
+    The OpenAI SDK raises types like ``openai.RateLimitError``,
+    ``AuthenticationError``, ``APIConnectionError`` etc. Callers wrap
+    ``complete`` in ``try/except`` and pass the raised exception in; we
+    inspect status + type + message, raise the mapped butterfly error when
+    recognized, and return silently (so the caller re-raises the original)
+    for unrecognized cases. No-op on BaseException subclasses like
+    ``KeyboardInterrupt`` so cancellation still propagates.
+    """
+    import asyncio
+
+    if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+        return
+
+    exc_name = type(exc).__name__
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    message = str(exc) or exc_name
+
+    if exc_name in ("AuthenticationError", "PermissionDeniedError") or status in (401, 403):
+        raise AuthError(f"OpenAI auth error: {message}", provider="openai", status=status) from exc
+    if exc_name == "RateLimitError" or status == 429:
+        raise RateLimitError(
+            f"OpenAI rate limit: {message}", provider="openai", status=status
+        ) from exc
+    lowered = message.lower()
+    if "context_length_exceeded" in lowered or "maximum context length" in lowered:
+        raise ContextWindowExceededError(
+            f"OpenAI context length exceeded: {message}", provider="openai", status=status
+        ) from exc
+    if exc_name == "BadRequestError" or status == 400:
+        raise BadRequestError(
+            f"OpenAI bad request: {message}", provider="openai", status=status
+        ) from exc
+    if exc_name in ("APITimeoutError",) or "timeout" in lowered:
+        raise ProviderTimeoutError(
+            f"OpenAI request timed out: {message}", provider="openai", status=status
+        ) from exc
+    if status and 500 <= status < 600:
+        raise ServerError(
+            f"OpenAI server error: {message}", provider="openai", status=status
+        ) from exc
+    if exc_name in ("APIConnectionError",):
+        raise ProviderError(
+            f"OpenAI connection error: {message}", provider="openai", status=status
+        ) from exc
+    # Unrecognized — caller re-raises the original exception.

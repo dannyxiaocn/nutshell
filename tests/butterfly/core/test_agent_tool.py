@@ -9,6 +9,7 @@ from butterfly.core.provider import Provider
 from butterfly.core.skill import Skill
 from butterfly.core.tool import _python_type_to_json_schema, tool
 from butterfly.core.types import TokenUsage, ToolCall
+from butterfly.llm_engine.errors import ProviderError
 
 
 class _SequenceProvider(Provider):
@@ -47,7 +48,9 @@ class _FailingProvider(Provider):
         thinking_budget=8000,
         thinking_effort="high",
     ):
-        raise RuntimeError("primary failure")
+        # Bug 23: Agent.run only fails over on ProviderError / OSError now.
+        # Raise ProviderError to mimic a real provider failure.
+        raise ProviderError("primary failure", provider="test")
 
 
 class CoreAgentToolTest(unittest.IsolatedAsyncioTestCase):
