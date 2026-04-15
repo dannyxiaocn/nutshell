@@ -8,7 +8,8 @@ Each task card is a .json file:
       "status": "pending",
       "interval": 3600,
       "start_at": "2026-04-12T11:00:00",
-      "end_at": "2026-04-19T10:00:00",
+      "end_at": null,                        # None = never expires (default)
+      # e.g. set "end_at": "2026-04-19T10:00:00" for a bounded window
       "created_at": "2026-04-12T10:00:00",
       "last_started_at": null,
       "last_finished_at": null,

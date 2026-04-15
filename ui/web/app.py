@@ -448,7 +448,7 @@ def main() -> None:
     from butterfly.runtime.env import load_dotenv
     load_dotenv()
     parser = argparse.ArgumentParser(description="Butterfly Web UI")
-    parser.add_argument("--port", type=int, default=_DEFAULT_PORT)
+    parser.add_argument("--port", type=int, default=_DEFAULT_PORT, help="HTTP port (default: %(default)s)")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--sessions-dir", default=str(SESSIONS_DIR), metavar="DIR")
     parser.add_argument("--system-sessions-dir", default=str(_SYSTEM_SESSIONS_DIR), metavar="DIR")
