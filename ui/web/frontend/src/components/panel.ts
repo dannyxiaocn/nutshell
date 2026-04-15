@@ -7,7 +7,15 @@ import { renderTaskEditor } from './taskEditor';
 type PanelTab = 'tasks' | 'panel' | 'config';
 
 function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // Escape single quotes too (defense-in-depth — no current sink uses
+  // single-quoted attrs, but the cost is zero and future refactors can't
+  // regress silently). Matches the canonical HTML escape set.
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export function createPanel(): HTMLElement {
@@ -360,16 +368,123 @@ export function createPanel(): HTMLElement {
     });
 
     // ---- Fallback provider + model ----
+    // Model becomes a provider-keyed dropdown (mirrors the primary row) —
+    // prevents mis-paired fallback_provider vs. fallback_model strings
+    // that 500 at agent-start time (PR #24 review item 6).
     const fbProviderSelect = selectRow(form, 'fallback_provider', providerNames(providerOptions), String(params.fallback_provider ?? ''), '(none)');
-    const fbModelInput = textRow(form, 'fallback_model', String(params.fallback_model ?? ''), 'e.g. kimi-for-coding');
+    const fbModelWrap = document.createElement('div');
+    fbModelWrap.className = 'cfg-row';
+    form.appendChild(fbModelWrap);
+
+    let fbSelect: HTMLSelectElement;
+    let fbCustomInput: HTMLInputElement;
+    function renderFallbackModelRow() {
+      fbModelWrap.innerHTML = '';
+      const providerKey = fbProviderSelect.value;
+      const entry = providerOptions.find(p => p.provider === providerKey) ?? null;
+      const models = entry?.models ?? [];
+      const current = String(params.fallback_model ?? '');
+      const label = document.createElement('label');
+      label.className = 'cfg-label';
+      label.textContent = 'fallback_model';
+      fbModelWrap.appendChild(label);
+
+      fbSelect = document.createElement('select');
+      fbSelect.className = 'cfg-input';
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = entry ? `(default: ${entry.default_model})` : '(none)';
+      fbSelect.appendChild(blank);
+      for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        fbSelect.appendChild(opt);
+      }
+      const customOpt = document.createElement('option');
+      customOpt.value = '__custom__';
+      customOpt.textContent = 'Custom…';
+      fbSelect.appendChild(customOpt);
+
+      fbCustomInput = document.createElement('input');
+      fbCustomInput.type = 'text';
+      fbCustomInput.className = 'cfg-input cfg-input-custom';
+      fbCustomInput.placeholder = 'custom model id';
+
+      if (current && models.includes(current)) {
+        fbSelect.value = current;
+        fbCustomInput.classList.add('hidden');
+      } else if (current) {
+        fbSelect.value = '__custom__';
+        fbCustomInput.value = current;
+      } else {
+        fbSelect.value = '';
+        fbCustomInput.classList.add('hidden');
+      }
+
+      fbSelect.addEventListener('change', () => {
+        if (fbSelect.value === '__custom__') {
+          fbCustomInput.classList.remove('hidden');
+          fbCustomInput.focus();
+          params.fallback_model = fbCustomInput.value.trim() || null;
+        } else {
+          fbCustomInput.classList.add('hidden');
+          params.fallback_model = fbSelect.value || null;
+        }
+      });
+      fbCustomInput.addEventListener('input', () => {
+        params.fallback_model = fbCustomInput.value.trim() || null;
+      });
+
+      fbModelWrap.appendChild(fbSelect);
+      fbModelWrap.appendChild(fbCustomInput);
+      params.fallback_model = fbSelect.value === '__custom__'
+        ? (fbCustomInput.value.trim() || null)
+        : (fbSelect.value || null);
+    }
+    renderFallbackModelRow();
+    fbProviderSelect.addEventListener('change', () => {
+      params.fallback_provider = fbProviderSelect.value || null;
+      params.fallback_model = null;
+      renderFallbackModelRow();
+    });
 
     // ---- Numbers ----
     const maxIterInput = numberRow(form, 'max_iterations', Number(params.max_iterations ?? 20));
 
     // ---- Thinking ----
+    // thinking_effort list is provider-specific. `xhigh` is codex-only (model
+    // catalog flags it); without filtering we'd let the user persist an
+    // invalid effort for e.g. openai-responses and it'd 400 at agent start
+    // (PR #24 review items 7/13).
     const thinkingCheckbox = boolRow(form, 'thinking', Boolean(params.thinking));
     const thinkingBudgetInput = numberRow(form, 'thinking_budget', Number(params.thinking_budget ?? 8000));
-    const thinkingEffortSelect = selectRow(form, 'thinking_effort', efforts, String(params.thinking_effort ?? 'high'));
+    function effortsForProvider(key: string): string[] {
+      const entry = providerOptions.find(p => p.provider === key);
+      // Providers with no effort vocabulary (Anthropic/Kimi = budget-style,
+      // plain OpenAI = no thinking) still accept the field on the YAML but
+      // the value is ignored. Surface the full union so the form doesn't
+      // look empty for those providers.
+      const supported = entry?.supported_efforts ?? [];
+      return supported.length ? supported : efforts.filter(e => e !== 'xhigh');
+    }
+    const initialProviderKey = String(params.provider ?? '');
+    const effortOptions = effortsForProvider(initialProviderKey);
+    const thinkingEffortSelect = selectRow(form, 'thinking_effort', effortOptions, String(params.thinking_effort ?? 'high'));
+    // Re-filter when the primary provider flips mid-edit so an invalid
+    // effort can't be persisted for a non-capable provider.
+    providerSelect.addEventListener('change', () => {
+      const newOptions = effortsForProvider(providerSelect.value);
+      const current = thinkingEffortSelect.value;
+      thinkingEffortSelect.innerHTML = '';
+      for (const opt of newOptions) {
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        thinkingEffortSelect.appendChild(o);
+      }
+      thinkingEffortSelect.value = newOptions.includes(current) ? current : 'high';
+    });
 
     // ---- JSON/YAML-ish complex fields as compact textareas ----
     const toolProvidersInput = jsonRow(form, 'tool_providers', params.tool_providers);
@@ -405,7 +520,7 @@ export function createPanel(): HTMLElement {
         provider: providerSelect.value || null,
         model: params.model ?? null,
         fallback_provider: fbProviderSelect.value || null,
-        fallback_model: fbModelInput.value.trim() || null,
+        fallback_model: (params.fallback_model as string | null) ?? null,
         max_iterations: Number(maxIterInput.value) || 20,
         thinking: thinkingCheckbox.checked,
         thinking_budget: Number(thinkingBudgetInput.value) || 8000,

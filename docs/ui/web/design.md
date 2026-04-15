@@ -39,3 +39,32 @@ After: `• model-name · ctx 42% · [▶ bash] · 1.2k↓ 0.4k↑`
 ### Tool status redesign
 `msg-tool` now renders a uniform `▶ name | arg preview | ts` summary row + click-to-expand `<details>` block for full args. On `tool_done`, the row flips in place to `✓ name (duration)` (border accent switches yellow→green). No more separate `tool finished` msg-status line — keeps the log quiet, which the user explicitly asked for.
 
+### Thinking cell redesign (v2.0.9 follow-up)
+
+Prior behaviour leaked provider `thinking_delta` / `reasoning_*.delta` stream events directly into the same `on_text_chunk` callback that drives the main assistant-text `partial_text` channel. The web UI therefore showed partial chunks of chain-of-thought interleaved with the assistant's final answer, truncated at each 150-char flush boundary. The paths responsible for this were:
+
+- `butterfly/llm_engine/providers/anthropic.py::_forward_stream_event` — forwarded `thinking_delta` bodies to `on_text_chunk`.
+- `butterfly/llm_engine/providers/codex.py::_parse_sse_stream` — forwarded `response.reasoning_text.delta` and `response.reasoning_summary_text.delta` to `on_text_chunk`.
+- `butterfly/llm_engine/providers/openai_responses.py::_stream` — same pattern as codex.
+
+All three are fixed. Thinking text is now routed through a pair of dedicated provider-level callbacks and a pair of IPC events:
+
+| Backend hook | IPC event | UI effect |
+|---|---|---|
+| `on_thinking_start()` | `thinking_start {block_id}` | Insert a `msg-thinking-running` cell reading `💭 Thinking…` (yellow accent, pulsing dots). |
+| `on_thinking_end(text)` | `thinking_done {block_id, text, duration_ms}` | Replace the running cell with a `<details>` that summarises `💭 Thought for Xs`; body is the full collected thinking text (collapsed by default). |
+
+Deltas are never emitted to the SSE stream — they stay server-side and are flushed as a single body on block close (matches the user's "don't stream thinking in real time" spec).
+
+For providers that return only encrypted / opaque reasoning (OpenAI Responses with `include=reasoning.encrypted_content`, Codex under the same flag), `on_thinking_end` fires with `text=""`. The UI shows the "Thought for Xs" pill with a body placeholder — the cell still appears so the user knows the model did reason, it just has no rendered text to display.
+
+The completed `turn` written to `context.jsonl` now carries a `has_streaming_thinking` flag symmetric to `has_streaming_tools`. Live SSE replay suppresses the old inline-thinking emit when that flag is set, so thinking cells don't render twice after a reconnect. History replay (`?context_since=…` on `/history`) still re-emits from turn content so pre-v2.0.9 sessions continue to show their reasoning.
+
+### YAML PUT hardening (v2.0.9 review fix)
+
+`service/config_service.py::update_config` now whitelist-filters the inbound params against `DEFAULT_CONFIG.keys()` before calling `write_config`. Previously a client could persist arbitrary keys via `PUT /api/sessions/{id}/config` or `.../config/yaml`, and they'd round-trip forever via `read_config`'s `{**DEFAULT_CONFIG, **raw}` merge. `session_config.write_config` also switched to an atomic tempfile + `os.replace` write so a concurrent read never sees a half-written file (the YAML PUT is now network-reachable).
+
+### Pending-buffer session-switch fix (v2.0.9 review fix)
+
+`chat.ts`'s `currentSession` handler now flushes the 5-s merge buffer if the user switches to a different session mid-window. Previously the pending bar lingered on the new session with the previous session's text, and "Send now" silently targeted the old session id.
+

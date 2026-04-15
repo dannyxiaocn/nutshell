@@ -16,3 +16,5 @@
 - [x] **v2.0.9** — 5-s user-input merge window with "Send now" / "Interrupt & send" affordances (web-only; task and CLI paths untouched)
 - [x] **v2.0.9** — HUD trimmed to: dot · model · ctx% · current-tool · tokens
 - [x] **v2.0.9** — Tool status uniform `▶ name …` / `✓ name (duration)` with click-to-expand args; removed standalone `tool finished` log lines
+- [x] **v2.0.9** — Thinking cell redesign: provider thinking/reasoning deltas no longer leak into assistant text; thinking renders as a tool-like `msg-thinking` cell with running → collapsed-done lifecycle
+- [x] **v2.0.9** — PR #24 review fixes: YAML PUT key whitelist, atomic config write, pending-buffer flush on session switch, fallback_model dropdown, provider-scoped thinking_effort vocab, bilingual interrupt phrases, inline HUD token refresh

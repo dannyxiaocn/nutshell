@@ -69,6 +69,12 @@ export function createChat(): HTMLElement {
   const runningTools = new Map<string, { el: HTMLElement | null; startTs: number }>();
   let latestToolKey: string | null = null;
 
+  // Thinking cells: map block_id → running DOM element. On thinking_start we
+  // insert a placeholder "💭 Thinking…" cell; on thinking_done we flip it to
+  // the collapsed "💭 Thought for Xs" state with the full body inside a
+  // <details> element. Mirrors the msg-tool running/done lifecycle.
+  const runningThinking = new Map<string, HTMLElement>();
+
   // Streaming bubble lives INSIDE the messages div so it scrolls with the conversation
   let streamingEl: HTMLDivElement | null = null;
   let isStreaming = false;
@@ -106,6 +112,7 @@ export function createChat(): HTMLElement {
     isStreaming = false;
     runningTools.clear();
     latestToolKey = null;
+    runningThinking.clear();
     updateHudTool(null);
     updateHudDot('idle');
   }
@@ -166,14 +173,96 @@ export function createChat(): HTMLElement {
         break;
 
       case 'thinking':
-        // Thinking block from completed turn — append permanently above agent text
+        // Thinking block from a COMPLETED turn (history replay or legacy
+        // session where thinking_start/thinking_done weren't emitted).
+        // Append as a collapsed cell above the agent text.
         appendEvent(event);
         break;
+
+      case 'thinking_start': {
+        const blockId = event.block_id ?? `th:${Date.now()}`;
+        // If an older cell for this id somehow exists, replace it.
+        const existing = runningThinking.get(blockId);
+        if (existing) existing.remove();
+        const cell = document.createElement('div');
+        cell.className = 'msg msg-thinking msg-thinking-running';
+        cell.dataset.blockId = blockId;
+        cell.dataset.startedAt = String(Date.now());
+        cell.innerHTML = `
+          <div class="tool-row-header">
+            <div class="tool-status-summary">
+              <span class="tool-status-icon">💭</span>
+              <span class="tool-status-name">Thinking…</span>
+              <span class="tool-status-meta"><span class="streaming-dot"></span><span class="streaming-dot"></span><span class="streaming-dot"></span></span>
+            </div>
+            <span class="msg-ts">${formatTs(event.ts)}</span>
+          </div>
+        `;
+        // Place it above the streaming bubble (same rule as tool cells).
+        if (streamingEl && messages.contains(streamingEl)) {
+          messages.insertBefore(cell, streamingEl);
+        } else {
+          messages.appendChild(cell);
+        }
+        runningThinking.set(blockId, cell);
+        scrollToBottom();
+        break;
+      }
+
+      case 'thinking_done': {
+        const blockId = event.block_id ?? '';
+        let cell = blockId ? runningThinking.get(blockId) ?? null : null;
+        if (!cell && blockId) {
+          // Reconnect path: fell out of the live map; try DOM lookup.
+          cell = messages.querySelector<HTMLElement>(`.msg-thinking[data-block-id="${CSS.escape(blockId)}"]`);
+        }
+        const durMs = typeof event.duration_ms === 'number'
+          ? event.duration_ms
+          : (cell?.dataset.startedAt ? Date.now() - Number(cell.dataset.startedAt) : 0);
+        const durSec = (durMs / 1000).toFixed(1) + 's';
+        const body = event.text ?? '';
+        const bodyHtml = body
+          ? `<div class="thinking-body markdown-body">${renderMarkdown(body)}</div>`
+          : `<div class="thinking-body thinking-empty"><em>No thinking body exposed by the provider.</em></div>`;
+        const html = `
+          <details class="thinking-details">
+            <summary class="thinking-summary">
+              <span class="thinking-icon">💭</span>
+              <span class="thinking-label">Thought for ${escapeHtml(durSec)}</span>
+              <span class="thinking-toggle-hint"></span>
+            </summary>
+            ${bodyHtml}
+          </details>
+        `;
+        if (cell) {
+          cell.classList.remove('msg-thinking-running');
+          cell.classList.add('msg-thinking-done');
+          cell.innerHTML = html;
+        } else {
+          // No running cell (e.g. out-of-order delivery) — append a done cell.
+          const doneCell = document.createElement('div');
+          doneCell.className = 'msg msg-thinking msg-thinking-done';
+          if (blockId) doneCell.dataset.blockId = blockId;
+          doneCell.innerHTML = html;
+          if (streamingEl && messages.contains(streamingEl)) {
+            messages.insertBefore(doneCell, streamingEl);
+          } else {
+            messages.appendChild(doneCell);
+          }
+        }
+        if (blockId) runningThinking.delete(blockId);
+        scrollToBottom();
+        break;
+      }
 
       case 'agent':
         // Final response: remove streaming bubble, append real message
         removeStreamingBubble();
         appendEvent(event);
+        // The 'agent' event carries the turn's token usage — update the HUD
+        // pill inline so tokens don't freeze between explicit refreshHud()
+        // calls (flagged in PR #24 review item 8).
+        if (event.usage) updateHudTokens(event.usage);
         break;
 
       case 'tool': {
@@ -258,6 +347,22 @@ export function createChat(): HTMLElement {
     }
   }
 
+  function updateHudTokens(usage: NonNullable<DisplayEvent['usage']>) {
+    const hudBar = el.querySelector('#hud-bar') as HTMLElement | null;
+    if (!hudBar) return;
+    const tokEl = hudBar.querySelector('.hud-tokens-text') as HTMLElement | null;
+    if (!tokEl) return;
+    const inK = usage.input ? (usage.input / 1000).toFixed(1) + 'k' : '—';
+    const outK = usage.output ? (usage.output / 1000).toFixed(1) + 'k' : '—';
+    tokEl.textContent = `${inK}↓ ${outK}↑`;
+    const full: string[] = [];
+    if (usage.input) full.push(`in:${usage.input}`);
+    if (usage.output) full.push(`out:${usage.output}`);
+    if (usage.cache_read) full.push(`cache_read:${usage.cache_read}`);
+    if (usage.cache_write) full.push(`cache_write:${usage.cache_write}`);
+    tokEl.title = full.join(' · ');
+  }
+
   async function refreshHud(sessionId: string) {
     try {
       const data = await api.getHud(sessionId);
@@ -338,7 +443,9 @@ export function createChat(): HTMLElement {
   // correction phrase ("stop", "wait", "no", "cancel"), promote the pending
   // "Send now" into an "Interrupt & send". Otherwise default to merge-and-send.
   const MERGE_WINDOW_MS = 5000;
-  const INTERRUPT_PHRASES = /^\s*(stop|wait|no|cancel|nope|hold on)\b/i;
+  // Bilingual correction phrases — project is EN/ZH per memory. Word boundary
+  // only applies to ASCII; CJK terms fall back to plain prefix match.
+  const INTERRUPT_PHRASES = /^\s*(stop|wait|no|cancel|nope|hold on|等等|等一下|停|取消|别|算了)/i;
 
   let pendingMessages: string[] = [];
   let pendingSessionId: string | null = null;
@@ -485,9 +592,20 @@ export function createChat(): HTMLElement {
     await api.interruptSession(store.currentSessionId).catch(console.error);
   });
 
-  // Update input disabled state for meta sessions
+  // Update input disabled state for meta sessions. Also flush any pending
+  // buffer that belongs to a DIFFERENT session — otherwise switching mid-5s
+  // window leaves a stale pending bar visible on the new session that
+  // targets the previous session ("Send now" / "Interrupt & send" would act
+  // on the wrong session — silent footgun flagged in PR #24 review).
   store.on('currentSession', () => {
     const sess = store.currentSession;
+    const newSessionId = sess?.id ?? null;
+    if (pendingSessionId && pendingSessionId !== newSessionId) {
+      if (sendTimer) { clearTimeout(sendTimer); sendTimer = null; }
+      // Fire-and-forget: the send targets the original session id captured
+      // in pendingSessionId, not the newly-selected one.
+      void flushPendingMessages();
+    }
     const isMeta = sess?.id.endsWith('_meta') || sess?.params?.is_meta_session;
     inputEl.disabled = !!isMeta;
     sendBtn.disabled = !!isMeta;

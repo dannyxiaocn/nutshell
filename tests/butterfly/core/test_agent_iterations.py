@@ -27,6 +27,8 @@ class MockProvider(Provider):
         thinking: bool = False,
         thinking_budget: int = 8000,
         thinking_effort: str = "high",
+        on_thinking_start=None,
+        on_thinking_end=None,
     ):
         response = next(self._responses)
         return (response[0], response[1], response[2] if len(response) > 2 else TokenUsage())

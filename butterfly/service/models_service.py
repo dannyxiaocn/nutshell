@@ -13,6 +13,13 @@ from typing import Any
 # Curated list of providers and their most common models.
 # default_model mirrors each provider's DEFAULT_MODEL / documented default.
 # Model strings here match the CLI and entity/<name>/config.yaml literals.
+# Effort vocabularies differ by provider. `xhigh` is codex-only — sending it
+# to openai-responses 400s at agent-start. We expose each provider's supported
+# list so the web UI can render a filtered dropdown (PR #24 review item 7/13).
+_EFFORTS_CODEX = ["none", "minimal", "low", "medium", "high", "xhigh"]
+_EFFORTS_RESPONSES = ["none", "minimal", "low", "medium", "high"]
+_EFFORTS_BUDGET_OR_NONE: list[str] = []  # providers with budget-based or no thinking
+
 _MODEL_CATALOG: list[dict[str, Any]] = [
     {
         "provider": "anthropic",
@@ -20,6 +27,7 @@ _MODEL_CATALOG: list[dict[str, Any]] = [
         "env": ["ANTHROPIC_API_KEY"],
         "supports_thinking": True,
         "thinking_style": "budget",  # int budget_tokens
+        "supported_efforts": _EFFORTS_BUDGET_OR_NONE,
         "default_model": "claude-sonnet-4-6",
         "models": [
             "claude-opus-4-6",
@@ -37,6 +45,7 @@ _MODEL_CATALOG: list[dict[str, Any]] = [
         "env": ["OPENAI_API_KEY"],
         "supports_thinking": False,
         "thinking_style": None,
+        "supported_efforts": _EFFORTS_BUDGET_OR_NONE,
         "default_model": "gpt-4o",
         "models": [
             "gpt-4o",
@@ -52,6 +61,7 @@ _MODEL_CATALOG: list[dict[str, Any]] = [
         "env": ["OPENAI_API_KEY"],
         "supports_thinking": True,
         "thinking_style": "effort",  # none/minimal/low/medium/high
+        "supported_efforts": _EFFORTS_RESPONSES,
         "default_model": "gpt-5",
         "models": [
             "gpt-5",
@@ -70,6 +80,7 @@ _MODEL_CATALOG: list[dict[str, Any]] = [
         "env": ["KIMI_FOR_CODING_API_KEY"],
         "supports_thinking": True,
         "thinking_style": "extra_body",
+        "supported_efforts": _EFFORTS_BUDGET_OR_NONE,
         "default_model": "kimi-for-coding",
         "models": [
             "kimi-for-coding",
@@ -83,6 +94,7 @@ _MODEL_CATALOG: list[dict[str, Any]] = [
         "env": [],  # uses ~/.codex/auth.json
         "supports_thinking": True,
         "thinking_style": "effort",  # none/minimal/low/medium/high/xhigh
+        "supported_efforts": _EFFORTS_CODEX,
         "default_model": "gpt-5.4",
         "models": [
             "gpt-5.4",
@@ -96,7 +108,9 @@ _MODEL_CATALOG: list[dict[str, Any]] = [
 ]
 
 
-_THINKING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"]
+# Union of all provider-supported efforts. The web UI should key its dropdown
+# off each provider's `supported_efforts` field rather than this global list.
+_THINKING_EFFORTS = _EFFORTS_CODEX
 
 
 def get_models_catalog() -> dict[str, Any]:

@@ -22,6 +22,8 @@ events.jsonl event types:
   partial_text       — {"type": "partial_text", "content": "...", "ts": "..."}
   tool_call          — {"type": "tool_call", "name": "...", "input": {...}, "ts": "..."}
   tool_done          — {"type": "tool_done", "name": "...", "result_len": 123, "ts": "..."}
+  thinking_start     — {"type": "thinking_start", "block_id": "th:...", "ts": "..."}
+  thinking_done      — {"type": "thinking_done", "block_id": "th:...", "text": "...", "duration_ms": 1234, "ts": "..."}
   loop_start         — {"type": "loop_start", "ts": "..."}
   loop_end           — {"type": "loop_end", "iterations": 2, "usage": {...}, "ts": "..."}
   task_wakeup        — {"type": "task_wakeup", "card": "...", "ts": "..."}
@@ -87,24 +89,30 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                                     "ts": block_ts,
                                 })
 
-        # Thinking content: emit before the final agent text so it appears above it.
-        # Always emit for history; for SSE emit so thinking is visible on re-attach.
-        thinking_idx = 0
-        for msg in event.get("messages", []):
-            if msg["role"] == "assistant":
-                content = msg.get("content", [])
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "thinking":
-                            thinking_text = block.get("thinking", "")
-                            if thinking_text:
-                                thinking_ev: dict = {"type": "thinking", "content": thinking_text, "ts": ts}
-                                # Always set id (not guarded by for_history) so thinking events
-                                # returned by the history endpoint can also be deduped client-side,
-                                # preventing repeat renders on visibilitychange.
-                                thinking_ev["id"] = f"thinking:{ts}:{thinking_idx}"
-                                thinking_idx += 1
-                                result.append(thinking_ev)
+        # Thinking content:
+        #   * For history replay: always emit so the transcript includes
+        #     prior turns' reasoning.
+        #   * For live SSE: when the turn was streamed with the new
+        #     thinking_start/thinking_done events, don't re-emit from the
+        #     serialized turn content — the live events already rendered the
+        #     cells and re-emitting would duplicate them.
+        if for_history or not event.get("has_streaming_thinking"):
+            thinking_idx = 0
+            for msg in event.get("messages", []):
+                if msg["role"] == "assistant":
+                    content = msg.get("content", [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "thinking":
+                                thinking_text = block.get("thinking", "")
+                                if thinking_text:
+                                    thinking_ev: dict = {"type": "thinking", "content": thinking_text, "ts": ts}
+                                    # Always set id (not guarded by for_history) so thinking events
+                                    # returned by the history endpoint can also be deduped client-side,
+                                    # preventing repeat renders on visibilitychange.
+                                    thinking_ev["id"] = f"thinking:{ts}:{thinking_idx}"
+                                    thinking_idx += 1
+                                    result.append(thinking_ev)
 
         # Final assistant text (last assistant message)
         for msg in reversed(event.get("messages", [])):
@@ -148,6 +156,8 @@ def _runtime_event_to_display(event: dict) -> list[dict]:
     if etype in (
         "model_status",
         "tool_done",
+        "thinking_start",
+        "thinking_done",
         "loop_start",
         "loop_end",
         "task_wakeup",

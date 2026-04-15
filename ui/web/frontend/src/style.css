@@ -581,6 +581,40 @@ button:disabled {
   overflow-y: auto;
 }
 
+.thinking-empty {
+  color: var(--dimmed);
+  font-style: italic;
+}
+
+/* Running thinking cell: show a compact "💭 Thinking…" pill with pulsing
+   dots. Mirrors .msg-tool's running state (yellow-ish accent) but uses the
+   purple hue of the completed thinking block so the transition is visually
+   continuous when thinking_done replaces it. */
+.msg-thinking-running {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--yellow);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--dimmed);
+  font-family: var(--mono);
+  animation: pulseThinking 1.6s ease-in-out infinite;
+}
+
+.msg-thinking-running .tool-status-name { color: #9d8fe0; }
+
+.msg-thinking-done {
+  background: transparent;
+  border: none;
+  padding: 0 0 2px 0;
+}
+
+@keyframes pulseThinking {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
 .msg-user {
   background: var(--bg3);
   border: 1px solid var(--border);

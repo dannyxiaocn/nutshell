@@ -21,6 +21,8 @@ class Provider(ABC):
         model: str,
         *,
         on_text_chunk: Callable[[str], None] | None = None,
+        on_thinking_start: Callable[[], None] | None = None,
+        on_thinking_end: Callable[[str], None] | None = None,
         cache_system_prefix: str = "",
         cache_last_human_turn: bool = False,
         thinking: bool = False,
@@ -30,8 +32,15 @@ class Provider(ABC):
         """Send messages to the LLM and return (content, tool_calls, usage).
 
         Args:
-            on_text_chunk: Optional callback invoked with each streamed text chunk.
-                           If provided, the provider should use streaming mode.
+            on_text_chunk: Optional callback invoked with each streamed
+                assistant *text* chunk. Must NEVER receive thinking /
+                reasoning deltas — those are routed to the thinking hooks.
+            on_thinking_start: Optional callback invoked once per thinking
+                block opened by the provider.
+            on_thinking_end: Optional callback invoked once per thinking
+                block closed, with the full buffered body text (may be
+                empty when the provider returns opaque / encrypted
+                reasoning).
 
         Returns a tuple of:
           - content: the assistant's text response (may be empty if tool_calls)

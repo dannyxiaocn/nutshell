@@ -94,6 +94,8 @@ class OpenAIResponsesProvider(Provider):
         model: str,
         *,
         on_text_chunk: Callable[[str], None] | None = None,
+        on_thinking_start: Callable[[], None] | None = None,
+        on_thinking_end: Callable[[str], None] | None = None,
         cache_system_prefix: str = "",
         cache_last_human_turn: bool = False,
         thinking: bool = False,
@@ -126,9 +128,18 @@ class OpenAIResponsesProvider(Provider):
             kwargs["include"] = ["reasoning.encrypted_content"]
 
         try:
-            if on_text_chunk is not None:
-                return await self._stream(kwargs, on_text_chunk)
-            return await self._non_stream(kwargs)
+            if on_text_chunk is not None or on_thinking_start is not None or on_thinking_end is not None:
+                return await self._stream(
+                    kwargs,
+                    on_text_chunk,
+                    on_thinking_start=on_thinking_start,
+                    on_thinking_end=on_thinking_end,
+                )
+            return await self._non_stream(
+                kwargs,
+                on_thinking_start=on_thinking_start,
+                on_thinking_end=on_thinking_end,
+            )
         except ProviderError:
             raise  # already mapped
         except Exception as exc:  # noqa: BLE001 - mapped below
@@ -138,7 +149,11 @@ class OpenAIResponsesProvider(Provider):
     # ------------------------------------------------------------------
 
     async def _non_stream(
-        self, kwargs: dict[str, Any]
+        self,
+        kwargs: dict[str, Any],
+        *,
+        on_thinking_start: Callable[[], None] | None = None,
+        on_thinking_end: Callable[[str], None] | None = None,
     ) -> tuple[str, list[ToolCall], TokenUsage]:
         response = await self._client.responses.create(**kwargs)
         # ``_parse_response_object`` APPENDS to ``pending`` — feed it a fresh
@@ -147,18 +162,62 @@ class OpenAIResponsesProvider(Provider):
         captured: list[dict[str, Any]] = []
         text, tool_calls, usage = _parse_response_object(response, pending=captured)
         self._pending_reasoning = captured
+        # Non-stream path has no delta visibility; synthesize a start+end pair
+        # per reasoning item so the UI still renders a "Thought for …" pill.
+        for item in captured:
+            body = _summary_to_text(item.get("summary") or [])
+            if on_thinking_start is not None:
+                try:
+                    on_thinking_start()
+                except Exception:  # noqa: BLE001
+                    pass
+            if on_thinking_end is not None:
+                try:
+                    on_thinking_end(body)
+                except Exception:  # noqa: BLE001
+                    pass
         return text, tool_calls, usage
 
     async def _stream(
         self,
         kwargs: dict[str, Any],
-        on_text_chunk: Callable[[str], None],
+        on_text_chunk: Callable[[str], None] | None,
+        *,
+        on_thinking_start: Callable[[], None] | None = None,
+        on_thinking_end: Callable[[str], None] | None = None,
     ) -> tuple[str, list[ToolCall], TokenUsage]:
         text_parts: list[str] = []
         tc_map: dict[str, dict[str, str]] = {}
         current_tc_id: str | None = None
         reasoning_items: list[dict[str, Any]] = []
         usage = TokenUsage()
+        thinking_parts: list[str] = []
+        thinking_active = False
+
+        def _start_thinking() -> None:
+            nonlocal thinking_active
+            if thinking_active:
+                return
+            thinking_active = True
+            thinking_parts.clear()
+            if on_thinking_start is not None:
+                try:
+                    on_thinking_start()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        def _end_thinking() -> None:
+            nonlocal thinking_active
+            if not thinking_active:
+                return
+            body = "".join(thinking_parts)
+            thinking_parts.clear()
+            thinking_active = False
+            if on_thinking_end is not None:
+                try:
+                    on_thinking_end(body)
+                except Exception:  # noqa: BLE001
+                    pass
 
         async with self._client.responses.stream(**kwargs) as stream:
             async for event in stream:
@@ -168,24 +227,32 @@ class OpenAIResponsesProvider(Provider):
                     delta = getattr(event, "delta", "") or ""
                     if delta:
                         text_parts.append(delta)
-                        on_text_chunk(delta)
+                        if on_text_chunk is not None:
+                            on_text_chunk(delta)
 
                 elif etype == "response.reasoning_text.delta":
                     delta = getattr(event, "delta", "") or ""
                     if delta:
-                        on_text_chunk(delta)
+                        if not thinking_active:
+                            _start_thinking()
+                        thinking_parts.append(delta)
 
                 elif etype == "response.reasoning_summary_text.delta":
                     delta = getattr(event, "delta", "") or ""
                     if delta:
-                        on_text_chunk(delta)
+                        if not thinking_active:
+                            _start_thinking()
+                        thinking_parts.append(delta)
 
                 elif etype == "response.output_item.added":
                     item = _event_item_as_dict(event)
-                    if item.get("type") == "function_call":
+                    itype = item.get("type")
+                    if itype == "function_call":
                         call_id = item.get("call_id") or str(uuid.uuid4())
                         tc_map[call_id] = {"name": item.get("name", ""), "args": ""}
                         current_tc_id = call_id
+                    elif itype == "reasoning":
+                        _start_thinking()
 
                 elif etype == "response.function_call_arguments.delta":
                     delta_call_id = getattr(event, "call_id", None) or current_tc_id
@@ -205,6 +272,9 @@ class OpenAIResponsesProvider(Provider):
                         current_tc_id = None
                     elif itype == "reasoning":
                         reasoning_items.append(_capture_reasoning(item))
+                        if not thinking_active:
+                            _start_thinking()
+                        _end_thinking()
 
                 elif etype == "response.incomplete":
                     _raise_incomplete(_event_response_as_dict(event))
@@ -213,6 +283,12 @@ class OpenAIResponsesProvider(Provider):
 
             final = await stream.get_final_response()
             usage = _extract_usage_from_obj(getattr(final, "usage", None))
+
+        # Defensive: if the stream closed mid-reasoning (shouldn't happen —
+        # output_item.done is always emitted) flush the pending body so the
+        # UI never gets a dangling Thinking… spinner.
+        if thinking_active:
+            _end_thinking()
 
         self._pending_reasoning = reasoning_items
         text = "".join(text_parts)
@@ -363,6 +439,24 @@ def _event_item_as_dict(event: Any) -> dict[str, Any]:
     if callable(dump):
         return dump(exclude_none=True)
     return {k: v for k, v in vars(item).items() if not k.startswith("_")}
+
+
+def _summary_to_text(summary: list[Any]) -> str:
+    """Flatten a Responses API reasoning.summary array to plain text.
+
+    Each summary entry is a ``{"type": "summary_text", "text": "..."}`` dict.
+    When the provider returns only encrypted reasoning (no summary), this
+    returns ``""`` and the UI falls back to a body-less "Thought for Xs" pill.
+    """
+    parts: list[str] = []
+    for entry in summary or []:
+        if isinstance(entry, dict):
+            text = entry.get("text") or ""
+            if text:
+                parts.append(str(text))
+        elif isinstance(entry, str):
+            parts.append(entry)
+    return "\n".join(parts)
 
 
 def _capture_reasoning(item: dict[str, Any]) -> dict[str, Any]:

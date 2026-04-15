@@ -52,6 +52,8 @@ class AnthropicProvider(Provider):
         model: str,
         *,
         on_text_chunk: Callable[[str], None] | None = None,
+        on_thinking_start: Callable[[], None] | None = None,
+        on_thinking_end: Callable[[str], None] | None = None,
         cache_system_prefix: str = "",
         cache_last_human_turn: bool = False,
         thinking: bool = False,
@@ -85,13 +87,57 @@ class AnthropicProvider(Provider):
         betas = kwargs.pop("betas", None)
         messages_ns = self._client.beta.messages if betas else self._client.messages
 
+        # Thinking state is accumulated INSIDE the stream path (it's the only
+        # place where block-lifecycle events are visible). We never forward
+        # thinking text into `on_text_chunk` — that would leak it into the
+        # partial_text channel that renders as regular assistant output in the
+        # web UI. Instead thinking is delivered through the dedicated
+        # on_thinking_start / on_thinking_end hooks so the UI can render a
+        # tool-like "💭 Thinking…" cell.
+        streamed_thinking_blocks: list[str] = []
         saw_streamed_thinking = False
-        if on_text_chunk is not None:
+        if on_text_chunk is not None or on_thinking_start is not None or on_thinking_end is not None:
             stream_kwargs = {"betas": betas, **kwargs} if betas else kwargs
             async with messages_ns.stream(**stream_kwargs) as stream:
+                current_thinking_parts: list[str] = []
+                thinking_active = False
                 async for event in stream:
-                    if _forward_stream_event(event, on_text_chunk):
-                        saw_streamed_thinking = True
+                    etype = getattr(event, "type", None)
+                    if etype == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        btype = getattr(block, "type", None)
+                        if btype in ("thinking", "redacted_thinking"):
+                            thinking_active = True
+                            current_thinking_parts = []
+                            saw_streamed_thinking = True
+                            if on_thinking_start is not None:
+                                try:
+                                    on_thinking_start()
+                                except Exception:  # noqa: BLE001 - hook must not crash stream
+                                    pass
+                    elif etype == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        dtype = getattr(delta, "type", None)
+                        if dtype == "text_delta":
+                            text = getattr(delta, "text", None) or ""
+                            if text and on_text_chunk is not None:
+                                on_text_chunk(text)
+                        elif dtype == "thinking_delta":
+                            # BUFFER thinking locally; do NOT forward to UI text.
+                            part = getattr(delta, "thinking", None) or ""
+                            if part:
+                                current_thinking_parts.append(part)
+                    elif etype == "content_block_stop":
+                        if thinking_active:
+                            thinking_active = False
+                            body = "".join(current_thinking_parts)
+                            current_thinking_parts = []
+                            streamed_thinking_blocks.append(body)
+                            if on_thinking_end is not None:
+                                try:
+                                    on_thinking_end(body)
+                                except Exception:  # noqa: BLE001
+                                    pass
                 response = await stream.get_final_message()
         else:
             create_kwargs = {"betas": betas, **kwargs} if betas else kwargs
@@ -104,33 +150,27 @@ class AnthropicProvider(Provider):
             if block.type == "text":
                 content_text += block.text
             elif block.type == "thinking":
-                thinking_text = _extract_thinking_text(block)
-                if thinking_text and on_text_chunk is not None and not saw_streamed_thinking:
-                    on_text_chunk(thinking_text)
+                # Non-stream path (or stream without start/delta visibility):
+                # if we didn't already emit the block via the streaming
+                # lifecycle, synthesize a start+end pair now so the UI still
+                # renders a thinking cell. Still never forwarded to text_chunk.
+                if not saw_streamed_thinking:
+                    thinking_text = _extract_thinking_text(block)
+                    if on_thinking_start is not None:
+                        try:
+                            on_thinking_start()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    if on_thinking_end is not None:
+                        try:
+                            on_thinking_end(thinking_text)
+                        except Exception:  # noqa: BLE001
+                            pass
             elif block.type == "tool_use":
                 tool_calls.append(ToolCall(id=block.id, name=block.name, input=block.input))
 
         usage = _extract_usage(response)
         return content_text, tool_calls, usage
-
-
-def _forward_stream_event(event: Any, on_text_chunk: Callable[[str], None]) -> bool:
-    if getattr(event, "type", None) != "content_block_delta":
-        return False
-
-    delta = getattr(event, "delta", None)
-    delta_type = getattr(delta, "type", None)
-    if delta_type == "text_delta":
-        text = getattr(delta, "text", None)
-        if text:
-            on_text_chunk(text)
-        return False
-    if delta_type == "thinking_delta":
-        thinking = getattr(delta, "thinking", None)
-        if thinking:
-            on_text_chunk(thinking)
-            return True
-    return False
 
 
 def _build_http_client(httpx_module: Any) -> Any | None:

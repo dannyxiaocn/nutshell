@@ -23,6 +23,8 @@ class _FailingProvider(Provider):
         thinking=False,
         thinking_budget=8000,
         thinking_effort="high",
+        on_thinking_start=None,
+        on_thinking_end=None,
     ):
         raise RuntimeError("primary failure")
 
@@ -70,6 +72,8 @@ class _MixedProvider(Provider):
         thinking=False,
         thinking_budget=8000,
         thinking_effort="high",
+        on_thinking_start=None,
+        on_thinking_end=None,
     ):
         self._turn += 1
         if self._turn == 1:
@@ -156,6 +160,8 @@ class _LegacyProvider:
         thinking=False,
         thinking_budget=8000,
         thinking_effort="high",
+        on_thinking_start=None,
+        on_thinking_end=None,
     ):
         return ("legacy", [], TokenUsage())
 

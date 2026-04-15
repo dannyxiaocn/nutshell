@@ -17,7 +17,7 @@ class MockProvider(Provider):
     def __init__(self, responses):
         self._responses = iter(responses)
 
-    async def complete(self, messages, tools, system_prompt, model, *, on_text_chunk=None, cache_system_prefix="", cache_last_human_turn=False, thinking: bool = False, thinking_budget: int = 8000, thinking_effort: str = "high"):
+    async def complete(self, messages, tools, system_prompt, model, *, on_text_chunk=None, cache_system_prefix="", cache_last_human_turn=False, thinking: bool = False, thinking_budget: int = 8000, thinking_effort: str = "high", on_thinking_start=None, on_thinking_end=None):
         r = next(self._responses)
         return (r[0], r[1], r[2] if len(r) > 2 else TokenUsage())
 
@@ -167,7 +167,7 @@ async def test_session_chat_writes_turn_to_context_and_status_to_events(tmp_path
 async def test_session_chat_writes_idle_on_cancellation(tmp_path):
     """On cancellation, loop_start is recorded but loop_end is skipped; context stays empty."""
     class CancellingProvider(Provider):
-        async def complete(self, messages, tools, system_prompt, model, *, on_text_chunk=None, cache_system_prefix="", cache_last_human_turn=False, thinking: bool = False, thinking_budget: int = 8000, thinking_effort: str = "high"):
+        async def complete(self, messages, tools, system_prompt, model, *, on_text_chunk=None, cache_system_prefix="", cache_last_human_turn=False, thinking: bool = False, thinking_budget: int = 8000, thinking_effort: str = "high", on_thinking_start=None, on_thinking_end=None):
             raise asyncio.CancelledError()
 
     agent = Agent(provider=CancellingProvider())
@@ -298,3 +298,106 @@ async def test_session_tick_emits_hook_events_and_preserves_turn_flags(tmp_path)
     assert context_events[0]["pre_triggered"] is True
     assert context_events[0]["has_streaming_tools"] is True
     assert context_events[0]["usage"] == {"input": 10, "output": 4, "cache_read": 0, "cache_write": 0, "reasoning": 0}
+
+
+# ── v2.0.9 thinking cell — provider → IPC routing ────────────────────────────
+
+class ThinkingProvider(Provider):
+    """Mock provider that emits thinking lifecycle callbacks and plain text."""
+
+    def __init__(self, thinking_bodies: list[str], text: str = "done"):
+        self._bodies = list(thinking_bodies)
+        self._text = text
+
+    async def complete(
+        self, messages, tools, system_prompt, model, *,
+        on_text_chunk=None,
+        on_thinking_start=None,
+        on_thinking_end=None,
+        cache_system_prefix="", cache_last_human_turn=False,
+        thinking=False, thinking_budget=8000, thinking_effort="high",
+    ):
+        for body in self._bodies:
+            if on_thinking_start is not None:
+                on_thinking_start()
+            if on_thinking_end is not None:
+                on_thinking_end(body)
+        if on_text_chunk is not None and self._text:
+            on_text_chunk(self._text)
+        return (self._text, [], TokenUsage(input_tokens=4, output_tokens=2))
+
+
+@pytest.mark.asyncio
+async def test_session_chat_emits_thinking_start_done_events_not_partial_text(tmp_path):
+    """Thinking blocks emit dedicated IPC events; nothing leaks into partial_text.
+
+    Regression for v2.0.9 spec: "correctly capture thinking" + "don't show
+    truncated thinking inline".
+    """
+    agent = Agent(provider=ThinkingProvider(thinking_bodies=["step 1\nstep 2"]))
+    session = make_session(tmp_path, agent)
+    session._load_session_capabilities = lambda: None
+    session._ipc = FileIPC(session.system_dir)
+
+    await session.chat("hi")
+
+    runtime_events = read_jsonl(session.system_dir / "events.jsonl")
+    types = [e["type"] for e in runtime_events]
+    assert "thinking_start" in types
+    assert "thinking_done" in types
+    # partial_text only carries the assistant text — no "step 1" / "step 2" fragments.
+    partials = [e for e in runtime_events if e["type"] == "partial_text"]
+    for pt in partials:
+        assert "step 1" not in pt["content"]
+        assert "step 2" not in pt["content"]
+
+    done = next(e for e in runtime_events if e["type"] == "thinking_done")
+    assert done["text"] == "step 1\nstep 2"
+    assert isinstance(done["block_id"], str) and done["block_id"].startswith("th:")
+    assert isinstance(done["duration_ms"], int) and done["duration_ms"] >= 0
+
+    start = next(e for e in runtime_events if e["type"] == "thinking_start")
+    assert start["block_id"] == done["block_id"]
+
+
+@pytest.mark.asyncio
+async def test_session_chat_marks_turn_with_has_streaming_thinking(tmp_path):
+    """When thinking fires, the persisted turn records has_streaming_thinking
+    so live SSE replay can suppress the inline-thinking emit (dedup).
+    """
+    agent = Agent(provider=ThinkingProvider(thinking_bodies=["reasoning"]))
+    session = make_session(tmp_path, agent)
+    session._load_session_capabilities = lambda: None
+    session._ipc = FileIPC(session.system_dir)
+
+    await session.chat("hi")
+
+    context_events = read_jsonl(session.system_dir / "context.jsonl")
+    turn = next(e for e in context_events if e["type"] == "turn")
+    assert turn.get("has_streaming_thinking") is True
+
+
+def test_context_event_to_display_suppresses_inline_thinking_for_live_when_streamed(tmp_path):
+    """For live SSE, has_streaming_thinking on a turn must prevent re-emitting
+    the inline thinking content (the live events already rendered the cell).
+    History replay (for_history=True) still emits so the transcript is complete.
+    """
+    turn = {
+        "type": "turn",
+        "ts": "2026-04-15T00:00:00",
+        "triggered_by": "user",
+        "has_streaming_thinking": True,
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "should-not-duplicate"},
+                    {"type": "text", "text": "final"},
+                ],
+            }
+        ],
+    }
+    sse = _context_event_to_display(turn, for_history=False)
+    assert not any(e["type"] == "thinking" for e in sse), "live SSE must not re-emit thinking when already streamed"
+    hist = _context_event_to_display(turn, for_history=True)
+    assert any(e["type"] == "thinking" and e["content"] == "should-not-duplicate" for e in hist)
