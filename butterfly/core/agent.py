@@ -299,12 +299,35 @@ class Agent:
                 for tc in tool_calls:
                     on_tool_call(tc.name, tc.input)
 
-            tool_results = await _execute_tools(
-                tool_calls,
-                tool_map,
-                on_tool_done=on_tool_done,
-                background_spawn=self.background_spawn,
-            )
+            try:
+                tool_results = await _execute_tools(
+                    tool_calls,
+                    tool_map,
+                    on_tool_done=on_tool_done,
+                    background_spawn=self.background_spawn,
+                )
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                # v2.0.12 review fix: if cancellation lands during tool
+                # execution, the assistant turn we just committed contains
+                # ``tool_use`` blocks that would otherwise be left unanswered
+                # in ``self._history``. Anthropic rejects any sequence where a
+                # ``tool_use`` is not immediately followed by a ``tool_result``
+                # with a 400, so the next ``agent.run`` would fail as soon as
+                # the dispatcher routes a fresh user turn on top of this
+                # history. Seal every pending tool_use with a synthetic
+                # cancelled ``tool_result`` before re-raising.
+                cancelled_results = [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tc.id,
+                        "content": "Tool execution cancelled.",
+                        "is_error": True,
+                    }
+                    for tc in tool_calls
+                ]
+                messages.append(Message(role="tool", content=cancelled_results))
+                self._history = list(messages)
+                raise
             messages.append(Message(role="tool", content=tool_results))
             self._history = list(messages)
 

@@ -475,3 +475,172 @@ async def test_merged_user_input_ids_recorded_on_turn(tmp_path):
     assert "merged_user_input_ids" not in turns[0]
     assert turns[1]["user_input_id"] == "id-3"
     assert turns[1]["merged_user_input_ids"] == ["id-2", "id-3"]
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_tool_execution_seals_tool_use(tmp_path):
+    """Regression: when an interrupt-mode chat lands while the prior run is
+    inside ``_execute_tools``, the assistant turn already has ``tool_use``
+    blocks committed to ``_history``. Without the v2.0.12 review fix in
+    ``Agent.run``, ``_history`` would end with an unanswered ``tool_use``
+    and the next chat would build ``[..., assistant(tool_use), user(new)]``
+    which Anthropic rejects with a 400 (every ``tool_use`` must be followed
+    by a matching ``tool_result``).
+
+    The fix synthesizes a cancelled ``tool_result`` for every pending
+    ``tool_call`` before re-raising ``CancelledError`` so history stays
+    API-valid across the interrupt boundary.
+    """
+    from butterfly.core.tool import tool
+
+    @tool(description="slow")
+    async def slow_tool() -> str:
+        await asyncio.sleep(2.0)
+        return "done"
+
+    class CommitToolThenStallProvider(Provider):
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(
+            self,
+            messages,
+            tools,
+            system_prompt,
+            model,
+            *,
+            on_text_chunk=None,
+            cache_system_prefix="",
+            cache_last_human_turn=False,
+            thinking=False,
+            thinking_budget=8000,
+            thinking_effort="high",
+            on_thinking_start=None,
+            on_thinking_end=None,
+        ):
+            self.calls += 1
+            if self.calls == 1:
+                return ("", [ToolCall(id="tc1", name="slow_tool", input={})], TokenUsage(input_tokens=1, output_tokens=1))
+            await asyncio.sleep(5.0)
+            return ("never", [], TokenUsage())
+
+    agent = Agent(provider=CommitToolThenStallProvider(), tools=[slow_tool])
+    session = make_session(tmp_path, agent)
+
+    first = asyncio.create_task(session.chat("first", mode="interrupt"))
+    # Wait for the assistant tool_use commit and entry into the slow tool
+    await asyncio.sleep(0.1)
+    fast = RecordingProvider([("ack-second", [])])
+    agent._provider = fast
+    second = asyncio.create_task(session.chat("second", mode="interrupt"))
+
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    res2 = await second
+    assert res2.content == "ack-second"
+
+    # Every assistant tool_use block in history must be paired with a
+    # tool_result in the immediately-following message. (This is the exact
+    # invariant the Anthropic API enforces.)
+    history = agent._history
+    for i, msg in enumerate(history):
+        if msg.role != "assistant" or not isinstance(msg.content, list):
+            continue
+        tool_use_ids = [b["id"] for b in msg.content if isinstance(b, dict) and b.get("type") == "tool_use"]
+        if not tool_use_ids:
+            continue
+        assert i + 1 < len(history), (
+            f"assistant message at idx {i} has tool_use blocks {tool_use_ids} "
+            f"but no following message — would 400 on next chat"
+        )
+        nxt = history[i + 1]
+        assert nxt.role in ("tool", "user"), (
+            f"assistant tool_use at idx {i} not followed by tool/user role"
+        )
+        if isinstance(nxt.content, list):
+            result_ids = {
+                b.get("tool_use_id")
+                for b in nxt.content
+                if isinstance(b, dict) and b.get("type") == "tool_result"
+            }
+            for tu_id in tool_use_ids:
+                assert tu_id in result_ids, (
+                    f"tool_use {tu_id} at idx {i} has no matching tool_result"
+                )
+
+    # And the partial turn persisted to disk under interrupted=True must
+    # also be self-contained — no orphan tool_use leaks across reload.
+    turns = [
+        ev for ev in read_jsonl(session.system_dir / "context.jsonl")
+        if ev.get("type") == "turn"
+    ]
+    interrupted_turns = [t for t in turns if t.get("interrupted")]
+    assert interrupted_turns, "expected an interrupted partial turn on disk"
+    msgs = interrupted_turns[0]["messages"]
+    for i, m in enumerate(msgs):
+        if m["role"] != "assistant" or not isinstance(m.get("content"), list):
+            continue
+        tool_use_ids = [b["id"] for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_use"]
+        if tool_use_ids:
+            assert i + 1 < len(msgs), "persisted partial turn ends mid-tool_use"
+            nxt = msgs[i + 1]
+            result_ids = {
+                b.get("tool_use_id")
+                for b in nxt.get("content", [])
+                if isinstance(b, dict) and b.get("type") == "tool_result"
+            }
+            for tu_id in tool_use_ids:
+                assert tu_id in result_ids
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tool_result_marked_is_error(tmp_path):
+    """The synthetic tool_result for a cancelled tool call carries
+    ``is_error=true`` so future iterations / reloads can distinguish a
+    real result from a cancellation marker."""
+    from butterfly.core.tool import tool
+
+    @tool(description="slow")
+    async def slow_tool() -> str:
+        await asyncio.sleep(2.0)
+        return "done"
+
+    class OneShotToolProvider(Provider):
+        async def complete(
+            self,
+            messages,
+            tools,
+            system_prompt,
+            model,
+            *,
+            on_text_chunk=None,
+            cache_system_prefix="",
+            cache_last_human_turn=False,
+            thinking=False,
+            thinking_budget=8000,
+            thinking_effort="high",
+            on_thinking_start=None,
+            on_thinking_end=None,
+        ):
+            return ("", [ToolCall(id="tc-x", name="slow_tool", input={})], TokenUsage(input_tokens=1, output_tokens=1))
+
+    agent = Agent(provider=OneShotToolProvider(), tools=[slow_tool])
+
+    async def run_and_cancel():
+        return await agent.run("hi")
+
+    task = asyncio.create_task(run_and_cancel())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    last = agent._history[-1]
+    assert last.role == "tool"
+    blocks = last.content
+    assert isinstance(blocks, list)
+    assert len(blocks) == 1
+    assert blocks[0]["type"] == "tool_result"
+    assert blocks[0]["tool_use_id"] == "tc-x"
+    assert blocks[0]["is_error"] is True
+    assert "cancel" in blocks[0]["content"].lower()
