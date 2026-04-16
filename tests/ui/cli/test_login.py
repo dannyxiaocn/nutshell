@@ -193,6 +193,16 @@ def test_kimi_upsert_env_var_appends_if_missing(tmp_path):
     assert "FOO=bar" in content
 
 
+def test_kimi_upsert_env_var_preserves_export_prefix(tmp_path):
+    """Replacing 'export KEY=old' must yield 'export KEY=new', not lose the prefix."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("export KIMI_FOR_CODING_API_KEY=old-key\n")
+    login_mod._upsert_env_var(env_file, "KIMI_FOR_CODING_API_KEY", "new-key")
+    content = env_file.read_text()
+    assert "export KIMI_FOR_CODING_API_KEY=new-key" in content
+    assert "old-key" not in content
+
+
 # ── End-to-end through argparse ─────────────────────────────────────────────
 
 

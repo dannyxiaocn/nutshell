@@ -116,7 +116,44 @@ def test_read_codex_cli_tokens_valid(monkeypatch, tmp_path):
     assert result["access_token"] == fresh_token
 
 
-# ── 4. account-id extraction failure is non-fatal ───────────────────────────
+# ── 4. device code poll — 403 access_denied fails fast ──────────────────────
+
+
+def test_device_code_flow_403_access_denied_raises_immediately(monkeypatch):
+    """403 with error=access_denied must raise immediately, not loop for 15 min."""
+    import httpx as httpx_mod
+
+    class _MockResp:
+        status_code = 403
+        def json(self):
+            return {"error": "access_denied"}
+
+    class _MockDeviceResp:
+        status_code = 200
+        def json(self):
+            return {
+                "user_code": "ABCD-1234",
+                "device_auth_id": "dev-id-xyz",
+                "interval": "1",
+            }
+
+    class _MockClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, url, **kw):
+            if "usercode" in url:
+                return _MockDeviceResp()
+            return _MockResp()
+
+    monkeypatch.setattr(httpx_mod, "Client", _MockClient)
+    monkeypatch.setattr(httpx_mod, "Timeout", lambda x: x)
+
+    with pytest.raises(RuntimeError, match="access_denied"):
+        login_mod._run_device_code_flow(httpx_mod)
+
+
+# ── 5. account-id extraction failure is non-fatal ───────────────────────────
 
 
 def test_codex_success_survives_account_id_failure(monkeypatch, capsys):

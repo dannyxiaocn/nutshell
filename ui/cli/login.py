@@ -212,8 +212,24 @@ def _run_device_code_flow(httpx_module) -> dict:
             if poll.status_code == 200:
                 code_resp = poll.json()
                 break
-            elif poll.status_code in (403, 404):
-                continue  # not authorized yet
+            elif poll.status_code == 404:
+                continue  # authorization still pending
+            elif poll.status_code == 403:
+                # 403 can mean either "still pending" or a terminal denial.
+                # Check the response body for known terminal error codes before
+                # continuing — if the user clicked "Deny" we should fail fast
+                # rather than poll for 15 minutes.
+                try:
+                    err_data = poll.json()
+                    err_code = err_data.get("error", "")
+                except Exception:
+                    err_code = ""
+                if err_code in ("access_denied", "expired_token"):
+                    raise RuntimeError(
+                        f"Device auth rejected by server: {err_code}. "
+                        "Run `butterfly codex login` again to start a new flow."
+                    )
+                continue  # still pending (no terminal error in body)
             else:
                 raise RuntimeError(
                     f"Device auth polling returned status {poll.status_code}."
@@ -438,7 +454,11 @@ def _kimi_ping(api_key: str) -> tuple[bool, str]:
     try:
         import httpx
     except ImportError:
-        return True, ""  # skip verification if httpx not available
+        print(
+            "Warning: httpx not installed — skipping key verification.",
+            file=sys.stderr,
+        )
+        return True, ""
 
     try:
         from butterfly.llm_engine.providers.kimi import _KIMI_USER_AGENT, _KIMI_OPENAI_BASE_URL
@@ -474,12 +494,20 @@ def _kimi_ping(api_key: str) -> tuple[bool, str]:
 
 
 def _upsert_env_var(env_path: Path, key: str, value: str) -> None:
-    """Write or replace KEY=value in a .env file."""
+    """Write or replace KEY=value in a .env file.
+
+    Preserves the ``export`` prefix when replacing an existing
+    ``export KEY=old`` line so the resulting file stays valid for ``source``-
+    style loading.
+    """
     lines: list[str] = []
     found = False
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith(f"{key}=") or line.startswith(f"export {key}="):
+            if line.startswith(f"export {key}="):
+                lines.append(f"export {key}={value}")
+                found = True
+            elif line.startswith(f"{key}="):
                 lines.append(f"{key}={value}")
                 found = True
             else:
