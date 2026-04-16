@@ -569,15 +569,41 @@ def _watch_log(args, session_id: str, context_path, since_ts: float) -> int:
         return 0
 
 
+def _turn_input_ids(turn: dict) -> list[str]:
+    merged = turn.get("merged_user_input_ids")
+    if isinstance(merged, list) and merged:
+        return [str(uid) for uid in merged if uid]
+    uid = turn.get("user_input_id")
+    return [str(uid)] if uid else []
+
+
+def _turn_user_content(turn: dict, inputs_by_id: dict[str, dict]) -> str:
+    parts: list[str] = []
+    for uid in _turn_input_ids(turn):
+        ev = inputs_by_id.get(uid)
+        if not ev:
+            continue
+        content = ev.get("content", "")
+        if content:
+            parts.append(str(content))
+    return "\n\n".join(parts)
+
+
+def _turn_display_ts(turn: dict, inputs_by_id: dict[str, dict]) -> str:
+    for uid in _turn_input_ids(turn):
+        ev = inputs_by_id.get(uid)
+        if ev:
+            return ev.get("ts", "")[:16].replace("T", " ")
+    return turn.get("ts", "")[:16].replace("T", " ")
+
+
 def _print_turns(turns: list[dict], inputs_by_id: dict[str, dict]) -> None:
     """Print a list of turns with their associated user inputs."""
     for turn in turns:
-        uid = turn.get("user_input_id")
-        user_ev = inputs_by_id.get(uid) if uid else None
-        ts = (user_ev or turn).get("ts", "")[:16].replace("T", " ")
+        ts = _turn_display_ts(turn, inputs_by_id)
+        user_text = _turn_user_content(turn, inputs_by_id)
 
         # User line
-        user_text = user_ev.get("content", "") if user_ev else ""
         if user_text:
             print(f"  USER  {ts}  {user_text}")
 
