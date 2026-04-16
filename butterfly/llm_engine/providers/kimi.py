@@ -1,42 +1,86 @@
+"""Kimi (Moonshot) providers.
+
+Moonshot's Kimi Code gateway exposes two surfaces backed by the same models:
+
+- OpenAI-compatible chat completions API at ``/coding/v1/`` (POST
+  ``/chat/completions``) — **default**, matches kimi-cli's own default path.
+- Anthropic-compatible messages API at ``/coding/`` (POST ``/v1/messages``)
+  — opt-in for callers that need Anthropic-shape usage fields.
+
+Both classes are strict about authentication: they resolve the API key from
+an explicit argument or ``KIMI_FOR_CODING_API_KEY`` **only**. There is no
+legacy ``KIMI_API_KEY`` / ``MOONSHOT_API_KEY`` fallback and no base-URL
+override — if a proxy is required, edit the ``_KIMI_*_BASE_URL`` constants
+in this module. Keeping auth narrow prevents the "which env var actually
+got used?" debugging rabbit hole when a fallback provider quietly picks
+up a stale credential.
+
+Pick by the shape of the usage fields you care about:
+
+- ``KimiOpenAIProvider`` (default): returns ``cached_tokens`` and
+  ``reasoning_tokens`` in usage. Recommended when you want prompt-cache
+  hit-rate metrics or reasoning token accounting.
+- ``KimiAnthropicProvider``: returns Anthropic-shape usage
+  (``cache_read_input_tokens`` / ``cache_creation_input_tokens``). Thinking
+  is enabled server-side but ``cache_control`` is not honored by this
+  surface, so we leave it off.
+
+Reference: https://www.kimi.com/code/docs/en/more/third-party-agents.html
+"""
 from __future__ import annotations
 import os
-from typing import ClassVar
+from typing import Any, ClassVar
 
+from butterfly.core.types import TokenUsage
 from butterfly.llm_engine.errors import AuthError
 from butterfly.llm_engine.providers.anthropic import AnthropicProvider
-
-# Moonshot's Kimi Code gateway exposes BOTH an Anthropic-compatible surface
-# (``/coding/`` — append ``/v1/messages``) and an OpenAI-compatible surface
-# (``/coding/v1/chat/completions``). We use the Anthropic path so we can share
-# AnthropicProvider. Reference:
-#   https://www.kimi.com/code/docs/en/more/third-party-agents.html
-_KIMI_BASE_URL = "https://api.kimi.com/coding/"
-
-# Canonical env var for the Kimi For Coding API key. The provider ONLY supports
-# this path — there is no ``KIMI_API_KEY`` / ``MOONSHOT_API_KEY`` fallback and
-# no ``KIMI_BASE_URL`` override (contact the maintainers if you need a proxy).
-_KIMI_ENV_KEY = "KIMI_FOR_CODING_API_KEY"
-
-# Dashboard URL surfaced by ``butterfly kimi login`` when asking the user to
-# paste a key. Kept here so the CLI helper and any future tooling read the
-# same source of truth.
-_KIMI_DASHBOARD_URL = "https://platform.moonshot.ai/console/api-keys"
-
-# Default model used for the login-helper validation ping. Real sessions pick
-# their own model via entity config; this only needs to be a valid Kimi For
-# Coding model slug that accepts a 16-token echo request.
-_KIMI_DEFAULT_VERIFY_MODEL = "kimi-k2-turbo-preview"
+from butterfly.llm_engine.providers.openai_api import (
+    OpenAIProvider,
+    _extract_usage_from_obj,
+)
 
 
-class KimiForCodingProvider(AnthropicProvider):
-    """LLM provider backed by Kimi For Coding (Moonshot AI).
+# The Anthropic-compatible surface lives at the root of ``/coding/``; the
+# anthropic SDK appends ``/v1/messages`` itself.
+_KIMI_ANTHROPIC_BASE_URL = "https://api.kimi.com/coding/"
 
-    Thin wrapper over AnthropicProvider pointing at Kimi's Anthropic-compatible
-    messages API. Reads ``KIMI_FOR_CODING_API_KEY`` — there are no alternate
-    env vars or endpoint overrides. Thinking is enabled via
+# The OpenAI-compatible surface lives under ``/coding/v1/``; the openai SDK
+# appends ``chat/completions`` itself.
+_KIMI_OPENAI_BASE_URL = "https://api.kimi.com/coding/v1/"
+
+# Historical alias — some external code and tests still import
+# ``_KIMI_BASE_URL`` by name (the Anthropic-surface constant pre-v2.0.10).
+_KIMI_BASE_URL = _KIMI_ANTHROPIC_BASE_URL
+
+
+def _resolve_kimi_api_key(explicit: str | None, *, provider_label: str) -> str:
+    """Resolve a Kimi API key from explicit arg → ``KIMI_FOR_CODING_API_KEY``.
+
+    Only the Kimi For Coding plan is supported; legacy ``KIMI_API_KEY`` is
+    intentionally not accepted, since butterfly only talks to the
+    ``/coding/`` gateway. Fail-fast on missing key prevents the SDK from
+    raising an opaque "auth method unresolved" error at first-request time.
+    """
+    resolved = explicit or os.environ.get("KIMI_FOR_CODING_API_KEY")
+    if not resolved:
+        raise AuthError(
+            f"{provider_label} requires KIMI_FOR_CODING_API_KEY to be set, "
+            "or an explicit api_key argument.",
+            provider="kimi-coding-plan",
+            status=401,
+        )
+    return resolved
+
+
+class KimiAnthropicProvider(AnthropicProvider):
+    """Kimi For Coding via Moonshot's Anthropic-compatible endpoint.
+
+    Thin wrapper over ``AnthropicProvider`` pointing at Kimi's Anthropic-shape
+    messages API. Thinking is enabled via
     ``extra_body={"thinking": {"type": "enabled"}}`` — Kimi does NOT accept
-    Anthropic's betas header mechanism, and the ``thinking`` payload has no
-    ``budget_tokens`` field.
+    Anthropic's betas header mechanism, and the thinking payload has no
+    ``budget_tokens`` field. ``cache_control`` is not honored by this
+    surface, so we keep it off.
     """
 
     _supports_cache_control: ClassVar[bool] = False
@@ -48,20 +92,111 @@ class KimiForCodingProvider(AnthropicProvider):
         api_key: str | None = None,
         max_tokens: int = 8096,
     ) -> None:
-        resolved_key = api_key or os.environ.get(_KIMI_ENV_KEY)
-        # Fail fast instead of letting the Anthropic SDK raise an opaque
-        # "Could not resolve authentication method" at first-request time.
-        # The practical trigger is an agent falling over to kimi-coding-plan
-        # from a failing primary without the env var being set.
-        if not resolved_key:
-            raise AuthError(
-                f"KimiForCodingProvider requires {_KIMI_ENV_KEY} to be set, "
-                "or an explicit api_key argument.",
-                provider="kimi-coding-plan",
-                status=401,
-            )
+        resolved_key = _resolve_kimi_api_key(
+            api_key, provider_label="KimiAnthropicProvider"
+        )
         super().__init__(
             api_key=resolved_key,
             max_tokens=max_tokens,
-            base_url=_KIMI_BASE_URL,
+            base_url=_KIMI_ANTHROPIC_BASE_URL,
         )
+
+
+class KimiOpenAIProvider(OpenAIProvider):
+    """Kimi For Coding via Moonshot's OpenAI-compatible endpoint.
+
+    Matches kimi-cli's default path (``kosong/chat_provider/kimi.py``).
+    Thinking is enabled via
+    ``extra_body={"thinking": {"type": "enabled"}}``; Kimi's OpenAI surface
+    does not expose ``reasoning_effort`` on its own model family, so we
+    ignore ``thinking_effort`` / ``thinking_budget`` and only toggle the
+    binary enable flag (identical behavior to the Anthropic surface).
+
+    Usage extraction prefers Moonshot's top-level ``cached_tokens``, falling
+    back to the standard ``prompt_tokens_details.cached_tokens`` so both
+    deployment shapes Just Work. Reasoning tokens come from
+    ``completion_tokens_details.reasoning_tokens`` when the backend
+    populates it.
+    """
+
+    _supports_thinking: ClassVar[bool] = True
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        max_tokens: int = 8096,
+        max_retries: int = 3,
+    ) -> None:
+        resolved_key = _resolve_kimi_api_key(
+            api_key, provider_label="KimiOpenAIProvider"
+        )
+        super().__init__(
+            api_key=resolved_key,
+            base_url=_KIMI_OPENAI_BASE_URL,
+            max_tokens=max_tokens,
+            max_retries=max_retries,
+        )
+
+    def _extra_body_for_thinking(
+        self,
+        *,
+        thinking: bool,
+        thinking_effort: str,
+        thinking_budget: int,
+    ) -> dict[str, Any] | None:
+        if not thinking:
+            return None
+        return {"thinking": {"type": "enabled"}}
+
+    @staticmethod
+    def _extract_usage(usage: Any) -> TokenUsage:
+        """Kimi-aware usage extractor.
+
+        Moonshot surfaces cached tokens in two places depending on the
+        deployment; prefer the top-level ``cached_tokens`` attribute and
+        fall back to the standard ``prompt_tokens_details.cached_tokens``
+        so either shape works without a config knob. Mirrors kimi-cli's
+        precedence in ``kosong/chat_provider/kimi.py``.
+        """
+        base = _extract_usage_from_obj(usage)
+        if base.cache_read_tokens > 0:
+            return base
+
+        top_cached = getattr(usage, "cached_tokens", 0) or 0
+        if top_cached <= 0:
+            return base
+
+        # _extract_usage_from_obj already subtracted whatever it found in
+        # prompt_tokens_details (zero here); subtract the top-level figure
+        # from the non-cached input so ``input + cache_read`` still equals
+        # the original ``prompt_tokens``.
+        non_cached = max(base.input_tokens - top_cached, 0)
+        return TokenUsage(
+            input_tokens=non_cached,
+            output_tokens=base.output_tokens,
+            cache_read_tokens=top_cached,
+            cache_write_tokens=base.cache_write_tokens,
+            reasoning_tokens=base.reasoning_tokens,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Back-compat shim
+# ---------------------------------------------------------------------------
+
+# Older code (entity configs, live sessions, external callers) imports
+# ``KimiForCodingProvider`` directly. The class has been split in two; keep
+# the historical name as an alias to the Anthropic variant so existing
+# sessions keep working unchanged. Callers that want the new default should
+# import ``KimiOpenAIProvider`` explicitly or resolve via the registry key
+# ``kimi-coding-plan`` (which now points at the OpenAI variant).
+KimiForCodingProvider = KimiAnthropicProvider
+
+__all__ = [
+    "KimiAnthropicProvider",
+    "KimiOpenAIProvider",
+    "KimiForCodingProvider",
+    "_KIMI_ANTHROPIC_BASE_URL",
+    "_KIMI_OPENAI_BASE_URL",
+    "_KIMI_BASE_URL",
+]

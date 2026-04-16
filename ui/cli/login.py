@@ -5,20 +5,16 @@ Exposes two subcommands:
 * ``butterfly codex login`` — drives the ``codex`` CLI's OAuth flow (or prints
   install instructions if the CLI is missing), then verifies the resulting
   ``~/.codex/auth.json`` is parseable and contains tokens.
-* ``butterfly kimi login`` — prompts for the Kimi For Coding API key (hiding
-  input via ``getpass``), writes it to the repo ``.env`` with ``0600`` perms,
-  and performs a lightweight validation ping.
-
-Both commands are interactive-first. Non-interactive callers can pipe the key
-on stdin (for kimi) or skip verification via ``--no-verify``.
+* ``butterfly kimi login`` — prints the Kimi For Coding dashboard URL and the
+  env-var name the provider reads. The user copies the key from the dashboard
+  and exports it themselves (or writes it to ``.env``). No prompts, no
+  verification — keeping it a plain pointer keeps the CLI stateless and
+  friendly to any env-var workflow the user already has.
 """
 from __future__ import annotations
 
 import argparse
-import asyncio
-import getpass
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -27,13 +23,8 @@ from pathlib import Path
 _CODEX_AUTH_PATH = Path.home() / ".codex" / "auth.json"
 _CODEX_INSTALL_HINT = "npm install -g @openai/codex"
 
-# Re-exported from the kimi provider so "where does the dashboard URL / env
-# var live?" has one answer. The CLI helper never hardcodes its own copy.
-from butterfly.llm_engine.providers.kimi import (  # noqa: E402
-    _KIMI_DASHBOARD_URL,
-    _KIMI_DEFAULT_VERIFY_MODEL,
-    _KIMI_ENV_KEY,
-)
+_KIMI_DASHBOARD_URL = "https://www.kimi.com/code/console"
+_KIMI_ENV_KEY = "KIMI_FOR_CODING_API_KEY"
 
 
 # ── `butterfly codex login` ──────────────────────────────────────────────────
@@ -187,42 +178,24 @@ def _add_kimi_parser(subparsers) -> None:
         description=(
             "Kimi provider helpers.\n\n"
             "Subcommands:\n"
-            "  butterfly kimi login       Prompt for API key, write .env, verify\n"
+            "  butterfly kimi login       Print the dashboard URL and env-var name\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ksub = p.add_subparsers(dest="kimi_cmd", metavar="COMMAND")
     ksub.required = True
 
-    login = ksub.add_parser(
+    ksub.add_parser(
         "login",
         allow_abbrev=False,
-        help="Prompt for a Kimi API key, save it to .env, and verify.",
+        help="Print the Kimi dashboard URL and the env var to set.",
         description=(
-            "One-command Kimi API key setup.\n\n"
-            "Step 1: opens/points at the Moonshot dashboard so you can copy a key.\n"
-            "Step 2: prompts for the key (input is hidden).\n"
-            "Step 3: writes it to the repo .env (permissions 0600).\n"
-            "Step 4: makes a small Anthropic-compatible request to validate.\n"
+            "Kimi For Coding uses a static API key — there is no OAuth flow to\n"
+            "automate. This command just points you at the dashboard and tells\n"
+            "you which env var the provider reads. Copy the key, export it (or\n"
+            "add it to your .env), and you're done.\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    login.add_argument(
-        "--env-file",
-        type=Path,
-        default=None,
-        help="Path to .env file (default: <repo>/.env)",
-    )
-    login.add_argument(
-        "--no-verify",
-        action="store_true",
-        help="Skip the validation ping.",
-    )
-    login.add_argument(
-        "--key",
-        default=None,
-        help="Pass the API key directly (non-interactive). "
-             "If omitted, you'll be prompted.",
     )
 
     p.set_defaults(func=cmd_kimi)
@@ -230,212 +203,17 @@ def _add_kimi_parser(subparsers) -> None:
 
 def cmd_kimi(args) -> int:
     if args.kimi_cmd == "login":
-        return _kimi_login(
-            env_file=args.env_file,
-            key_arg=args.key,
-            verify=not args.no_verify,
-        )
+        return _kimi_login()
     return 2
 
 
-def _kimi_login(
-    *,
-    env_file: Path | None,
-    key_arg: str | None,
-    verify: bool,
-) -> int:
-    if env_file is None:
-        # Default: repo-root .env (same as runtime.env._REPO_ROOT heuristic).
-        env_file = Path(__file__).resolve().parent.parent.parent / ".env"
-
-    existing = os.environ.get(_KIMI_ENV_KEY)
-
+def _kimi_login() -> int:
     print("Kimi For Coding — API key setup")
-    print(f"  Dashboard: {_KIMI_DASHBOARD_URL}")
-    print(f"  Env file:  {env_file}")
     print()
-
-    if key_arg is not None:
-        # An explicit ``--key`` (even an empty one) signals non-interactive
-        # intent — never silently fall through to a blocking getpass prompt.
-        key = key_arg.strip()
-    else:
-        if existing:
-            reuse = _prompt(
-                f"Found existing {_KIMI_ENV_KEY} in the environment. "
-                "Reuse it? [Y/n]: "
-            ).strip().lower()
-            if reuse in ("", "y", "yes"):
-                key = existing
-            else:
-                key = _prompt_secret("Paste your Kimi API key: ")
-        else:
-            print("Step 1 — create/copy a key at:")
-            print(f"    {_KIMI_DASHBOARD_URL}")
-            print("Step 2 — paste it below (input hidden).")
-            key = _prompt_secret("Kimi API key: ")
-
-    key = (key or "").strip()
-    if not key:
-        print("Error: empty key; aborting.", file=sys.stderr)
-        return 1
-
-    try:
-        _write_env_key(env_file, _KIMI_ENV_KEY, key)
-    except OSError as exc:
-        print(f"Error: failed to write {env_file}: {exc}", file=sys.stderr)
-        return 1
-
-    os.environ[_KIMI_ENV_KEY] = key  # so a same-process verify picks it up
-    print(f"Wrote {_KIMI_ENV_KEY} to {env_file} (chmod 0600).")
-
-    if not verify:
-        print("Skipping verification (--no-verify).")
-        return 0
-
-    ok, msg = _verify_kimi_key(key)
-    if ok:
-        print(f"Kimi key verified. {msg}")
-        print()
-        print("You can now run:")
-        print("    butterfly chat --entity agent 'hello'")
-        print("  (make sure your entity's provider is set to 'kimi-coding-plan')")
-        return 0
-
-    print(f"Warning: key saved, but validation failed: {msg}", file=sys.stderr)
-    print("The key is written to .env anyway — you can retry later with:")
-    print("    butterfly kimi login --no-verify")
-    return 1
-
-
-def _prompt(msg: str) -> str:
-    # Isolated so tests can monkeypatch.
-    try:
-        return input(msg)
-    except EOFError:
-        return ""
-
-
-def _prompt_secret(msg: str) -> str:
-    try:
-        return getpass.getpass(msg)
-    except (EOFError, KeyboardInterrupt):
-        return ""
-
-
-def _write_env_key(env_file: Path, key: str, value: str) -> None:
-    """Upsert ``key=value`` in *env_file*, creating the file if absent.
-
-    Preserves other lines verbatim. The file is created with mode ``0600``
-    atomically — we write to a sibling temp file opened with ``O_CREAT|O_EXCL``
-    at mode ``0o600`` and then ``os.replace`` it into place, so the secrets
-    file never exists on disk with broader perms.
-    """
-    env_file.parent.mkdir(parents=True, exist_ok=True)
-
-    quoted = _quote_env_value(value)
-    new_line = f"{key}={quoted}"
-
-    lines: list[str] = []
-    if env_file.exists():
-        lines = env_file.read_text(encoding="utf-8").splitlines()
-
-    found = False
-    for i, line in enumerate(lines):
-        stripped = line.lstrip()
-        if stripped.startswith("#") or "=" not in stripped:
-            continue
-        existing_key = stripped.split("=", 1)[0].strip()
-        if existing_key == key:
-            lines[i] = new_line
-            found = True
-            break
-    if not found:
-        lines.append(new_line)
-
-    payload = ("\n".join(lines) + "\n").encode("utf-8")
-
-    # Atomic-create-with-0600 → write → replace. On POSIX, O_EXCL guarantees
-    # we own the inode and the requested mode is honoured (modulo umask, which
-    # we further pin via fchmod for safety on systems with restrictive umasks).
-    tmp_path = env_file.with_suffix(env_file.suffix + ".tmp")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    try:
-        flags |= os.O_NOFOLLOW  # don't follow symlinks for the temp slot
-    except AttributeError:  # pragma: no cover — non-POSIX
-        pass
-    fd = os.open(tmp_path, flags, 0o600)
-    try:
-        try:
-            os.fchmod(fd, 0o600)  # enforce 0600 even if umask broadened it
-        except (AttributeError, OSError):  # pragma: no cover — Windows
-            pass
-        with os.fdopen(fd, "wb") as f:
-            f.write(payload)
-    except Exception:
-        # Don't leave a stray temp file behind on failure.
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-    os.replace(tmp_path, env_file)
-    # `os.replace` preserves the temp file's perms (0600) on POSIX; tighten
-    # again as a belt-and-braces guard for filesystems that don't honour it.
-    try:
-        os.chmod(env_file, 0o600)
-    except OSError:
-        pass
-
-
-def _quote_env_value(value: str) -> str:
-    """Quote an env value if it contains whitespace or shell-sensitive chars."""
-    if any(c in value for c in " \t\"'$#\\"):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    return value
-
-
-def _verify_kimi_key(api_key: str) -> tuple[bool, str]:
-    """Validation ping against Kimi's Anthropic-compatible endpoint.
-
-    Returns ``(True, info_msg)`` or ``(False, error_msg)``. Any exception
-    raised by the provider — transport error, auth failure, rate limit,
-    schema mismatch — is treated as a failed verification. The caller still
-    leaves the key written to ``.env`` (the user can retry with
-    ``--no-verify``) so a transient hiccup isn't destructive.
-    """
-    try:
-        from butterfly.llm_engine.providers.kimi import KimiForCodingProvider
-        from butterfly.core.types import Message
-    except ImportError as exc:
-        return False, f"import error: {exc}"
-
-    try:
-        provider = KimiForCodingProvider(api_key=api_key, max_tokens=16)
-    except Exception as exc:
-        return False, f"provider init failed: {exc}"
-
-    async def _ping() -> tuple[bool, str]:
-        try:
-            text, _tc, usage = await provider.complete(
-                messages=[Message(role="user", content="ping")],
-                tools=[],
-                system_prompt="Reply with one word.",
-                model=_KIMI_DEFAULT_VERIFY_MODEL,
-            )
-            return True, f"({usage.input_tokens}→{usage.output_tokens} tokens)"
-        except Exception as exc:  # noqa: BLE001 — surface any provider error
-            return False, f"{type(exc).__name__}: {exc}"
-        finally:
-            try:
-                await provider.aclose()
-            except Exception:
-                pass
-
-    try:
-        return asyncio.run(_ping())
-    except RuntimeError as exc:
-        # asyncio.run raises if called inside a running loop (won't happen in
-        # the CLI) — treat as soft failure.
-        return False, f"runtime error: {exc}"
+    print(f"  1. Open {_KIMI_DASHBOARD_URL} and copy your API key.")
+    print(f"  2. Export it as {_KIMI_ENV_KEY}, e.g.:")
+    print(f"       export {_KIMI_ENV_KEY}=<your-key>")
+    print("     or add the same line to your .env file.")
+    print()
+    print("Done. Sessions using provider='kimi-coding-plan' will pick it up.")
+    return 0

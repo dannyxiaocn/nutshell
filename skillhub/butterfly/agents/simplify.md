@@ -146,6 +146,6 @@ A few things to know that will help you audit correctly:
 
 **`on_text_chunk` / `on_tool_call` callbacks** — These are optional hooks passed through several layers. A function that accepts them but doesn't use them locally is not dead — it's passing them down.
 
-**`base_url` in `AnthropicProvider`** — Used by `KimiForCodingProvider`. Don't remove even if it looks unused in the base class.
+**`base_url` in `AnthropicProvider`** — Used by `KimiAnthropicProvider` (and its back-compat alias `KimiForCodingProvider`). Don't remove even if it looks unused in the base class.
 
 **Abstract base classes** — Methods in `abstract/` that appear "unimplemented" are intentionally abstract. Don't remove them.

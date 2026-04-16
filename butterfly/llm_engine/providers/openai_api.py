@@ -130,6 +130,16 @@ class OpenAIProvider(Provider):
         if api_tools:
             kwargs["tools"] = api_tools
 
+        extra_body = self._extra_body_for_thinking(
+            thinking=thinking,
+            thinking_effort=thinking_effort,
+            thinking_budget=thinking_budget,
+        )
+        if extra_body:
+            merged = dict(kwargs.get("extra_body") or {})
+            merged.update(extra_body)
+            kwargs["extra_body"] = merged
+
         try:
             if on_text_chunk is not None:
                 return await self._stream_complete(kwargs, on_text_chunk)
@@ -139,6 +149,35 @@ class OpenAIProvider(Provider):
             raise
 
     # ------------------------------------------------------------------
+    # Subclass extension hooks
+    # ------------------------------------------------------------------
+
+    def _extra_body_for_thinking(
+        self,
+        *,
+        thinking: bool,
+        thinking_effort: str,
+        thinking_budget: int,
+    ) -> dict[str, Any] | None:
+        """Return extra_body to merge into the request, or None.
+
+        Default: no extra body. Subclasses whose backend enables thinking
+        via ``extra_body`` (e.g. Kimi) override this to inject the vendor's
+        thinking payload.
+        """
+        return None
+
+    @staticmethod
+    def _extract_usage(usage: Any) -> TokenUsage:
+        """Extract TokenUsage from an OpenAI usage object.
+
+        Exposed as a staticmethod so subclasses can customize usage
+        extraction (e.g. Kimi, whose Moonshot API surfaces cached tokens at
+        the top level in addition to ``prompt_tokens_details.cached_tokens``).
+        """
+        return _extract_usage_from_obj(usage)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -146,7 +185,7 @@ class OpenAIProvider(Provider):
         self, kwargs: dict[str, Any]
     ) -> tuple[str, list[ToolCall], TokenUsage]:
         response = await self._client.chat.completions.create(**kwargs)
-        return _parse_response(response)
+        return _parse_response(response, extract_usage=self._extract_usage)
 
     async def _stream_complete(
         self,
@@ -162,8 +201,9 @@ class OpenAIProvider(Provider):
 
         stream = await self._client.chat.completions.create(**kwargs)
         async for chunk in stream:
-            if chunk.usage is not None:
-                usage = _extract_usage_from_obj(chunk.usage)
+            chunk_usage = _chunk_usage(chunk)
+            if chunk_usage is not None:
+                usage = self._extract_usage(chunk_usage)
 
             if not chunk.choices:
                 continue
@@ -334,8 +374,20 @@ def _tool_to_openai(tool: "Tool") -> dict[str, Any]:
     }
 
 
-def _parse_response(response: Any) -> tuple[str, list[ToolCall], TokenUsage]:
-    """Parse a non-streaming ChatCompletion response."""
+def _parse_response(
+    response: Any,
+    *,
+    extract_usage: Callable[[Any], TokenUsage] = None,  # type: ignore[assignment]
+) -> tuple[str, list[ToolCall], TokenUsage]:
+    """Parse a non-streaming ChatCompletion response.
+
+    ``extract_usage`` is injectable so subclasses (e.g. KimiOpenAIProvider)
+    can widen the usage-extraction logic without reimplementing this parser.
+    Defaults to the module-level OpenAI extractor.
+    """
+    if extract_usage is None:
+        extract_usage = _extract_usage_from_obj
+
     choice = response.choices[0] if response.choices else None
     text = ""
     tool_calls: list[ToolCall] = []
@@ -355,9 +407,26 @@ def _parse_response(response: Any) -> tuple[str, list[ToolCall], TokenUsage]:
 
     usage = TokenUsage()
     if response.usage:
-        usage = _extract_usage_from_obj(response.usage)
+        usage = extract_usage(response.usage)
 
     return text, tool_calls, usage
+
+
+def _chunk_usage(chunk: Any) -> Any | None:
+    """Extract a usage object from a streaming chunk if present.
+
+    OpenAI-proper puts usage on ``chunk.usage``. Some OpenAI-compatible
+    gateways (notably Moonshot Kimi) attach usage to the first choice
+    (``chunk.choices[0].usage``) instead. This helper normalizes both
+    positions so the streaming loop sees a single API.
+    """
+    top = getattr(chunk, "usage", None)
+    if top is not None:
+        return top
+    choices = getattr(chunk, "choices", None) or []
+    if not choices:
+        return None
+    return getattr(choices[0], "usage", None)
 
 
 def _extract_usage_from_obj(usage: Any) -> TokenUsage:

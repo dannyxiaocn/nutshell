@@ -2,11 +2,17 @@ from __future__ import annotations
 from butterfly.core.provider import Provider
 
 _REGISTRY: dict[str, tuple[str, str]] = {
-    "anthropic":         ("butterfly.llm_engine.providers.anthropic",        "AnthropicProvider"),
-    "openai":            ("butterfly.llm_engine.providers.openai_api",       "OpenAIProvider"),
-    "openai-responses":  ("butterfly.llm_engine.providers.openai_responses", "OpenAIResponsesProvider"),
-    "kimi-coding-plan":  ("butterfly.llm_engine.providers.kimi",             "KimiForCodingProvider"),
-    "codex-oauth":       ("butterfly.llm_engine.providers.codex",            "CodexProvider"),
+    "anthropic":                   ("butterfly.llm_engine.providers.anthropic",        "AnthropicProvider"),
+    "openai":                      ("butterfly.llm_engine.providers.openai_api",       "OpenAIProvider"),
+    "openai-responses":            ("butterfly.llm_engine.providers.openai_responses", "OpenAIResponsesProvider"),
+    # Default Kimi entry — OpenAI-compatible surface; returns cached_tokens +
+    # reasoning_tokens in usage. Matches kimi-cli's default path.
+    "kimi-coding-plan":            ("butterfly.llm_engine.providers.kimi",             "KimiOpenAIProvider"),
+    # Opt-in alias for the Anthropic-compatible surface. Existing sessions or
+    # callers that need the old behavior (Anthropic-shape messages + usage)
+    # should pin this key explicitly.
+    "kimi-coding-plan-anthropic":  ("butterfly.llm_engine.providers.kimi",             "KimiAnthropicProvider"),
+    "codex-oauth":                 ("butterfly.llm_engine.providers.codex",            "CodexProvider"),
 }
 
 
