@@ -41,7 +41,7 @@ class WriteExecutor(BaseExecutor):
             try:
                 self._guardian.check_write(resolved)
             except PermissionError as exc:
-                return f"Error: {exc}"
+                return f"Error: Failed to write {path_arg}: {exc}"
         data = content.encode("utf-8")
         tmp_path: str | None = None
         try:

@@ -86,6 +86,7 @@ def init_session(
     initial_message_id: str | None = None,
     parent_session_id: str | None = None,
     mode: str | None = None,
+    sub_agent_depth: int | None = None,
 ) -> str:
     """Create a new session on disk from an entity, ready for the server to pick up.
 
@@ -107,8 +108,15 @@ def init_session(
                               When set, ``toolhub/sub_agent/<mode>.md`` is
                               copied to the child's ``core/mode.md`` and the
                               mode name is recorded in the manifest. The mode
-                              prompt is folded into the system prompt by
-                              ``Session._build_system_parts``.
+                              prompt is concatenated into ``system_prompt`` by
+                              ``Session._load_session_capabilities`` (which
+                              sits in the static prefix later rendered by
+                              ``Agent._build_system_parts``).
+                              Raises ``FileNotFoundError`` if the matching
+                              ``toolhub/sub_agent/<mode>.md`` asset is absent —
+                              recording a mode in the manifest without its
+                              prompt on disk would leave the child in an
+                              inconsistent state (raised in PR #28 review).
     """
     if mode is not None and mode not in _VALID_MODES:
         raise ValueError(f"init_session: invalid mode {mode!r}; expected one of {sorted(_VALID_MODES)}")
@@ -273,14 +281,24 @@ def init_session(
 
     ensure_session_status(system_dir)
 
-    # Mode prompt — copy toolhub/sub_agent/<mode>.md into core/mode.md so
-    # Session._build_system_parts folds it into the static (cacheable) system
-    # prefix. Skipped silently if the toolhub asset is not present yet
-    # (e.g. on bare repos or during early bootstrap before sub_agent ships).
+    # Mode prompt — copy toolhub/sub_agent/<mode>.md into core/mode.md.
+    # Session._load_session_capabilities folds it into the static
+    # (cacheable) system prefix consumed by Agent._build_system_parts.
+    #
+    # We hard-fail when the prompt file is missing: recording ``mode`` in
+    # the manifest without its corresponding prompt would activate the
+    # Guardian boundary (in explorer mode) and the sidebar chip without
+    # the agent-visible rules that make those mechanisms safe. Cubic
+    # review (PR #28) flagged the silent-skip path as a consistency hole.
     if mode is not None:
         mode_src = _TOOLHUB_DIR / "sub_agent" / f"{mode}.md"
-        if mode_src.exists():
-            _write_if_absent(core_dir / "mode.md", mode_src.read_text(encoding="utf-8"))
+        if not mode_src.exists():
+            raise FileNotFoundError(
+                f"init_session: mode={mode!r} requires {mode_src} to exist; "
+                "the child would otherwise end up in an inconsistent state "
+                "(manifest says mode=X but no prompt was injected)."
+            )
+        _write_if_absent(core_dir / "mode.md", mode_src.read_text(encoding="utf-8"))
 
     # Publish manifest LAST (see NOTE above about watcher race):
     # by the time manifest.json is visible to the watcher, sessions/<id>/core/
@@ -295,6 +313,8 @@ def init_session(
         manifest["parent_session_id"] = parent_session_id
     if mode is not None:
         manifest["mode"] = mode
+    if sub_agent_depth is not None:
+        manifest["sub_agent_depth"] = int(sub_agent_depth)
     (system_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
     )

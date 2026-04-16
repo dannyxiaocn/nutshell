@@ -42,7 +42,9 @@ TERMINAL_STATUSES = frozenset({
 # ── Entry types ───────────────────────────────────────────────────────────────
 
 TYPE_PENDING_TOOL = "pending_tool"
-TYPE_SUB_AGENT = "sub_agent"  # Reserved for future use
+TYPE_SUB_AGENT = "sub_agent"
+
+VALID_ENTRY_TYPES = frozenset({TYPE_PENDING_TOOL, TYPE_SUB_AGENT})
 
 
 # ── PanelEntry dataclass ──────────────────────────────────────────────────────
@@ -169,8 +171,15 @@ def create_pending_tool_entry(
     """Create + persist a new panel entry. Returns the entry.
 
     `entry_type` defaults to TYPE_PENDING_TOOL for back-compat with the original
-    bash background flow; sub-agent spawns pass TYPE_SUB_AGENT.
+    bash background flow; sub-agent spawns pass TYPE_SUB_AGENT. An invalid
+    entry_type raises ValueError so downstream filters that switch on type
+    can't be silently broken by a typo (cubic review, PR #28).
     """
+    if entry_type not in VALID_ENTRY_TYPES:
+        raise ValueError(
+            f"create_pending_tool_entry: entry_type must be one of "
+            f"{sorted(VALID_ENTRY_TYPES)}, got {entry_type!r}"
+        )
     now = time.time()
     entry = PanelEntry(
         tid=new_tid("bg"),

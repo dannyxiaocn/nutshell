@@ -70,3 +70,31 @@ tools = loader.load_from_tool_md(Path("core/tool.md"))
 - `web_search` backend switchable via `config.yaml` → `tool_providers.web_search`
 - `manage_task` actions: `create`, `update`, `pause`, `resume`, `finish`, `list`; `pause` is user-initiated stop, `resume` returns to `pending`
 - `manage_task` and `recall_memory` have path traversal protection
+
+## v2.0.13 — Sub-agent + generalized background runners
+
+- `butterfly/tool_engine/background.py` now splits into `BackgroundTaskManager`
+  (scheduler / panel / events / lifecycle) and the `BackgroundRunner` protocol
+  (per-tool `validate` / `run` / `kill`). `register_runner(name, runner)` wires
+  a tool-specific runner; `spawn()` looks it up + calls `validate()`
+  synchronously so misconfig surfaces immediately.
+- `BashRunner` is auto-registered on manager construction; existing bash
+  background behaviour is unchanged.
+- `butterfly/tool_engine/sub_agent.py` defines `SubAgentTool` (sync path via
+  `ToolLoader`) and `SubAgentRunner` (background path via
+  `BackgroundTaskManager`). Both share `_spawn_child` which calls
+  `init_session(..., parent_session_id, mode, sub_agent_depth=parent+1)`.
+  Depth is capped at `_MAX_SUB_AGENT_DEPTH` (2) to prevent runaway forks.
+- `BackgroundTaskManager.spawn(tool_name="sub_agent", …)` auto-applies
+  `entry_type=TYPE_SUB_AGENT`; other tools get `TYPE_PENDING_TOOL`. See
+  `butterfly/session_engine/panel.py::VALID_ENTRY_TYPES` for the allowed set.
+- `toolhub/sub_agent/executor.py` re-exports the canonical classes so the
+  `ToolLoader`'s conventional discovery path keeps working.
+- `ToolLoader` gained `guardian` + `parent_session_id` + `sessions_base` +
+  `system_sessions_base` + `entity_base` kwargs so Write/Edit/Bash receive the
+  `Guardian` boundary and `SubAgentTool` receives the base paths it needs to
+  call `init_session`.
+- `butterfly/core/guardian.py` — `Guardian.check_write(path)` raises
+  `PermissionError` if the resolved target (symlinks resolved) escapes the
+  root. Write/Edit surface it as `Error: Failed to {write,edit} <path>: …`;
+  bash sets subprocess cwd to the root and exports `BUTTERFLY_GUARDIAN_ROOT`.

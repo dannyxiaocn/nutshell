@@ -44,6 +44,13 @@ _DEFAULT_TIMEOUT_SECONDS = 600
 # shorter is a configuration error (init_session itself takes ~1-2s for
 # venv creation on a cold session).
 _MIN_TIMEOUT_SECONDS = 30
+# Nesting cap. 0 = top-level user session; 1 = its sub-agent; 2 = grand-
+# child. We refuse a spawn attempt at MAX so the deepest a tree gets is
+# user → parent sub → grandchild sub. Protects against a runaway chain
+# where each executor-mode child calls sub_agent again. Cap lives in
+# each child's manifest so the limit survives daemon restarts. (PR #28
+# review nit.)
+_MAX_SUB_AGENT_DEPTH = 2
 
 
 def _new_child_id() -> str:
@@ -62,13 +69,29 @@ def _compose_initial_message(task: str, mode: str) -> str:
     )
 
 
-def _read_parent_entity(parent_session_id: str, sys_base: Path) -> str:
+def _read_parent_manifest(parent_session_id: str, sys_base: Path) -> dict:
     manifest_path = sys_base / parent_session_id / "manifest.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return ""
-    return manifest.get("entity", "")
+        return {}
+
+
+def _read_parent_entity(parent_session_id: str, sys_base: Path) -> str:
+    return _read_parent_manifest(parent_session_id, sys_base).get("entity", "")
+
+
+def _parent_sub_agent_depth(parent_session_id: str, sys_base: Path) -> int:
+    """Depth of the parent in the sub-agent tree.
+
+    Top-level user sessions have no ``sub_agent_depth`` recorded and read as 0;
+    each spawn increments it by 1 and records it on the child's manifest.
+    """
+    raw = _read_parent_manifest(parent_session_id, sys_base).get("sub_agent_depth", 0)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _validate_mode(mode: Any) -> None:
@@ -87,11 +110,27 @@ def _spawn_child(
     system_sessions_base: Path,
     entity_base: Path,
 ) -> tuple[str, str, str]:
-    """Create the child session on disk. Returns ``(child_id, msg_id, entity_name)``."""
-    entity_name = _read_parent_entity(parent_session_id, system_sessions_base)
+    """Create the child session on disk. Returns ``(child_id, msg_id, entity_name)``.
+
+    Raises ``RuntimeError`` when the parent has already reached
+    ``_MAX_SUB_AGENT_DEPTH`` — otherwise a runaway executor chain could
+    fork sessions unbounded.
+    """
+    parent_manifest = _read_parent_manifest(parent_session_id, system_sessions_base)
+    entity_name = parent_manifest.get("entity", "")
     if not entity_name:
         raise RuntimeError(
             f"sub_agent: cannot read parent entity from {parent_session_id}/manifest.json"
+        )
+    try:
+        parent_depth = int(parent_manifest.get("sub_agent_depth", 0))
+    except (TypeError, ValueError):
+        parent_depth = 0
+    if parent_depth >= _MAX_SUB_AGENT_DEPTH:
+        raise RuntimeError(
+            f"sub_agent: spawn refused — parent is already at depth "
+            f"{parent_depth} (max {_MAX_SUB_AGENT_DEPTH}). Recursive "
+            "sub-agent chains are bounded to prevent runaway forks."
         )
     child_id = _new_child_id()
     msg_id = str(uuid.uuid4())
@@ -105,6 +144,7 @@ def _spawn_child(
         initial_message_id=msg_id,
         parent_session_id=parent_session_id,
         mode=mode,
+        sub_agent_depth=parent_depth + 1,
     )
     return child_id, msg_id, entity_name
 
@@ -353,7 +393,14 @@ class SubAgentRunner:
     @staticmethod
     def _summarize_child_state(ipc) -> str:
         """Read the last few entries of the child's events.jsonl and produce
-        a one-line summary (e.g. ``running tool: bash``)."""
+        a one-line summary (e.g. ``running tool: bash``).
+
+        The field names below MUST match what the child's own ``Session``
+        actually writes:
+          - ``_make_tool_call_callback`` emits ``{"type":"tool_call","name":...}``
+          - ``_set_model_status`` emits ``{"type":"model_status","state":...}``
+        Reported in PR #28 review as Bug #2.
+        """
         evt_path = getattr(ipc, "events_path", None)
         if evt_path is None or not Path(evt_path).exists():
             return ""
@@ -376,10 +423,10 @@ class SubAgentRunner:
             except json.JSONDecodeError:
                 continue
             etype = evt.get("type", "")
-            if etype == "tool" and not last_tool:
-                last_tool = evt.get("name") or evt.get("tool") or ""
+            if etype == "tool_call" and not last_tool:
+                last_tool = evt.get("name", "")
             elif etype == "model_status" and not last_status:
-                last_status = evt.get("value") or evt.get("status") or ""
+                last_status = evt.get("state", "")
             if last_tool and last_status:
                 break
         if last_tool:

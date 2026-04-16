@@ -86,9 +86,12 @@ def test_initial_message_id_persists_on_user_input(tmp_path: Path) -> None:
 
 
 def test_explorer_mode_copies_mode_md_from_toolhub(tmp_path: Path) -> None:
-    """If toolhub/sub_agent/explorer.md exists in the repo, it ends up at
-    sessions/<id>/core/mode.md. Skipped silently if the toolhub asset is absent
-    (init_session is tolerant — see session_init.py)."""
+    """``toolhub/sub_agent/explorer.md`` ends up at
+    ``sessions/<id>/core/mode.md``. Since v2.0.13 (post PR #28 review)
+    init_session hard-fails when the prompt is missing rather than
+    silently recording an inconsistent manifest — that behaviour is
+    covered by :func:`test_missing_mode_prompt_raises` below.
+    """
     sessions_base, sys_base, entity_base = _bases(tmp_path)
     init_session(
         "explorer-child", "agent",
@@ -96,8 +99,25 @@ def test_explorer_mode_copies_mode_md_from_toolhub(tmp_path: Path) -> None:
         mode="explorer",
     )
     mode_md = sessions_base / "explorer-child" / "core" / "mode.md"
-    # The repo ships toolhub/sub_agent/explorer.md, so this should exist.
-    if mode_md.exists():
-        body = mode_md.read_text(encoding="utf-8")
-        assert "Explorer Mode" in body
-        assert "playground" in body.lower()
+    assert mode_md.exists(), "Expected mode.md to be copied from toolhub"
+    body = mode_md.read_text(encoding="utf-8")
+    assert "Explorer Mode" in body
+    assert "playground" in body.lower()
+
+
+def test_missing_mode_prompt_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the toolhub prompt file doesn't exist, init_session refuses to
+    record ``mode`` rather than leaving a mode-aware child without its
+    agent-visible rule set. (Cubic review, PR #28.)"""
+    sessions_base, sys_base, entity_base = _bases(tmp_path)
+    # Point the toolhub lookup at an empty dir so explorer.md is missing.
+    empty_toolhub = tmp_path / "fake_toolhub"
+    (empty_toolhub / "sub_agent").mkdir(parents=True)
+    import butterfly.session_engine.session_init as mod
+    monkeypatch.setattr(mod, "_TOOLHUB_DIR", empty_toolhub)
+    with pytest.raises(FileNotFoundError, match="inconsistent state"):
+        init_session(
+            "child-no-prompt", "agent",
+            sessions_base=sessions_base, system_sessions_base=sys_base, entity_base=entity_base,
+            mode="explorer",
+        )

@@ -59,7 +59,7 @@ class EditExecutor(BaseExecutor):
             try:
                 self._guardian.check_write(resolved)
             except PermissionError as exc:
-                return f"Error: {exc}"
+                return f"Error: Failed to edit {path_arg}: {exc}"
         if not resolved.exists() or not resolved.is_file():
             return f"Error: File not found: {path_arg}"
 

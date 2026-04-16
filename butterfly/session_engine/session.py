@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -34,19 +35,32 @@ SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
 SESSION_FINISHED = "SESSION_FINISHED"
 
-# Background-spawn placeholder pattern. Agent.py returns this string from
-# ``_execute_tools`` when a tool was routed to BackgroundTaskManager.spawn;
-# Session._make_tool_done_callback parses the embedded tid so the UI can
-# match the eventual tool_finalize event.
-import re as _re
-_BG_PLACEHOLDER_TID_RE = _re.compile(r'task_id="([^"]+)"')
+# Background-spawn placeholder pattern. Agent.py returns this exact prefix
+# from ``_execute_tools`` when a tool was routed to BackgroundTaskManager.spawn:
+#
+#     Task started. task_id=<tid>. Output will arrive in a later turn …
+#
+# We anchor on that literal prefix so unrelated tool outputs that happen to
+# contain ``task_id="..."`` (e.g. an agent cat'ing a file that mentions an
+# earlier tid) don't get mis-tagged as background placeholders — which would
+# leave the chat cell yellow forever waiting on a tool_finalize that never
+# arrives. Reported in PR #28 review as Bug #3.
+_BG_PLACEHOLDER_PREFIX = "Task started. task_id="
+_BG_PLACEHOLDER_TID_RE = re.compile(
+    r"^Task started\. task_id=([A-Za-z0-9_]+)\."
+)
 
 
 def _parse_background_tid(result: str) -> str | None:
-    """Return the tid embedded in a background-spawn placeholder result, else None."""
-    if not isinstance(result, str) or "task_id=" not in result:
+    """Return the tid embedded in a background-spawn placeholder result, else None.
+
+    Only matches the exact placeholder format emitted by
+    ``butterfly/core/agent.py::_execute_tools`` — any other string that
+    happens to mention ``task_id="..."`` is rejected.
+    """
+    if not isinstance(result, str) or not result.startswith(_BG_PLACEHOLDER_PREFIX):
         return None
-    m = _BG_PLACEHOLDER_TID_RE.search(result)
+    m = _BG_PLACEHOLDER_TID_RE.match(result)
     return m.group(1) if m else None
 
 
@@ -866,7 +880,19 @@ class Session:
         self._emit_version_notice_if_stale()
         self._bg_manager.sweep_restart()
 
-        input_offset = ipc.context_size()
+        # v2.0.13 fix (PR #28 review Bug #1): start input_offset at the byte
+        # position immediately after the last committed ``turn`` in
+        # ``context.jsonl``, not at end-of-file.
+        #
+        # Motivation: ``init_session(initial_message=...)`` writes a
+        # ``user_input`` row BEFORE the watcher starts our daemon. If we
+        # initialised input_offset to ``context_size()``, that row would
+        # already be past the offset and ``poll_inputs`` would never surface
+        # it — the child would sit idle while the parent's ``_wait_for_reply``
+        # times out. Rewinding to "after the last turn" keeps resume
+        # behaviour correct (turns already processed are not re-enqueued)
+        # while guaranteeing fresh sessions pick up their seed inputs.
+        input_offset = self._initial_input_offset()
         interrupt_offset = ipc.events_size()
 
         try:
@@ -1258,6 +1284,41 @@ class Session:
                 ext(name, input, result)
 
         return on_tool_done
+
+    def _initial_input_offset(self) -> int:
+        """Byte position in ``context.jsonl`` immediately after the last
+        committed ``turn`` event, or 0 if no turn has been written yet.
+
+        Used by ``run_daemon_loop`` to seed ``input_offset`` so:
+          - Fresh sessions (no turns) rewind to 0 and pick up any
+            ``user_input`` that was written by ``init_session`` before the
+            daemon started.
+          - Resumed sessions skip history already committed as turns; any
+            ``user_input`` that arrived *after* the last turn (e.g. a mid-
+            flight crash) is still replayed.
+        """
+        if not self._context_path.exists():
+            return 0
+        last_turn_end = 0
+        try:
+            with self._context_path.open("rb") as f:
+                while True:
+                    line_start = f.tell()
+                    line = f.readline()
+                    if not line:
+                        break
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        evt = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        continue
+                    if evt.get("type") == "turn":
+                        last_turn_end = f.tell()  # byte right after newline
+        except OSError:
+            return 0
+        return last_turn_end
 
     def _emit_sub_agent_count(self) -> None:
         """Re-broadcast the running sub_agent tally as a HUD-side event."""
