@@ -4,22 +4,24 @@ Watches a _sessions/ directory and runs each discovered session as an
 asyncio task. The server itself holds no hard-coded sessions; all sessions
 are created by the chat UI writing a manifest.json.
 
-Usage:
-    butterfly-server                Start server (auto-daemonize)
-    butterfly-server start          Same as above
-    butterfly-server stop           Stop a running server
-    butterfly-server status         Show server status
-    butterfly-server update         Reinstall package and restart server
-    butterfly-server --foreground   Run in foreground (no daemonize)
+Not invoked directly as a CLI entrypoint. The unified `butterfly` command
+boots the server+web pair (see `ui/cli/main.py::cmd_default`). The daemon
+helpers exposed here (`_start_daemon`, `_is_server_running`, `_cmd_stop`)
+are reused by `butterfly update` and by `_ensure_server_running` in the
+session subcommands. `python -m butterfly.runtime.server --foreground` is
+the process image spawned by `_start_daemon` and by `os.execvp` during
+auto-update respawn.
 
 """
 import argparse
 import asyncio
+import json
 import os
 import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
@@ -75,6 +77,142 @@ def _is_server_running(system_dir: Path | None = None) -> int | None:
 
 # ── Server core ───────────────────────────────────────────────────────────────
 
+def _update_status_path(system_sessions_dir: Path) -> Path:
+    return system_sessions_dir / "update_status.json"
+
+
+def _git(*args: str, check: bool = False, capture: bool = False,
+         timeout: float | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(_REPO_ROOT), *args],
+        check=check,
+        capture_output=capture,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _now_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+async def _auto_update_worker(
+    interval_sec: int,
+    system_sessions_dir: Path,
+    stop_event: asyncio.Event,
+) -> None:
+    """Background worker: hourly check for upstream updates.
+
+    Behavior:
+      - Clean tree + new commits: runs `git pull --ff-only` + `pip install -e .`
+        + frontend rebuild, writes `update_status.json` with `applied=true`,
+        then `os.execvp`s self with the updated code. Web UI polls the status
+        file and force-reloads on seeing the new `applied_at`.
+      - Dirty tree + new commits: writes `update_status.json` with
+        `dirty=true` + `available=true`. Web UI shows a top-right
+        notification; no auto-apply (user runs `butterfly update` manually
+        after committing).
+      - No new commits: clears any stale `update_status.json`.
+
+    Set ``BUTTERFLY_AUTOUPDATE_INTERVAL_SEC=0`` to disable the worker.
+
+    All blocking subprocess calls run on the default executor so the
+    SessionWatcher's polling loop is never starved (git fetch can take tens
+    of seconds over a slow link).
+    """
+    status_path = _update_status_path(system_sessions_dir)
+
+    def _sync_check_and_apply() -> str | None:
+        """Runs the whole check/apply pipeline in a worker thread.
+
+        Returns None on happy path (updates applied up to execvp or no-op);
+        returns a non-empty string to surface an error message to the async
+        caller without raising.
+        """
+        _git("fetch", "--quiet", "origin", timeout=60)
+        head = _git("rev-parse", "HEAD", capture=True).stdout.strip()
+        remote = _git("rev-parse", "origin/main", capture=True).stdout.strip()
+        if not head or not remote or head == remote:
+            if status_path.exists():
+                try:
+                    status_path.unlink()
+                except OSError:
+                    pass
+            return None
+
+        dirty = _git("diff", "--quiet").returncode != 0 or \
+                _git("diff", "--cached", "--quiet").returncode != 0
+        commits_behind = int(
+            _git("rev-list", "--count", f"{head}..{remote}",
+                 capture=True).stdout.strip() or "0"
+        )
+
+        if dirty:
+            status_path.write_text(json.dumps({
+                "available": True,
+                "dirty": True,
+                "commits_behind": commits_behind,
+                "local_head": head,
+                "remote_head": remote,
+                "checked_at": _now_iso(),
+            }))
+            return None
+
+        print(f"[auto-update] Applying {commits_behind} upstream commits...", flush=True)
+        pull = _git("pull", "--ff-only", timeout=120)
+        if pull.returncode != 0:
+            return "git pull failed"
+
+        pip = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-e", str(_REPO_ROOT)],
+            capture_output=True, text=True, timeout=300,
+        )
+        if pip.returncode != 0:
+            return f"pip install failed:\n{pip.stderr}"
+
+        frontend_dir = _REPO_ROOT / "ui" / "web" / "frontend"
+        if (frontend_dir / "package.json").exists():
+            fb = subprocess.run(
+                ["npm", "run", "build"],
+                cwd=str(frontend_dir), capture_output=True, text=True,
+                timeout=300,
+            )
+            if fb.returncode != 0:
+                print(f"[auto-update] frontend rebuild failed: {fb.stderr[:200]}", flush=True)
+
+        status_path.write_text(json.dumps({
+            "applied": True,
+            "new_head": remote,
+            "applied_at": _now_iso(),
+            "reload": True,
+        }))
+
+        print("[auto-update] Respawning server with new code...", flush=True)
+        _clear_pid(system_sessions_dir)
+        cmd = [
+            sys.executable, "-m", "butterfly.runtime.server",
+            "--foreground",
+            "--sessions-dir", str(SESSIONS_DIR),
+            "--system-sessions-dir", str(system_sessions_dir),
+        ]
+        os.execvp(sys.executable, cmd)
+        return None  # unreachable — execvp replaces process image
+
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_sec)
+            return
+        except asyncio.TimeoutError:
+            pass
+
+        try:
+            err = await asyncio.to_thread(_sync_check_and_apply)
+            if err:
+                print(f"[auto-update] {err}", flush=True)
+        except Exception as e:  # noqa: BLE001 — keep worker alive on any error
+            print(f"[auto-update] error: {e}", flush=True)
+
+
 async def _run(sessions_dir: Path, system_sessions_dir: Path) -> None:
     from butterfly.runtime.watcher import SessionWatcher
 
@@ -87,8 +225,16 @@ async def _run(sessions_dir: Path, system_sessions_dir: Path) -> None:
 
     _write_pid(system_sessions_dir)
     print(f"butterfly server started (pid={os.getpid()}). sessions dir: {sessions_dir.absolute()}")
+
+    interval = int(os.environ.get("BUTTERFLY_AUTOUPDATE_INTERVAL_SEC", "3600"))
+    tasks: list[asyncio.Task] = [asyncio.create_task(watcher.run(stop_event))]
+    if interval > 0 and (_REPO_ROOT / ".git").exists():
+        tasks.append(asyncio.create_task(
+            _auto_update_worker(interval, system_sessions_dir, stop_event)
+        ))
+
     try:
-        await watcher.run(stop_event)
+        await asyncio.gather(*tasks, return_exceptions=True)
     finally:
         _clear_pid(system_sessions_dir)
     print("butterfly server stopped.")
@@ -201,25 +347,6 @@ def _cmd_status(args) -> int:
     return 0
 
 
-def _cmd_update(args) -> int:
-    """Reinstall the butterfly package and restart the server."""
-    print("Stopping server...")
-    _cmd_stop(args)
-
-    print("Reinstalling butterfly...")
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-e", str(_REPO_ROOT)],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        print(f"pip install failed:\n{result.stderr}")
-        return 1
-    print("Package reinstalled.")
-
-    print("Restarting server...")
-    return _cmd_start(args)
-
-
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 def _add_dir_args(parser: argparse.ArgumentParser) -> None:
@@ -259,9 +386,6 @@ def main() -> None:
                           help="Stop the running server")
     subparsers.add_parser("status", allow_abbrev=False, parents=[shared],
                           help="Show server status")
-    subparsers.add_parser("update", allow_abbrev=False, parents=[shared],
-                          help="Reinstall package and restart server")
-
     args = parser.parse_args()
 
     # Map subcommand (or default) to handler
@@ -270,7 +394,6 @@ def main() -> None:
         "start": _cmd_start,
         "stop": _cmd_stop,
         "status": _cmd_status,
-        "update": _cmd_update,
     }
     handler = _COMMANDS.get(args.command)
     if handler is None:

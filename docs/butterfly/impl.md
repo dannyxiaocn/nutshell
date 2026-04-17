@@ -9,7 +9,7 @@ butterfly/
   llm_engine/           # Provider adapters and registry
   tool_engine/          # Tool loading, executors, built-ins
   skill_engine/         # Skill loading and rendering
-  session_engine/       # Entity → session lifecycle, Session wrapper
+  session_engine/       # Agent → session lifecycle, Session wrapper
   runtime/              # Watcher, IPC, bridge, coordination
   service/              # Shared service layer for CLI + Web
 ```
@@ -24,8 +24,8 @@ butterfly/
 
 ## How a Session Runs
 
-1. **Entity** defines agent template in `entity/<name>/`
-2. **`session_engine.init_session()`** creates `sessions/<id>/` + `_sessions/<id>/` from entity via meta session
+1. **Entity** defines agent template in `agenthub/<name>/`
+2. **`session_engine.init_session()`** creates `sessions/<id>/` + `_sessions/<id>/` from agent via meta session
 3. **`runtime.watcher`** discovers `_sessions/<id>/manifest.json`, starts daemon
 4. **`Session`** reloads prompts, memory, tools, skills from `core/` before each activation
 5. **`Agent.run()`** loops: build prompt → call LLM → execute tools → repeat

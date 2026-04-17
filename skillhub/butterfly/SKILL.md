@@ -2,9 +2,9 @@
 name: butterfly
 description: >
   Butterfly agent-runtime guide — covers both CLI usage (running agents,
-  managing sessions, creating entities, viewing logs) and development on
+  managing sessions, creating agents, viewing logs) and development on
   the Butterfly codebase itself (runtime, providers, session lifecycle,
-  CLI/web changes, tool/skill engine, entity updates, tests, docs).
+  CLI/web changes, tool/skill engine, agent updates, tests, docs).
   Load this skill whenever the user asks how to use Butterfly from the
   terminal OR asks for work that changes Butterfly itself.
 ---
@@ -24,9 +24,9 @@ Read the code and tests before trusting documentation. Keep changes local to the
 
 ### Core Concepts
 
-- **Entity** — a reusable agent template (`entity/<name>/`): config, prompts, tools, skills
-- **Session** — a running instance of an entity (`sessions/<id>/`): agent-visible workspace
-- **Meta session** — mutable shared seed for all sessions of an entity (`sessions/<entity>_meta/`)
+- **Agent** — a reusable agent template (`agenthub/<name>/`): config, prompts, tools, skills
+- **Session** — a running instance of an agent (`sessions/<id>/`): agent-visible workspace
+- **Meta session** — mutable shared seed for all sessions of an agent (`sessions/<agent>_meta/`)
 - **Server** — background daemon that watches for sessions and runs agent loops
 
 ### Quick Start
@@ -40,8 +40,8 @@ butterfly-server start
 # Send a message (auto-starts server if needed)
 butterfly chat "Hello, what can you do?"
 
-# Use a specific entity
-butterfly chat --entity butterfly_dev "Review the codebase"
+# Use a specific agent
+butterfly chat --agent butterfly_dev "Review the codebase"
 
 # Continue an existing session
 butterfly chat --session 2026-04-13_10-00-00-a1b2 "What's the status?"
@@ -60,14 +60,14 @@ butterfly chat --session 2026-04-13_10-00-00-a1b2 "What's the status?"
 
 **`chat` flags:**
 - `--session ID` — continue an existing session
-- `--entity NAME` — entity to use (default: `agent`)
+- `--agent NAME` — agent to use (default: `agent`)
 - `--no-wait` — fire-and-forget (don't block for reply)
 - `--timeout N` — seconds to wait (default: 300)
 - `--keep-alive` — keep server running after reply
 - `--inject-memory KEY=VALUE` or `KEY=@FILE` — inject memory layers
 
 **`new` flags:**
-- `--entity NAME` — entity to init from (default: `agent`)
+- `--agent NAME` — agent to init from (default: `agent`)
 - `--heartbeat N` — heartbeat interval in seconds
 - `--inject-memory KEY=VALUE` — inject memory at creation
 
@@ -84,16 +84,16 @@ butterfly chat --session 2026-04-13_10-00-00-a1b2 "What's the status?"
 - `--since TIMESTAMP` — filter by time (ISO-8601, epoch, or `now`)
 - `--watch` — poll for new turns every 2s
 
-#### Entity Management
+#### Agent Management
 
 | Command | Description |
 |---------|-------------|
-| `butterfly entity new` | Scaffold a new entity (interactive) |
+| `butterfly agent new` | Scaffold a new agent (interactive) |
 
-**`entity new` flags:**
+**`agent new` flags:**
 - `-n NAME` — skip interactive prompt
-- `--init-from SOURCE` — copy from existing entity
-- `--blank` — empty entity with placeholders
+- `--init-from SOURCE` — copy from existing agent
+- `--blank` — empty agent with placeholders
 
 #### Server / Web Management
 
@@ -111,12 +111,12 @@ butterfly chat --session 2026-04-13_10-00-00-a1b2 "What's the status?"
 ### Session Lifecycle
 
 ```
-entity/ ──create──> sessions/<id>/ ──chat──> agent runs ──stop──> napping
+agenthub/ ──create──> sessions/<id>/ ──chat──> agent runs ──stop──> napping
                                                   ↑                  │
                                                   └────start─────────┘
 ```
 
-1. `butterfly new` or `butterfly chat` creates a session from an entity template
+1. `butterfly new` or `butterfly chat` creates a session from an agent template
 2. Server picks up the session and runs the agent loop
 3. Agent reads/writes `core/` files (memory, tasks, tools, skills)
 4. `butterfly stop` pauses; `butterfly start` resumes
@@ -130,7 +130,7 @@ butterfly chat "Explain how Python generators work"
 
 **Long-running dev session:**
 ```bash
-butterfly new --entity butterfly_dev my-feature
+butterfly new --agent butterfly_dev my-feature
 butterfly chat --session my-feature "Add pagination to the API"
 butterfly log --session my-feature --watch  # monitor progress
 ```
@@ -158,14 +158,14 @@ butterfly/           runtime implementation
 ├── llm_engine/     provider registry + adapters (anthropic, openai, kimi, codex)
 ├── tool_engine/    tool loading, executors, registry
 ├── skill_engine/   SKILL.md loading + system prompt rendering
-├── session_engine/ entity config, session init, meta-session state, task cards
+├── session_engine/ agent config, session init, meta-session state, task cards
 └── runtime/        server, watcher, IPC, bridge, env, git coordination
 toolhub/            built-in tool implementations (tool.json + executor.py)
 skillhub/           built-in skill definitions (SKILL.md)
 ui/
 ├── cli/            `butterfly` CLI entry point
 └── web/            FastAPI + SSE + Vite frontend
-entity/             agent templates (config.yaml + prompts/ + tools.md + skills.md)
+agenthub/             agent templates (config.yaml + prompts/ + tools.md + skills.md)
 tests/              mirrors source layout
 docs/               documentation and task boards
 ```
@@ -174,13 +174,13 @@ docs/               documentation and task boards
 
 #### Filesystem-as-Everything
 - Agents read/write session directories; IPC via `context.jsonl` + `events.jsonl`
-- `entity/` is read-only template; all mutable state in `sessions/`
-- `sessions/<entity>_meta/` holds entity-level mutable state
+- `agenthub/` is read-only template; all mutable state in `sessions/`
+- `sessions/<agent>_meta/` holds agent-level mutable state
 
 #### Hub Pattern (toolhub + skillhub)
 - All built-in tools live in `toolhub/<name>/` with `tool.json` + `executor.py`
 - All built-in skills live in `skillhub/<name>/SKILL.md`
-- Entity and session `tools.md` / `skills.md` only list **enabled** names (one per line)
+- Agent and session `tools.md` / `skills.md` only list **enabled** names (one per line)
 - Agent-created tools (`core/tools/`) and skills (`core/skills/`) are session-local extensions
 
 #### Progressive Disclosure (Skills)
@@ -203,13 +203,13 @@ UI → runtime → session_engine → core
 | `llm_engine/` | Provider implementations, message conversion | Tool execution |
 | `tool_engine/` | ToolLoader, executor dispatch, shell/bash tools | Agent loop |
 | `skill_engine/` | SkillLoader, skills.md parsing, prompt rendering | Tool execution |
-| `session_engine/` | Session lifecycle, entity config, meta-session, task cards | Central dispatch |
-| `runtime/` | Server, watcher, IPC, bridge | Entity config |
+| `session_engine/` | Session lifecycle, agent config, meta-session, task cards | Central dispatch |
+| `runtime/` | Server, watcher, IPC, bridge | Agent config |
 
 ### Session Model
 
 ```
-entity/<name>/           read-only template
+agenthub/<name>/           read-only template
   ├── config.yaml        model, provider, thinking, prompts
   ├── prompts/           system.md, task.md, env.md
   ├── tools.md           enabled toolhub tools (one name per line)
@@ -230,7 +230,7 @@ sessions/<id>/           agent-visible runtime
       └── tasks/         task cards (*.json)
 
 _sessions/<id>/          system-only twin (agent never sees)
-  ├── manifest.json      entity name, created_at
+  ├── manifest.json      agent name, created_at
   ├── status.json        dynamic runtime state
   ├── context.jsonl      conversation records
   └── events.jsonl       live runtime events for UI streaming
@@ -243,7 +243,7 @@ _sessions/<id>/          system-only twin (agent never sees)
 1. Create `toolhub/<name>/tool.json` (Anthropic tool schema format)
 2. Create `toolhub/<name>/executor.py` with an executor class
 3. Register special context injection in `butterfly/tool_engine/loader.py` `_create_executor()` if needed
-4. Add the tool name to relevant entity `tools.md` files
+4. Add the tool name to relevant agent `tools.md` files
 5. Update docs and tests
 
 #### Adding a provider
@@ -256,13 +256,13 @@ _sessions/<id>/          system-only twin (agent never sees)
 #### Adding a built-in skill
 
 1. Create `skillhub/<name>/SKILL.md` with frontmatter + body
-2. Add the skill name to relevant entity `skills.md` files
+2. Add the skill name to relevant agent `skills.md` files
 3. Update docs
 
-#### Adding an entity
+#### Adding an agent
 
-1. Create `entity/<name>/` with `config.yaml`, `prompts/`, `tools.md`, `skills.md` (or use `butterfly entity new -n <name> --init-from agent`)
-2. The meta session is initialized automatically the first time a child session is created from the entity (`populate_meta_from_entity` runs during `init_session`).
+1. Create `agenthub/<name>/` with `config.yaml`, `prompts/`, `tools.md`, `skills.md` (or use `butterfly agent new -n <name> --init-from agent`)
+2. The meta session is initialized automatically the first time a child session is created from the agent (`populate_meta_from_agent` runs during `init_session`).
 
 ### System Prompt Assembly
 
@@ -292,4 +292,4 @@ Test layout mirrors source: `tests/butterfly/{core,llm_engine,tool_engine,...}/`
 - If a README and the code disagree, trust the code and fix the README
 - If a directory is an operational subsystem, it should have a short README
 - If a file path is part of a contract, mention the path exactly as the code uses it
-- After changing files under `entity/<name>/`, either (a) delete the meta session `sessions/<name>_meta/` and `_sessions/<name>_meta/` so the next child session re-bootstraps from the entity, or (b) manually mirror the edits into `sessions/<name>_meta/core/` for existing sessions to pick up.
+- After changing files under `agenthub/<name>/`, either (a) delete the meta session `sessions/<name>_meta/` and `_sessions/<name>_meta/` so the next child session re-bootstraps from the agent, or (b) manually mirror the edits into `sessions/<name>_meta/core/` for existing sessions to pick up.

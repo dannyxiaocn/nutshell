@@ -6,20 +6,20 @@
 |------|---------|
 | `main.py` | Subcommand registration and top-level orchestration |
 | `chat.py` | Single-shot chat helper for `butterfly chat` |
-| `new_agent.py` | Entity scaffolding (`butterfly entity new`) |
+| `new_agent.py` | Agent scaffolding (`butterfly agent new`) |
 
 ## Available Commands
 
 ```bash
 butterfly chat MESSAGE                  # new session + send message
 butterfly chat --session ID MSG         # send to existing session
-butterfly new [ID] [--entity NAME]      # create session (no message)
+butterfly new [ID] [--agent NAME]       # create session (no message)
 butterfly sessions                      # list sessions
 butterfly log [ID] [-n N] [--watch]     # conversation history
 butterfly tasks [ID]                    # session task board
 butterfly stop ID                       # stop session
 butterfly start ID                      # resume session
-butterfly entity new ...                # scaffold a new entity
+butterfly agent new ...                # scaffold a new agent
 butterfly server                        # start the server daemon
 butterfly web                           # start the web UI
 

@@ -1,8 +1,8 @@
 """butterfly-chat — single-shot CLI for interacting with a Butterfly session.
 
 Usage:
-    butterfly-chat "message"                              # new session (default entity: agent)
-    butterfly-chat --entity butterfly_dev "message"        # new session, custom entity
+    butterfly-chat "message"                              # new session (default agent: agent)
+    butterfly-chat --agent butterfly_dev "message"        # new session, custom agent
     butterfly-chat --session <id> "message"               # continue existing session
     butterfly-chat --session <id> --no-wait "message"     # fire-and-forget
     butterfly-chat --session <id> --timeout 60 "message"  # custom timeout (seconds)
@@ -157,7 +157,7 @@ def _continue_session(
 # ── New session ───────────────────────────────────────────────────────────────
 
 def _new_session(
-    entity_name: str,
+    agent_name: str,
     message: str,
     *,
     no_wait: bool,
@@ -174,23 +174,23 @@ def _new_session(
     from butterfly.session_engine.session import Session
     from butterfly.session_engine.session_init import init_session
 
-    entity_base = Path(__file__).parent.parent.parent / "entity"
+    agent_base = Path(__file__).parent.parent.parent / "agenthub"
     try:
-        agent = AgentLoader().load(entity_base / entity_name)
+        agent = AgentLoader().load(agent_base / agent_name)
     except Exception as exc:
-        print(f"Error: failed to load entity '{entity_name}': {exc}", file=sys.stderr)
+        print(f"Error: failed to load agent '{agent_name}': {exc}", file=sys.stderr)
         return 1
 
     session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "-" + uuid.uuid4().hex[:4]
 
-    # Populate core/ with entity files so _load_session_capabilities() finds them
+    # Populate core/ with agent files so _load_session_capabilities() finds them
     try:
         init_session(
             session_id=session_id,
-            entity_name=entity_name,
+            agent_name=agent_name,
             sessions_base=sessions_base,
             system_sessions_base=system_base,
-            entity_base=entity_base,
+            agent_base=agent_base,
         )
     except Exception as exc:
         print(f"Error: failed to initialise session: {exc}", file=sys.stderr)
@@ -299,7 +299,7 @@ def main() -> None:
         epilog=(
             "Examples:\n"
             "  butterfly-chat 'Plan a data pipeline'\n"
-            "  butterfly-chat --entity butterfly_dev 'Review this code'\n"
+            "  butterfly-chat --agent butterfly_dev 'Review this code'\n"
             "  butterfly-chat --session 2026-03-24_10-00-00 'Status update?'\n"
             "  butterfly-chat --session <id> --no-wait 'Run overnight report'\n"
         ),
@@ -310,7 +310,7 @@ def main() -> None:
         help="Continue an existing session by ID",
     )
     parser.add_argument(
-        "--entity", default="agent", metavar="NAME",
+        "--agent", default="agent", metavar="NAME",
         help="Entity to use for a new session (default: agent)",
     )
     parser.add_argument(
@@ -338,7 +338,7 @@ def main() -> None:
         )
     else:
         code = _new_session(
-            args.entity,
+            args.agent,
             args.message,
             no_wait=args.no_wait,
             timeout=args.timeout,

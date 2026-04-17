@@ -58,7 +58,7 @@ class TestKeepAliveCLIArg:
             mock_ns.return_value = 0
             args = mock.MagicMock()
             args.session = None
-            args.entity = "agent"
+            args.agent = "agent"
             args.message = "hello"
             args.no_wait = False
             args.timeout = 10.0
@@ -81,7 +81,7 @@ class TestKeepAliveCLIArg:
             mock_ns.return_value = 0
             args = mock.MagicMock()
             args.session = None
-            args.entity = "agent"
+            args.agent = "agent"
             args.message = "hello"
             args.no_wait = False
             args.timeout = 10.0
