@@ -1,6 +1,6 @@
-# Butterfly🦋Agent
+# Butterfly Agent 🦋
 
-Agent system that serves all humans.
+Think Wild
 
 ## Quick Start
 
