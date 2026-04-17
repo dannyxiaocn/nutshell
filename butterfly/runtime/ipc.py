@@ -75,68 +75,137 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
 
     if etype == "turn":
         result: list[dict] = []
-        triggered_by = event.get("triggered_by", "user")
+        persisted = event.get("thinking_blocks") or []
+        has_persisted = isinstance(persisted, list) and bool(persisted)
+        has_streaming_tools = event.get("has_streaming_tools", False)
+        has_streaming_thinking = event.get("has_streaming_thinking", False)
+        usage = event.get("usage")
 
-        # Tool calls: always emit for history; for SSE only when NOT already
-        # streamed live via tool_call events (has_streaming_tools flag).
-        if for_history or not event.get("has_streaming_tools"):
-            for msg in event.get("messages", []):
-                if msg["role"] == "assistant":
-                    content = msg["content"]
-                    if isinstance(content, list):
-                        for block in content:
-                            if isinstance(block, dict) and block.get("type") == "tool_use":
-                                block_ts = block.get("ts", ts)
-                                result.append({
-                                    "type": "tool",
-                                    "name": block["name"],
-                                    "input": block.get("input", {}),
-                                    "ts": block_ts,
-                                })
+        # ── Persisted thinking_blocks (v2.0.17+) ──────────────────────
+        # Server-captured list of ``{block_id, text, duration_ms, ts}`` dicts
+        # from the session's on_thinking_end callback. Emitted first because
+        # we don't know their position within message.content (providers like
+        # codex don't round-trip thinking through content at all). Skipped on
+        # live SSE — the thinking_start/thinking_done events on events.jsonl
+        # already painted the cell.
+        if has_persisted and for_history:
+            for i, block in enumerate(persisted):
+                if not isinstance(block, dict):
+                    continue
+                text = block.get("text", "")
+                if not text:
+                    continue
+                thinking_ev: dict = {
+                    "type": "thinking",
+                    "content": text,
+                    "ts": block.get("ts") or ts,
+                    "id": f"thinking:{ts}:persisted:{i}",
+                }
+                if block.get("duration_ms") is not None:
+                    thinking_ev["duration_ms"] = block["duration_ms"]
+                if block.get("block_id"):
+                    thinking_ev["block_id"] = block["block_id"]
+                result.append(thinking_ev)
 
-        # Thinking content:
-        #   * For history replay: always emit so the transcript includes
-        #     prior turns' reasoning.
-        #   * For live SSE: when the turn was streamed with the new
-        #     thinking_start/thinking_done events, don't re-emit from the
-        #     serialized turn content — the live events already rendered the
-        #     cells and re-emitting would duplicate them.
-        if for_history or not event.get("has_streaming_thinking"):
-            thinking_idx = 0
-            for msg in event.get("messages", []):
-                if msg["role"] == "assistant":
-                    content = msg.get("content", [])
-                    if isinstance(content, list):
-                        for block in content:
-                            if isinstance(block, dict) and block.get("type") == "thinking":
-                                thinking_text = block.get("thinking", "")
-                                if thinking_text:
-                                    thinking_ev: dict = {"type": "thinking", "content": thinking_text, "ts": ts}
-                                    # Always set id (not guarded by for_history) so thinking events
-                                    # returned by the history endpoint can also be deduped client-side,
-                                    # preventing repeat renders on visibilitychange.
-                                    thinking_ev["id"] = f"thinking:{ts}:{thinking_idx}"
-                                    thinking_idx += 1
-                                    result.append(thinking_ev)
+        # ── Tool + text + legacy thinking: iterate in message order ──
+        # This preserves interleaved-mode sequencing (think → tool → text →
+        # tool → text) that kimi / codex / gpt-5 commonly emit in one agent
+        # run. Old code collected all tool events, then all thinking, then
+        # only the LAST assistant text, so intermediate text outputs were
+        # silently dropped on history replay.
+        agent_events: list[dict] = []  # tracked for usage attachment on last
+        thinking_idx = 0
+        agent_idx = 0
 
-        # Final assistant text (last assistant message)
-        for msg in reversed(event.get("messages", [])):
-            if msg["role"] == "assistant":
-                content = msg["content"]
-                text = content if isinstance(content, str) else next(
-                    (b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"), ""
-                )
-                if text:
-                    ev: dict = {"type": "agent", "content": text, "ts": ts}
+        for msg in event.get("messages", []):
+            if msg.get("role") != "assistant":
+                continue
+            msg_ts = msg.get("ts", ts)
+            content = msg.get("content", [])
+
+            # Some providers round-trip the assistant message as a bare string
+            # (no block structure). Treat it as a single text block.
+            if isinstance(content, str):
+                if content:
+                    ev: dict = {"type": "agent", "content": content, "ts": msg_ts}
                     if not for_history:
-                        # Use ts-based id (NOT user_input_id) so server-side BoundedIDSet
-                        # does not dedup the agent event after seeing the user event with
-                        # the same user_input_id.
-                        ev["id"] = f"turn:{ts}"
-                    if event.get("usage"):
-                        ev["usage"] = event["usage"]
+                        ev["id"] = f"turn:{ts}:{agent_idx}"
+                    agent_idx += 1
+                    agent_events.append(ev)
                     result.append(ev)
-                break
+                continue
+
+            if not isinstance(content, list):
+                continue
+
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+
+                if btype == "thinking":
+                    # Legacy fallback: only emit from content when the turn
+                    # didn't persist thinking_blocks (would double-render).
+                    # For live SSE, also skip when the thinking_start/
+                    # thinking_done stream already painted the cell.
+                    if has_persisted:
+                        continue
+                    if not for_history and has_streaming_thinking:
+                        continue
+                    thinking_text = block.get("thinking", "")
+                    if thinking_text:
+                        ev = {
+                            "type": "thinking",
+                            "content": thinking_text,
+                            "ts": ts,
+                            "id": f"thinking:{ts}:{thinking_idx}",
+                        }
+                        thinking_idx += 1
+                        result.append(ev)
+
+                elif btype == "tool_use":
+                    if for_history or not has_streaming_tools:
+                        result.append({
+                            "type": "tool",
+                            "name": block["name"],
+                            "input": block.get("input", {}),
+                            "ts": block.get("ts", msg_ts),
+                        })
+
+                elif btype == "text":
+                    text = block.get("text", "")
+                    if text:
+                        ev = {"type": "agent", "content": text, "ts": msg_ts}
+                        if not for_history:
+                            ev["id"] = f"turn:{ts}:{agent_idx}"
+                        agent_idx += 1
+                        agent_events.append(ev)
+                        result.append(ev)
+
+        # ── Usage attaches to LAST agent event ────────────────────────
+        # Turn usage is cumulative for the whole run; we surface it on the
+        # final assistant text cell (tokens shown inline in that cell's
+        # header). Intermediate cells stay clean.
+        if usage and agent_events:
+            agent_events[-1]["usage"] = usage
+
+        # ── Live SSE: emit only the LAST agent event ─────────────────
+        # Intermediate text blocks in an interleaved turn (think → tool →
+        # text → tool → text → text_final) are already rendered live by
+        # the frontend via partial_text streaming plus the
+        # ``finalize-on-tool_call`` boundary — each iteration's text
+        # becomes its own permanent cell without any turn-derived event.
+        # Emitting those intermediate agent events here duplicates the
+        # cells (the frontend can't tell "this agent event matches a
+        # cell I already finalized" from "this is a fresh history
+        # replay"). For history replay we keep all N events so the
+        # iteration-ordered transcript renders correctly on re-entry.
+        if not for_history and len(agent_events) > 1:
+            last_agent = agent_events[-1]
+            result = [
+                r for r in result
+                if r.get("type") != "agent" or r is last_agent
+            ]
 
         return result
 
