@@ -92,7 +92,13 @@ def _load_context(context_path: Path) -> tuple[dict, list]:
             turns.append(ev)
     return inputs_by_id, turns
 
-def _turn_input_ids(turn: dict) -> list[str]:
+def turn_input_ids(turn: dict) -> list[str]:
+    """Return all user_input ids contributing to a turn (v2.0.12 merge-aware).
+
+    If the turn carries `merged_user_input_ids` (multiple inputs folded into
+    one user message by the dispatcher), return all of them in order.
+    Otherwise fall back to the single `user_input_id`.
+    """
     merged = turn.get('merged_user_input_ids')
     if isinstance(merged, list) and merged:
         return [str(uid) for uid in merged if uid]
@@ -100,9 +106,10 @@ def _turn_input_ids(turn: dict) -> list[str]:
     return [str(uid)] if uid else []
 
 
-def _turn_user_content(turn: dict, inputs_by_id: dict[str, dict]) -> str:
+def turn_user_content(turn: dict, inputs_by_id: dict[str, dict]) -> str:
+    """Concatenate the content of every merged user_input for a turn."""
     parts: list[str] = []
-    for uid in _turn_input_ids(turn):
+    for uid in turn_input_ids(turn):
         ev = inputs_by_id.get(uid)
         if not ev:
             continue
@@ -112,8 +119,9 @@ def _turn_user_content(turn: dict, inputs_by_id: dict[str, dict]) -> str:
     return '\n\n'.join(parts)
 
 
-def _turn_display_ts(turn: dict, inputs_by_id: dict[str, dict]) -> str:
-    for uid in _turn_input_ids(turn):
+def turn_display_ts(turn: dict, inputs_by_id: dict[str, dict]) -> str:
+    """Earliest merged-input timestamp, formatted for CLI display."""
+    for uid in turn_input_ids(turn):
         ev = inputs_by_id.get(uid)
         if ev:
             return ev.get('ts', '')[:16].replace('T', ' ')
@@ -136,8 +144,8 @@ def get_log_turns(session_id: str, system_sessions_dir: Path, n=None, since=None
         turns = turns[-n:]
     rows = []
     for turn in turns:
-        ts = _turn_display_ts(turn, inputs_by_id)
-        user_text = _turn_user_content(turn, inputs_by_id)
+        ts = turn_display_ts(turn, inputs_by_id)
+        user_text = turn_user_content(turn, inputs_by_id)
         agent_lines = []
         for msg in turn.get('messages', []):
             if msg.get('role') == 'assistant':
@@ -163,7 +171,7 @@ def get_pending_inputs(session_id: str, system_sessions_dir: Path, n=None) -> li
     if not context_path.exists():
         return []
     inputs_by_id, turns = _load_context(context_path)
-    matched_inputs = {uid for turn in turns for uid in _turn_input_ids(turn)}
+    matched_inputs = {uid for turn in turns for uid in turn_input_ids(turn)}
     pending = [ev for ev in inputs_by_id.values() if ev.get('id') not in matched_inputs]
     if n is not None:
         pending = pending[-n:]
@@ -185,11 +193,11 @@ def get_token_report(session_id: str, system_sessions_dir: Path) -> list[dict]:
     rows = []
     for i, turn in enumerate(turns, 1):
         usage = turn.get('usage') or {}
-        raw = _turn_user_content(turn, inputs_by_id) or ('[task]' if turn.get('pre_triggered') else '')
+        raw = turn_user_content(turn, inputs_by_id) or ('[task]' if turn.get('pre_triggered') else '')
         trigger = (raw[:40] + '…') if len(raw) > 40 else raw
         rows.append({
             'index': i,
-            'ts': _turn_display_ts(turn, inputs_by_id),
+            'ts': turn_display_ts(turn, inputs_by_id),
             'trigger': trigger,
             'input': usage.get('input', 0) or 0,
             'output': usage.get('output', 0) or 0,
