@@ -2,7 +2,7 @@
 
 Usage:
     butterfly                                  Start server + web UI, print URL, hang
-    butterfly server                          Tail the running server's log
+    butterfly server [tail|status|stop]       Manage the server daemon (default: tail log)
     butterfly update                          git pull + pip install -e . + rebuild web + restart
 
     butterfly chat MESSAGE [options]          Send a message / create a session
@@ -955,18 +955,50 @@ def cmd_default(args) -> int:
     return 0
 
 
-# ── Subcommand: `butterfly server` (tail server log) ──────────────────────────
+# ── Subcommand: `butterfly server` (tail/stop/status) ────────────────────────
 
 def _add_server_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "server",
         allow_abbrev=False,
-        help="Tail the running butterfly server's log (Ctrl+C to exit).",
+        help="Manage the butterfly server daemon (tail log / stop / status).",
+    )
+    # Nested subparsers. Leaving the subcommand OFF preserves the v2.0.16
+    # behaviour of ``butterfly server`` == tail the log, so existing user
+    # muscle memory still works.
+    sub = p.add_subparsers(dest="server_action", metavar="ACTION")
+    sub.add_parser(
+        "tail",
+        allow_abbrev=False,
+        help="Tail the running server's log (Ctrl+C to exit). Default action.",
+    )
+    sub.add_parser(
+        "status",
+        allow_abbrev=False,
+        help="Print the tracked daemon PID and warn about orphan daemons.",
+    )
+    sub.add_parser(
+        "stop",
+        allow_abbrev=False,
+        help="SIGTERM the tracked daemon and any orphan butterfly.runtime.server "
+             "processes holding the same _sessions/ directory.",
     )
     p.set_defaults(func=cmd_server)
 
 
 def cmd_server(args) -> int:
+    action = getattr(args, "server_action", None) or "tail"
+    if action == "tail":
+        return _cmd_server_tail(args)
+    if action == "status":
+        return _cmd_server_status(args)
+    if action == "stop":
+        return _cmd_server_stop(args)
+    print(f"Unknown server action: {action}", file=sys.stderr)
+    return 1
+
+
+def _cmd_server_tail(_args) -> int:
     from butterfly.runtime.server import _is_server_running, _log_file
     sys_dir = _DEFAULT_SYSTEM_BASE
     pid = _is_server_running(sys_dir)
@@ -983,6 +1015,98 @@ def cmd_server(args) -> int:
         _sp.run(["tail", "-F", str(log_path)])
     except KeyboardInterrupt:
         pass
+    return 0
+
+
+def _cmd_server_status(_args) -> int:
+    from butterfly.runtime.server import (
+        _is_server_running, _scan_butterfly_daemons, _lock_file,
+    )
+    sys_dir = _DEFAULT_SYSTEM_BASE
+    tracked = _is_server_running(sys_dir)
+    all_pids = _scan_butterfly_daemons(sys_dir)
+    orphans = [p for p in all_pids if p != tracked]
+
+    if tracked is None and not orphans:
+        print("butterfly server is not running.")
+        return 0
+
+    if tracked is not None:
+        print(f"butterfly server is running (pid={tracked}, tracked by server.pid).")
+    else:
+        print("butterfly server is NOT tracked by server.pid.")
+    if orphans:
+        print(f"Orphan daemon(s) on the same _sessions/ dir: {orphans}")
+        print("  These slip past the PID-file guard. The flock mutex "
+              "blocks any NEW daemon from joining them, but they will "
+              "race any running tracked daemon. Clean them up with "
+              "`butterfly server stop`.")
+    print(f"  lock file: {_lock_file(sys_dir)}")
+    return 0
+
+
+def _cmd_server_stop(_args) -> int:
+    """Gracefully stop the tracked daemon + every orphan butterfly daemon
+    against the same ``_sessions/`` directory.
+
+    ``butterfly.runtime.server._cmd_stop`` only SIGTERMs the PID in
+    ``server.pid``. That misses orphan daemons (their PID was never
+    recorded or got overwritten by a later daemon). We SIGTERM them
+    explicitly after scanning ``ps``.
+    """
+    import signal
+    from butterfly.runtime.server import (
+        _cmd_stop, _is_server_running, _scan_butterfly_daemons,
+    )
+    sys_dir = _DEFAULT_SYSTEM_BASE
+
+    tracked = _is_server_running(sys_dir)
+    all_pids_before = _scan_butterfly_daemons(sys_dir)
+    orphans = [p for p in all_pids_before if p != tracked]
+
+    # 1. Stop the tracked daemon via the runtime module's handler (handles
+    #    the graceful-then-SIGKILL loop + clears server.pid).
+    if tracked is not None:
+        class _A:
+            pass
+        a = _A()
+        a.system_sessions_dir = str(sys_dir)
+        _cmd_stop(a)
+    else:
+        print("No tracked daemon (server.pid empty or stale).")
+
+    # 2. SIGTERM any orphans. These are unmanaged — no graceful shutdown
+    #    entry point, just the signal.
+    if orphans:
+        print(f"Found {len(orphans)} orphan daemon(s): {orphans}")
+        for pid in orphans:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                print(f"  SIGTERM → pid {pid}")
+            except ProcessLookupError:
+                print(f"  pid {pid} already gone")
+            except PermissionError:
+                print(f"  pid {pid}: permission denied (owned by another user?)")
+        # Give them a moment, then verify.
+        time.sleep(0.8)
+        still_alive = []
+        for pid in orphans:
+            try:
+                os.kill(pid, 0)
+                still_alive.append(pid)
+            except ProcessLookupError:
+                pass
+        if still_alive:
+            print(f"Still alive after SIGTERM: {still_alive}. Sending SIGKILL...")
+            for pid in still_alive:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    print(f"  SIGKILL → pid {pid}")
+                except ProcessLookupError:
+                    pass
+
+    if tracked is None and not orphans:
+        print("butterfly server was not running; nothing to stop.")
     return 0
 
 

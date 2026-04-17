@@ -464,13 +464,17 @@ async def test_reasoning_item_done_falls_back_to_summary_text():
 
 @pytest.mark.asyncio
 async def test_unknown_reasoning_etype_routes_to_thinking():
-    """Catch-all: any response.reasoning* event variant routes to thinking."""
+    """Catch-all: an unrecognised ``response.reasoning*`` ``.delta`` event
+    variant still routes its delta text to thinking (forward-compat for
+    backend event-name drift). Non-delta variants (``.done`` / ``.part.*``)
+    carry cumulative text that the delta stream already delivered, so
+    they are silently consumed — see
+    ``test_repeated_reasoning_done_events_do_not_triple_body``."""
     from butterfly.llm_engine.providers.codex import _parse_sse_stream
 
     chunks = [
         _sse_event({"type": "response.reasoning_summary.delta", "delta": "hmm"}),
-        _sse_event({"type": "response.reasoning_summary_part.done",
-                    "part": {"text": " more"}}),
+        _sse_event({"type": "response.reasoning_summary.delta", "delta": " more"}),
         _sse_event({"type": "response.completed", "response": {"usage": {}}}),
     ]
     bodies: list[str] = []
@@ -482,6 +486,70 @@ async def test_unknown_reasoning_etype_routes_to_thinking():
     )
     assert text == ""
     assert bodies == ["hmm more"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_reasoning_done_events_do_not_triple_body():
+    """Regression for the codex-oauth ``gpt-5.4`` triple-render bug.
+
+    The real Codex SSE stream for a reasoning item emits the summary body
+    across three channels:
+
+      1. ``response.reasoning_summary_text.delta`` × N — the text, piece by
+         piece (explicitly handled).
+      2. ``response.reasoning_summary_text.done`` — the full cumulative
+         body (matched by the ``response.reasoning*`` catch-all).
+      3. ``response.reasoning_summary_part.done`` — the full part body
+         again (also matched by the catch-all).
+
+    Before the fix, the catch-all appended the ``.done`` text to
+    ``thinking_parts`` on top of what the deltas already streamed, so the
+    final body rendered the thought **three times** inside the cell. The
+    fix narrows the catch-all to ``.delta`` variants only.
+    """
+    from butterfly.llm_engine.providers.codex import _parse_sse_stream
+
+    body = "**Calculating**\n\nThe answer is 1255."
+
+    chunks = [
+        _sse_event({
+            "type": "response.output_item.added",
+            "item": {"type": "reasoning", "id": "rs_1"},
+        }),
+        _sse_event({
+            "type": "response.reasoning_summary_part.added",
+            "part": {"type": "summary_text", "text": ""},
+        }),
+        _sse_event({"type": "response.reasoning_summary_text.delta", "delta": "**Calculating**\n\n"}),
+        _sse_event({"type": "response.reasoning_summary_text.delta", "delta": "The answer is 1255."}),
+        _sse_event({"type": "response.reasoning_summary_text.done", "text": body}),
+        _sse_event({
+            "type": "response.reasoning_summary_part.done",
+            "part": {"type": "summary_text", "text": body},
+        }),
+        _sse_event({
+            "type": "response.output_item.done",
+            "item": {"type": "reasoning", "id": "rs_1", "summary": [
+                {"type": "summary_text", "text": body},
+            ]},
+        }),
+        _sse_event({"type": "response.completed", "response": {"usage": {}}}),
+    ]
+
+    bodies: list[str] = []
+    await _parse_sse_stream(
+        _FakeSSEResponse(chunks),
+        None,
+        on_thinking_start=lambda: None,
+        on_thinking_end=bodies.append,
+    )
+
+    # Exactly one thinking_end fires (one reasoning item = one cell).
+    assert len(bodies) == 1
+    assert bodies[0] == body
+    # The body must NOT contain the text repeated. The pre-fix code
+    # produced body * 3; pin it at exactly one occurrence.
+    assert bodies[0].count("The answer is 1255.") == 1
 
 
 # ── request body: prompt_cache_key absence ──────────────────────────

@@ -15,6 +15,7 @@ auto-update respawn.
 """
 import argparse
 import asyncio
+import fcntl
 import json
 import os
 import signal
@@ -23,6 +24,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import IO
 
 SESSIONS_DIR = Path(__file__).parent.parent.parent / "sessions"
 _SYSTEM_SESSIONS_DIR = Path(__file__).parent.parent.parent / "_sessions"
@@ -73,6 +75,128 @@ def _is_server_running(system_dir: Path | None = None) -> int | None:
     except (ProcessLookupError, PermissionError):
         _clear_pid(system_dir)
         return None
+
+
+def _scan_butterfly_daemons(system_dir: Path) -> list[int]:
+    """Return PIDs of every ``butterfly.runtime.server`` process whose
+    ``--system-sessions-dir`` matches ``system_dir``.
+
+    Uses ``ps -ax -o pid,command`` so we don't have to pull in psutil. The
+    caller typically subtracts ``_is_server_running(system_dir)`` to
+    isolate orphans — daemons that aren't listed in ``server.pid`` but are
+    still alive and racing on the same ``_sessions/`` dir (parent CLI
+    died, but the ``--foreground`` subprocess kept running, reparented to
+    init).
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,command="],
+            capture_output=True, text=True, check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    target = str(system_dir.resolve()) if system_dir.exists() else str(system_dir)
+    my_pid = os.getpid()
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if "butterfly.runtime.server" not in stripped:
+            continue
+        # Match either the raw path or the resolved one — users might pass
+        # a symlinked sessions dir; ps shows whatever the daemon was
+        # invoked with.
+        if target not in stripped and str(system_dir) not in stripped:
+            continue
+        parts = stripped.split(None, 1)
+        if not parts:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        if pid == my_pid:
+            continue
+        pids.append(pid)
+    return pids
+
+
+# ── OS-level startup mutex (v2.0.18) ─────────────────────────────────────────
+#
+# The PID file alone is not a reliable singleton: an orphan daemon (parent
+# ``butterfly`` CLI died but the detached ``--foreground`` subprocess kept
+# running, reparented to init) keeps writing ``context.jsonl`` without being
+# listed in ``server.pid`` — every fresh ``butterfly`` starts another
+# daemon on top of it, and the two SessionWatchers race on the shared
+# ``_sessions/`` dir (observed 2026-04-17: duplicate ``thinking_start``
+# block_ids, two ``turn`` entries per ``user_input``).
+#
+# fcntl.flock on a dedicated lock file fixes this at the OS level:
+#   * Exclusive, non-blocking — two processes can never both acquire.
+#   * Auto-released by the kernel on ANY process exit (SIGKILL, segfault,
+#     orphan whose parent already died) — no stale-file cleanup needed.
+#   * Python's ``open()`` sets FD_CLOEXEC by default (PEP 446, Py3.4+), so
+#     ``os.execvp`` respawn (auto-update path) closes the old fd and
+#     releases the lock; the new process image re-acquires cleanly.
+#
+# Kept alongside the PID file, not replacing it: ``server.pid`` still
+# identifies which process to SIGTERM via ``butterfly server stop``.
+
+_lock_fd: IO | None = None   # module-level holder so GC doesn't close it
+
+
+def _lock_file(system_dir: Path | None = None) -> Path:
+    return (system_dir or _SYSTEM_SESSIONS_DIR) / "server.lock"
+
+
+def _acquire_exclusive_lock(system_dir: Path | None = None) -> bool:
+    """Try to grab the singleton file lock. Returns True on success.
+
+    The returned lock is held by a module-level file descriptor for the
+    remainder of the process lifetime (until ``_release_lock`` or process
+    exit). Safe to call twice in the same process — the second call
+    short-circuits to True without re-locking.
+    """
+    global _lock_fd
+    if _lock_fd is not None:
+        return True
+    path = _lock_file(system_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Open in append mode so the lock file is never truncated. If the file
+    # doesn't exist it's created; if it does, we leave any existing bytes
+    # alone (none, in practice — the file is pure lock-anchor).
+    fd = open(path, "a")
+    try:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, OSError):
+        fd.close()
+        return False
+    _lock_fd = fd
+    return True
+
+
+def _release_lock() -> None:
+    """Release the singleton file lock (if held).
+
+    The kernel also auto-releases on process exit, so this is mostly for
+    clean test teardown and the normal shutdown ``finally`` path.
+    """
+    global _lock_fd
+    if _lock_fd is None:
+        return
+    try:
+        fcntl.flock(_lock_fd.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        _lock_fd.close()
+    except OSError:
+        pass
+    _lock_fd = None
 
 
 # ── Server core ───────────────────────────────────────────────────────────────
@@ -250,6 +374,30 @@ async def _auto_update_worker(
 
 
 async def _run(sessions_dir: Path, system_sessions_dir: Path) -> None:
+    # Step 1 — singleton mutex. Must be the VERY FIRST side effect so that
+    # a second ``butterfly`` (foreground or daemon) aborts before writing
+    # ``server.pid`` or touching the watcher. See the ``_acquire_exclusive_lock``
+    # docblock for why this is a fcntl.flock rather than a PID-file check.
+    system_sessions_dir.mkdir(parents=True, exist_ok=True)
+    if not _acquire_exclusive_lock(system_sessions_dir):
+        existing_pid = _read_pid(system_sessions_dir)
+        hint = (
+            f" (pid={existing_pid})" if existing_pid
+            else " (pid unknown — orphan daemon not tracked by server.pid)"
+        )
+        print(
+            f"Error: butterfly server already running{hint} against "
+            f"{system_sessions_dir}. Refusing to start a second instance; "
+            f"the lock file {_lock_file(system_sessions_dir)} is held by "
+            f"another process.\n"
+            f"Hint: run `butterfly server stop`, or if that says 'not "
+            f"running' look for an orphan via `ps ax | grep butterfly.runtime.server` "
+            f"and kill it manually.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+
     from butterfly.runtime.watcher import SessionWatcher
 
     watcher = SessionWatcher(sessions_dir, system_sessions_dir)
@@ -299,6 +447,7 @@ async def _run(sessions_dir: Path, system_sessions_dir: Path) -> None:
                 raise exc
     finally:
         _clear_pid(system_sessions_dir)
+        _release_lock()
     print("butterfly server stopped.")
 
 

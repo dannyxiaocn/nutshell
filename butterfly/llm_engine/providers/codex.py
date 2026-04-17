@@ -791,18 +791,21 @@ async def _parse_sse_stream(
 
             elif etype.startswith("response.reasoning") or "summary" in etype:
                 # Catch-all for reasoning/summary event variants we don't
-                # explicitly handle (backend has shipped new event names
-                # historically). Pull a delta or text body from common fields
-                # and route to thinking; never leak to assistant text.
-                delta = event.get("delta", "") or event.get("text", "")
-                if not delta:
-                    part = event.get("part") or event.get("item") or {}
-                    if isinstance(part, dict):
-                        delta = part.get("text", "") or _extract_summary_text(part)
-                if delta:
-                    if not thinking_active:
-                        _start_thinking()
-                    thinking_parts.append(delta)
+                # explicitly handle. ONLY consume ``.delta`` variants — the
+                # ``.done`` / ``.part.added`` / ``.part.done`` events carry the
+                # CUMULATIVE body (identical to what the ``.delta`` handlers
+                # above already streamed piece-by-piece). Appending them again
+                # triple-renders the thinking cell (observed for codex-oauth
+                # ``gpt-5.4``: deltas + ``.summary_text.done`` +
+                # ``.summary_part.done`` = 3× repeated body). The "no deltas at
+                # all" salvage is handled at ``response.output_item.done``
+                # (itype=reasoning) via ``_extract_summary_text(item)``.
+                if etype.endswith(".delta"):
+                    delta = event.get("delta", "") or event.get("text", "")
+                    if delta:
+                        if not thinking_active:
+                            _start_thinking()
+                        thinking_parts.append(delta)
                 if debug_etypes:
                     print(f"[codex catch-all reasoning] {etype}", flush=True)
 
