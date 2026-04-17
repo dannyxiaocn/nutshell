@@ -1,4 +1,4 @@
-# Agent Agent — Implementation
+# Agent (`agenthub/agent/`) — Implementation
 
 ## Usage
 

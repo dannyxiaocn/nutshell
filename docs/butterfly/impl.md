@@ -18,13 +18,13 @@ butterfly/
 
 | Command | Module | Purpose |
 |---------|--------|---------|
-| `butterfly` | `ui.cli.main:main` | Unified CLI |
-| `butterfly-server` | `butterfly.runtime.server:main` | Standalone session daemon |
-| `butterfly-web` | `ui.web.app:main` | FastAPI web UI |
+| `butterfly` | `ui.cli.main:main` | Unified CLI — subcommands cover sessions, agents, server lifecycle, auth, update |
+
+v2.0.16 collapsed the separate server and web console scripts into the single `butterfly` entry point. The underlying modules (`butterfly.runtime.server`, `ui.web.app`) are still importable and are invoked internally: `_start_daemon` spawns `python -m butterfly.runtime.server --foreground`; `butterfly` (no-args) calls `ui.web.app.create_app()` and runs uvicorn in-process.
 
 ## How a Session Runs
 
-1. **Entity** defines agent template in `agenthub/<name>/`
+1. **Agent** defines its template in `agenthub/<name>/`
 2. **`session_engine.init_session()`** creates `sessions/<id>/` + `_sessions/<id>/` from agent via meta session
 3. **`runtime.watcher`** discovers `_sessions/<id>/manifest.json`, starts daemon
 4. **`Session`** reloads prompts, memory, tools, skills from `core/` before each activation

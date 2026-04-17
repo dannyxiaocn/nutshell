@@ -242,10 +242,13 @@ def _new_session(
     reply = _wait_for_reply(ctx_path, msg_id, timeout)
 
     if keep_alive:
-        # Stop the in-process daemon but launch a background server
+        # Stop the in-process daemon but launch a background server. v2.0.16
+        # removed the separate daemon console script; mirror `_start_daemon`
+        # and the auto-update `execvp` path by invoking the module directly
+        # (`python -m butterfly.runtime.server`).
         _stop_daemon(stop_event_holder, daemon_thread)
         subprocess.Popen(
-            ["butterfly-server"],
+            [sys.executable, "-m", "butterfly.runtime.server"],
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -311,7 +314,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--agent", default="agent", metavar="NAME",
-        help="Entity to use for a new session (default: agent)",
+        help="Agent to use for a new session (default: agent)",
     )
     parser.add_argument(
         "--no-wait", action="store_true",

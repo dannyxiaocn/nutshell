@@ -32,10 +32,11 @@ Read the code and tests before trusting documentation. Keep changes local to the
 ### Quick Start
 
 ```bash
-# Start the server (auto-daemonizes)
+# Start server + web UI together (prints URL, hangs). Ctrl+C stops both.
+butterfly
+
+# Tail the running server's log in another terminal.
 butterfly server
-# or directly:
-butterfly-server start
 
 # Send a message (auto-starts server if needed)
 butterfly chat "Hello, what can you do?"
@@ -95,18 +96,15 @@ butterfly chat --session 2026-04-13_10-00-00-a1b2 "What's the status?"
 - `--init-from SOURCE` — copy from existing agent
 - `--blank` — empty agent with placeholders
 
-#### Server / Web Management
+#### Server / Web Management (unified CLI, v2.0.16)
 
 | Command | Description |
 |---------|-------------|
-| `butterfly server` | Start the server daemon |
-| `butterfly-server start` | Start server (auto-daemonizes) |
-| `butterfly-server stop` | Stop the server |
-| `butterfly-server status` | Check if server is running |
-| `butterfly-server update` | Stop, reinstall, restart |
-| `butterfly-server --foreground` | Run in current process |
-| `butterfly web` | Start the Web UI (default port 7720) |
-| `butterfly-web --port N` | Start Web UI on a custom port |
+| `butterfly` (no args) | Start server + web UI together; prints `http://localhost:7720`; blocks until Ctrl+C |
+| `butterfly server` | Tail the running server's log (read-only; needs the daemon up) |
+| `butterfly update [--skip-frontend]` | git pull + pip install -e . + npm build + restart (refuses dirty/untracked tree) |
+
+Internal use: `python -m butterfly.runtime.server --foreground` is what `_start_daemon` spawns and what the auto-update path `execvp`s onto. You normally never invoke it directly.
 
 ### Session Lifecycle
 

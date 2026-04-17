@@ -1,4 +1,4 @@
-# Agent Agent — Design
+# Agent (`agenthub/agent/`) — Design
 
 The default general-purpose agent. Base template that other agents extend.
 

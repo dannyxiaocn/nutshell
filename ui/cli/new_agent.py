@@ -147,6 +147,6 @@ def create_agent(name: str, base_dir: Path, init_from: str | None) -> Path:
         (agent_dir / "prompts" / "system.md").write_text("", encoding="utf-8")
         (agent_dir / "prompts" / "task.md").write_text("", encoding="utf-8")
         (agent_dir / "prompts" / "env.md").write_text("", encoding="utf-8")
-        (agent_dir / "tool.md").write_text("bash\nweb_search\nskill\nmemory_recall\nmemory_update\n", encoding="utf-8")
+        (agent_dir / "tools.md").write_text("bash\nweb_search\nskill\nmemory_recall\nmemory_update\n", encoding="utf-8")
 
     return agent_dir

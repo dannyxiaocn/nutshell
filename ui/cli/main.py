@@ -42,7 +42,7 @@ def _ensure_server_running(
     sessions_dir: Path | None = None,
     system_sessions_dir: Path | None = None,
 ) -> None:
-    """Start butterfly-server in daemon mode if not already running."""
+    """Start the butterfly server in daemon mode if not already running."""
     from butterfly.runtime.server import _is_server_running, _start_daemon
     sys_dir = system_sessions_dir or _DEFAULT_SYSTEM_BASE
     if _is_server_running(sys_dir):
@@ -1007,16 +1007,31 @@ def cmd_update(args) -> int:
     sys_dir = _DEFAULT_SYSTEM_BASE
     sessions_dir = _DEFAULT_SESSIONS_BASE
 
-    # 1. Refuse to clobber uncommitted changes.
-    diff = _sp.run(["git", "-C", str(_REPO_ROOT), "diff", "--quiet"])
-    cached = _sp.run(["git", "-C", str(_REPO_ROOT), "diff", "--cached", "--quiet"])
-    if diff.returncode != 0 or cached.returncode != 0:
-        print("Error: working tree has uncommitted changes. Commit or stash first.",
+    # 1. Refuse to clobber uncommitted changes OR untracked files. `git diff`
+    # alone misses untracked files, which `git pull --ff-only` then happily
+    # overwrites if upstream added a file at the same path. Use
+    # `status --porcelain` which reports all three classes (modified / staged
+    # / untracked) in one go.
+    status = _sp.run(
+        ["git", "-C", str(_REPO_ROOT), "status", "--porcelain"],
+        capture_output=True, text=True,
+    )
+    if status.returncode != 0:
+        print(f"Error: git status failed: {status.stderr}", file=sys.stderr)
+        return 1
+    if status.stdout.strip():
+        print("Error: working tree is not clean (modified / staged / untracked "
+              "files present). Commit, stash, or remove them first.",
               file=sys.stderr)
         return 1
 
     # 2. Stop server if running; remember so we can restart.
     server_was_running = _is_server_running(sys_dir) is not None
+
+    def _ensure_server_restarted_on_exit():
+        if server_was_running and _is_server_running(sys_dir) is None:
+            _start_daemon(sessions_dir, sys_dir)
+
     if server_was_running:
         print("Stopping butterfly server...")
         class _A: pass
@@ -1029,15 +1044,18 @@ def cmd_update(args) -> int:
     r = _sp.run(["git", "-C", str(_REPO_ROOT), "pull", "--ff-only"])
     if r.returncode != 0:
         print("Error: git pull failed.", file=sys.stderr)
-        if server_was_running:
-            _start_daemon(sessions_dir, sys_dir)
+        _ensure_server_restarted_on_exit()
         return 1
 
     # 4. pip install -e .
     print("pip install -e .")
     r = _sp.run([sys.executable, "-m", "pip", "install", "-e", str(_REPO_ROOT)])
     if r.returncode != 0:
+        # Even if pip fails, the new code is already on disk and importable.
+        # Restart the server so we don't leave the user without a running
+        # daemon after a partial update.
         print("Error: pip install failed.", file=sys.stderr)
+        _ensure_server_restarted_on_exit()
         return 1
 
     # 5. Rebuild frontend (best-effort; warn but don't fail).

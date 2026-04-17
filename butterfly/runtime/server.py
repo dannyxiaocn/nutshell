@@ -227,14 +227,32 @@ async def _run(sessions_dir: Path, system_sessions_dir: Path) -> None:
     print(f"butterfly server started (pid={os.getpid()}). sessions dir: {sessions_dir.absolute()}")
 
     interval = int(os.environ.get("BUTTERFLY_AUTOUPDATE_INTERVAL_SEC", "3600"))
-    tasks: list[asyncio.Task] = [asyncio.create_task(watcher.run(stop_event))]
+    watcher_task = asyncio.create_task(watcher.run(stop_event))
+    tasks: list[asyncio.Task] = [watcher_task]
     if interval > 0 and (_REPO_ROOT / ".git").exists():
         tasks.append(asyncio.create_task(
             _auto_update_worker(interval, system_sessions_dir, stop_event)
         ))
 
     try:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Surface crashes — if the watcher task raises, don't let the server
+        # keep running as a zombie with the PID file held; propagate so the
+        # `finally` block clears the PID and the process exits non-zero.
+        # `wait(FIRST_EXCEPTION)` catches any task failure (watcher or
+        # auto-update) and cancels the rest so exit is prompt.
+        done, pending = await asyncio.wait(
+            tasks, return_when=asyncio.FIRST_EXCEPTION,
+        )
+        for p in pending:
+            p.cancel()
+        # Await cancellations so they clean up before we drop the PID.
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        # Re-raise the first task exception, if any, to exit non-zero.
+        for d in done:
+            exc = d.exception()
+            if exc is not None:
+                raise exc
     finally:
         _clear_pid(system_sessions_dir)
     print("butterfly server stopped.")

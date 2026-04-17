@@ -11,7 +11,7 @@ Butterfly is a file-backed Python agent runtime. The design follows these princi
 ## Layer Diagram
 
 ```
-Entity (static templates)
+agenthub/ (static agent templates)
   → session_engine (materializes agents into sessions)
     → Session (wraps Agent with file-backed persistence)
       → Agent (core loop: prompt → LLM → tool calls → repeat)

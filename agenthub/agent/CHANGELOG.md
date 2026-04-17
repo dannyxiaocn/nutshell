@@ -1,4 +1,4 @@
-# Agent Agent Changelog
+# `agenthub/agent/` Changelog
 
 ## v1.1.0 — 2025-03-26
 

@@ -3,10 +3,10 @@
 Browser connects via SSE to receive real-time agent output; sends messages
 via POST. FastAPI is a thin HTTP wrapper over FileIPC — no agent logic here.
 
-Usage:
-    butterfly-web
-    butterfly-web --port 7720 --sessions-dir ./sessions
-    python -m butterfly.ui.web
+Not exposed as a console script. v2.0.16 dropped `butterfly-web` from
+pyproject.toml; `butterfly` (no args, in `ui/cli/main.py::cmd_default`)
+calls `create_app()` and runs uvicorn in-process. `main()` below stays
+for `python -m ui.web.app` use cases (scripts / direct invocation).
 """
 from __future__ import annotations
 
