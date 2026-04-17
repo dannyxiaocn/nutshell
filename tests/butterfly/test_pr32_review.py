@@ -150,3 +150,102 @@ def test_memory_tools_use_renamed_hub_dirs():
     assert not (toolhub / "update_memory").exists(), (
         "Legacy toolhub/update_memory/ still present — rename should be hard."
     )
+
+
+# ── Follow-up (round 2): reload-loop risk from the B2 fix. ───────────
+
+def test_server_startup_clears_stale_reload_flag(tmp_path):
+    """After a respawn, `update_status.json::reload == True` must not linger.
+
+    The auto-update worker writes `{applied: true, ..., reload: true}` and
+    then `os.execvp`s the server. After the new process image enters
+    `_run()`, the flag persists until the NEXT worker iteration (default
+    3600 s) hits the "no new commits → unlink" branch.
+
+    Meanwhile, `startUpdateNotifier()` reloads unconditionally on
+    `reload === true` — so any page load (including the reload itself)
+    within that window re-enters the JS, re-polls, re-reloads. Infinite
+    reload loop at ~1–2 Hz until the worker's next cycle clears the file.
+
+    Fix direction: `_run()` should clear `reload: true` (or the whole
+    status file) as its first post-PID-write step so a post-respawn page
+    load only triggers one reload, never a train of them.
+    """
+    import asyncio
+    import json
+
+    system_dir = tmp_path / "_sessions"
+    sessions_dir = tmp_path / "sessions"
+    system_dir.mkdir()
+    sessions_dir.mkdir()
+    status_path = system_dir / "update_status.json"
+    status_path.write_text(json.dumps({
+        "applied": True,
+        "new_head": "deadbeef",
+        "applied_at": "2026-01-01T00:00:00+00:00",
+        "reload": True,
+    }))
+
+    from butterfly.runtime import server as srv
+
+    async def _drive_run_briefly():
+        # Disable the auto-update worker so no outbound git calls fire.
+        import os as _os
+        prev = _os.environ.get("BUTTERFLY_AUTOUPDATE_INTERVAL_SEC")
+        _os.environ["BUTTERFLY_AUTOUPDATE_INTERVAL_SEC"] = "0"
+        try:
+            task = asyncio.create_task(srv._run(sessions_dir, system_dir))
+            # Give startup time to observe the file and (ideally) clear it.
+            await asyncio.sleep(0.5)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        finally:
+            if prev is None:
+                _os.environ.pop("BUTTERFLY_AUTOUPDATE_INTERVAL_SEC", None)
+            else:
+                _os.environ["BUTTERFLY_AUTOUPDATE_INTERVAL_SEC"] = prev
+
+    asyncio.run(_drive_run_briefly())
+
+    if not status_path.exists():
+        return  # whole file cleared — also acceptable
+
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert not payload.get("reload"), (
+        "Stale `reload: true` still present after server startup. The "
+        "auto-update worker writes this before `execvp`, and the next "
+        "clear happens only in the `no new commits` branch after "
+        "`interval_sec` elapses — leaving a window during which the "
+        "frontend polls, reloads, and loops. Clear the flag (or the "
+        "entire status file) in `_run()` after `_write_pid`."
+    )
+
+
+def test_auto_update_worker_and_cmd_update_agree_on_dirty_check():
+    """Both dirty-tree detectors must treat untracked files as unsafe to pull.
+
+    `cmd_update` was upgraded to `git status --porcelain` so it refuses
+    when upstream would collide with a local untracked file. The
+    `_auto_update_worker` still uses `git diff --quiet` + `git diff
+    --cached --quiet`, which miss untracked files. In that case the
+    worker concludes "clean" and attempts `git pull --ff-only`, which
+    Git itself refuses — but instead of surfacing the dirty-tree UI
+    banner, the worker just logs `git pull failed` and silently keeps
+    looping.
+
+    Fix direction: switch the worker's `dirty` computation to
+    `git status --porcelain` for parity with `cmd_update`.
+    """
+    server_src = (REPO_ROOT / "butterfly" / "runtime" / "server.py").read_text(encoding="utf-8")
+    main_src = (REPO_ROOT / "ui" / "cli" / "main.py").read_text(encoding="utf-8")
+    uses_porcelain_in_cmd = "status --porcelain" in main_src or "status\", \"--porcelain" in main_src
+    uses_porcelain_in_worker = "status --porcelain" in server_src or "status\", \"--porcelain" in server_src
+    if uses_porcelain_in_cmd:
+        assert uses_porcelain_in_worker, (
+            "cmd_update uses `git status --porcelain` for dirty detection "
+            "but _auto_update_worker still relies on `git diff` (misses "
+            "untracked files). Align the worker with the stricter check."
+        )
