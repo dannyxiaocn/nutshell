@@ -73,7 +73,7 @@ Task cards enter the inbox as `TaskItem(card=...)`. `_scheduled_task_names` is a
 
 The 5 s pending bar (PR #24) is removed. The dispatcher owns merging, so each Enter sends one `POST /messages` with a `mode` field — default `interrupt`. The Alt/⌥+Enter shortcut (and a small `wait` checkbox) sends with `mode=wait`. There is no per-tab buffer to go stale across tabs, which fixes the silent-cross-session footgun that PR #24 review flagged.
 
-#### Daemon poll cadence — split input / housekeeping (v2.0.13)
+#### Daemon poll cadence — split input / housekeeping (v2.0.14)
 
 `run_daemon_loop` polls on two cadences, tuned by class constants on `Session`:
 
