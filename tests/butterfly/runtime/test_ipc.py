@@ -235,6 +235,163 @@ class IPCUnitTests(unittest.TestCase):
         self.assertEqual(len(agents), 1)
         self.assertEqual(agents[0]["content"], "done")
 
+    def test_history_replay_pairs_tool_use_with_tool_result(self) -> None:
+        """v2.0.19: history replay must surface each tool's returned output
+        on the reloaded cell. events.jsonl (live tool_done) isn't replayed,
+        so the pairing has to come from the tool_result block that lives on
+        the subsequent user message inside the same turn."""
+        event = {
+            "type": "turn",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tc-1", "name": "bash", "input": {"cmd": "ls"}},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tc-1", "content": "file1\nfile2\n"},
+                    ],
+                },
+            ],
+            "ts": "2026-01-01T00:00:00",
+        }
+        display = _context_event_to_display(event, for_history=True)
+        tool_events = [d for d in display if d["type"] == "tool"]
+        self.assertEqual(len(tool_events), 1)
+        self.assertEqual(tool_events[0]["result"], "file1\nfile2\n")
+        self.assertEqual(tool_events[0]["result_len"], len("file1\nfile2\n"))
+        self.assertNotIn("result_truncated", tool_events[0])
+        self.assertNotIn("is_error", tool_events[0])
+
+    def test_history_replay_tool_result_truncates_over_cap(self) -> None:
+        """tool_result content over the 8 KB cap gets trimmed and flagged.
+        Keeps the payload small enough that a re-entered session with many
+        large tool outputs doesn't blow up the initial history-load size."""
+        huge = "X" * 20_000
+        event = {
+            "type": "turn",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "tc-1", "name": "bash", "input": {}}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "tc-1", "content": huge}],
+                },
+            ],
+            "ts": "2026-01-01T00:00:00",
+        }
+        display = _context_event_to_display(event, for_history=True)
+        tool_ev = next(d for d in display if d["type"] == "tool")
+        self.assertEqual(len(tool_ev["result"]), 8000)
+        self.assertTrue(tool_ev["result_truncated"])
+
+    def test_history_replay_tool_result_flags_is_error(self) -> None:
+        """Tool-error results propagate is_error so the UI can style the cell."""
+        event = {
+            "type": "turn",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "tc-1", "name": "bash", "input": {}}],
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "tc-1",
+                        "content": "permission denied",
+                        "is_error": True,
+                    }],
+                },
+            ],
+            "ts": "2026-01-01T00:00:00",
+        }
+        display = _context_event_to_display(event, for_history=True)
+        tool_ev = next(d for d in display if d["type"] == "tool")
+        self.assertTrue(tool_ev["is_error"])
+        self.assertEqual(tool_ev["result"], "permission denied")
+
+    def test_history_replay_interleaves_persisted_thinking_with_tools_by_ts(self) -> None:
+        """v2.0.19: persisted ``thinking_blocks`` must be interleaved with
+        the tool / text content blocks by timestamp, not dumped in a
+        leading run. Matches the live SSE order of thinking_done → tool_call
+        → thinking_done → tool_call → text."""
+        event = {
+            "type": "turn",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "1", "name": "bash", "input": {}, "ts": "2026-01-01T00:00:00.200"},
+                    {"type": "tool_use", "id": "2", "name": "read", "input": {}, "ts": "2026-01-01T00:00:00.400"},
+                    {"type": "text", "text": "done", "ts": "2026-01-01T00:00:00.500"},
+                ],
+            }],
+            "ts": "2026-01-01T00:00:00",
+            "thinking_blocks": [
+                {"block_id": "th:1", "text": "first", "ts": "2026-01-01T00:00:00.100"},
+                {"block_id": "th:2", "text": "second", "ts": "2026-01-01T00:00:00.300"},
+            ],
+        }
+        display = _context_event_to_display(event, for_history=True)
+        # Two-assistant-message layout isn't required — the key invariant is
+        # that thinking lands *before* the tool it preceded, not after.
+        shape = [(d["type"], d.get("block_id") or d.get("name") or d.get("content")) for d in display]
+        self.assertEqual(shape, [
+            ("thinking", "th:1"),
+            ("tool", "bash"),
+            ("thinking", "th:2"),
+            ("tool", "read"),
+            ("agent", "done"),
+        ])
+
+    def test_history_replay_emits_trailing_persisted_thinking_after_last_block(self) -> None:
+        """A persisted thinking block whose ts is later than every content
+        block (or whose ts is blank so the less-than comparison never
+        fires) must still be emitted — at the tail. Otherwise the "Thought"
+        would be silently dropped on reload."""
+        event = {
+            "type": "turn",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "1", "name": "bash", "input": {}, "ts": "2026-01-01T00:00:00.100"},
+                ],
+            }],
+            "ts": "2026-01-01T00:00:00",
+            "thinking_blocks": [
+                {"block_id": "late", "text": "post-hoc reflection", "ts": "2026-01-01T00:00:00.900"},
+            ],
+        }
+        display = _context_event_to_display(event, for_history=True)
+        types_and_names = [(d["type"], d.get("name") or d.get("content")) for d in display]
+        self.assertEqual(types_and_names, [
+            ("tool", "bash"),
+            ("thinking", "post-hoc reflection"),
+        ])
+
+    def test_history_replay_drops_empty_persisted_thinking_blocks(self) -> None:
+        """thinking_blocks with empty text (e.g. a provider that opened a
+        reasoning channel but emitted no summary) must be filtered so the
+        UI doesn't render an empty grey cell on reload."""
+        event = {
+            "type": "turn",
+            "messages": [{"role": "assistant", "content": "done"}],
+            "ts": "2026-01-01T00:00:00",
+            "thinking_blocks": [
+                {"block_id": "empty:1", "text": "", "ts": "2026-01-01T00:00:00.100"},
+                {"block_id": "real:1", "text": "real reasoning", "ts": "2026-01-01T00:00:00.200"},
+            ],
+        }
+        display = _context_event_to_display(event, for_history=True)
+        thinking = [d for d in display if d["type"] == "thinking"]
+        self.assertEqual(len(thinking), 1)
+        self.assertEqual(thinking[0]["content"], "real reasoning")
+
     def test_live_stream_assigns_distinct_ids_to_multiple_thinking_blocks(self) -> None:
         event = {
             "type": "turn",
@@ -286,6 +443,117 @@ class IPCUnitTests(unittest.TestCase):
             ipc.events_path.write_text("".join(lines), encoding="utf-8")
 
             self.assertEqual(ipc.last_running_event_offset(), ipc.events_size())
+
+    def test_history_replay_pairs_tool_result_onto_tool_event(self) -> None:
+        """PR #36 regression: reloaded tool cells must carry the returned
+        result, not render forever as '(pending)'. tool_result blocks from
+        the follow-up user/tool message are matched by tool_use_id."""
+        event = {
+            "type": "turn",
+            "ts": "2026-04-17T00:00:00",
+            "messages": [
+                {"role": "user", "content": "go"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "call_1", "name": "bash",
+                         "input": {"command": "echo hi"}},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "call_1",
+                         "content": "hi\n", "is_error": False},
+                    ],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+            ],
+        }
+        display = _context_event_to_display(event, for_history=True)
+        tool_ev = next(e for e in display if e["type"] == "tool")
+        self.assertEqual(tool_ev["result"], "hi\n")
+        self.assertEqual(tool_ev["result_len"], 3)
+        self.assertNotIn("is_error", tool_ev)
+        self.assertNotIn("result_truncated", tool_ev)
+
+    def test_history_replay_marks_tool_result_error_and_truncation(self) -> None:
+        long_payload = "X" * 9000
+        event = {
+            "type": "turn",
+            "ts": "2026-04-17T00:00:00",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "call_1", "name": "bash",
+                         "input": {"command": "boom"}},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "call_1",
+                         "content": long_payload, "is_error": True},
+                    ],
+                },
+            ],
+        }
+        tool_ev = next(
+            e for e in _context_event_to_display(event, for_history=True)
+            if e["type"] == "tool"
+        )
+        self.assertTrue(tool_ev["result_truncated"])
+        self.assertTrue(tool_ev["is_error"])
+        self.assertEqual(len(tool_ev["result"]), 8000)
+
+    def test_history_replay_interleaves_persisted_thinking_by_ts(self) -> None:
+        """think → tool → think → tool ordering is preserved on reload."""
+        event = {
+            "type": "turn",
+            "ts": "2026-04-17T00:00:10",
+            "thinking_blocks": [
+                {"block_id": "th_2", "text": "plan B", "ts": "2026-04-17T00:00:04"},
+                {"block_id": "th_1", "text": "plan A", "ts": "2026-04-17T00:00:01"},
+            ],
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "call_1", "name": "bash",
+                         "input": {"command": "ls"}, "ts": "2026-04-17T00:00:02"},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "call_1", "content": "ok"},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "call_2", "name": "bash",
+                         "input": {"command": "pwd"}, "ts": "2026-04-17T00:00:05"},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "call_2", "content": "/"},
+                    ],
+                },
+            ],
+        }
+        display = _context_event_to_display(event, for_history=True)
+        types = [(e["type"], e.get("content") or e.get("input", {}).get("command"))
+                 for e in display]
+        self.assertEqual(types, [
+            ("thinking", "plan A"),
+            ("tool", "ls"),
+            ("thinking", "plan B"),
+            ("tool", "pwd"),
+        ])
 
     def test_runtime_hook_events_pass_through(self) -> None:
         self.assertEqual(

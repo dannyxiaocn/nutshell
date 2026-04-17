@@ -365,14 +365,23 @@ export function createPanel(): HTMLElement {
     modelWrap.appendChild(modelReadout);
     form.appendChild(modelWrap);
 
-    let currentModel: string | null = null;
-    function syncModelReadout() {
+    // Seed the model from the stored config so a provider that's missing
+    // from the in-memory catalog (stale or unknown key) doesn't silently
+    // wipe the saved model to null on save.
+    let currentModel: string | null = (params.model as string | null) ?? null;
+    function syncModelReadout(fromUser: boolean) {
       const entry = providerByKey.get(providerSelect.value);
-      currentModel = entry?.default_model ?? null;
+      if (entry) {
+        currentModel = entry.default_model;
+      } else if (fromUser) {
+        // User picked a provider not in the catalog (shouldn't happen,
+        // but guard): clear the model so we don't ship a mismatched pair.
+        currentModel = null;
+      }
       modelReadout.textContent = currentModel ?? '—';
     }
-    syncModelReadout();
-    providerSelect.addEventListener('change', syncModelReadout);
+    syncModelReadout(false);
+    providerSelect.addEventListener('change', () => syncModelReadout(true));
 
     // ---- Fallback provider + read-only fallback model ----
     const fbProviderSelect = selectRow(
@@ -392,14 +401,18 @@ export function createPanel(): HTMLElement {
     fbModelWrap.appendChild(fbModelReadout);
     form.appendChild(fbModelWrap);
 
-    let currentFallbackModel: string | null = null;
-    function syncFallbackReadout() {
+    let currentFallbackModel: string | null = (params.fallback_model as string | null) ?? null;
+    function syncFallbackReadout(fromUser: boolean) {
       const entry = providerByKey.get(fbProviderSelect.value);
-      currentFallbackModel = entry?.default_model ?? null;
+      if (entry) {
+        currentFallbackModel = entry.default_model;
+      } else if (fromUser) {
+        currentFallbackModel = null;
+      }
       fbModelReadout.textContent = currentFallbackModel ?? '—';
     }
-    syncFallbackReadout();
-    fbProviderSelect.addEventListener('change', syncFallbackReadout);
+    syncFallbackReadout(false);
+    fbProviderSelect.addEventListener('change', () => syncFallbackReadout(true));
 
     // ---- Numbers ----
     const maxIterInput = numberRow(form, 'max_iterations', Number(params.max_iterations ?? 1000));

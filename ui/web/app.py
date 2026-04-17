@@ -132,9 +132,18 @@ def _validate_session_id_or_400(session_id: str) -> None:
         raise HTTPException(400, str(exc))
 
 
-def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> FastAPI:
+def create_app(
+    sessions_dir: Path,
+    system_sessions_dir: Path | None = None,
+    agenthub_dir: Path | None = None,
+) -> FastAPI:
     if system_sessions_dir is None:
         system_sessions_dir = sessions_dir.parent / "_sessions"
+    if agenthub_dir is None:
+        # Editable install: the repo's agenthub/ sits three parents above
+        # this file (butterfly-agent/ui/web/app.py). This matches the
+        # pre-v2.0.19 hardcoded path; tests can still override via kwarg.
+        agenthub_dir = Path(__file__).resolve().parent.parent.parent / "agenthub"
 
     from contextlib import asynccontextmanager
 
@@ -541,7 +550,6 @@ def create_app(sessions_dir: Path, system_sessions_dir: Path | None = None) -> F
     @app.get("/api/agents")
     async def get_agents():
         """Return the list of agenthub/ agents with config.yaml."""
-        agenthub_dir = Path(__file__).parent.parent.parent / "agenthub"
         return {"agents": service_list_agents(agenthub_dir)}
 
     @app.delete("/api/sessions/{session_id}")

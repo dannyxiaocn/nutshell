@@ -64,13 +64,25 @@ def _tavily_search_sync(query: str, count: int) -> str:
     return "\n".join(lines).rstrip()
 
 
+_SUPPORTED_KEYS = frozenset({"query", "count"})
+
+
 class WebSearchTavilyExecutor:
     async def execute(
         self,
         query: str,
         count: int | float = 5,
-        **_: Any,
+        **extra: Any,
     ) -> str:
+        # Tavily only accepts query + count. Reject unknown kwargs loudly so
+        # callers that forgot we don't support country/language/freshness get
+        # an explicit error instead of silent filter-drop.
+        unknown = sorted(k for k in extra if k not in _SUPPORTED_KEYS)
+        if unknown:
+            return (
+                "Error: web_search_tavily only supports 'query' and 'count'. "
+                f"Unsupported arguments: {', '.join(unknown)}."
+            )
         count_int = int(count)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _tavily_search_sync, query, count_int)

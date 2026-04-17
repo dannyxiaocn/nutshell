@@ -98,6 +98,15 @@ def read_config(base_dir: Path) -> dict:
             raw = y.safe_load(path.read_text(encoding="utf-8")) or {}
         except Exception:
             raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        # Legacy `name:` → `agent:` migration (v2.0.19 rename). Sessions
+        # saved before the rename carry `name: <agent-name>`; surface it
+        # under the new key so update_config_yaml's whitelist doesn't
+        # silently drop the identifier on the next write.
+        if "name" in raw and not raw.get("agent"):
+            raw["agent"] = raw["name"]
+        raw.pop("name", None)
         return {**DEFAULT_CONFIG, **raw}
 
     return dict(DEFAULT_CONFIG)

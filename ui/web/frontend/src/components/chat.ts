@@ -446,8 +446,8 @@ export function createChat(): HTMLElement {
             setToolStatus(summary, '✓', meta);
           }
           const resultEl = target.querySelector('.tool-body-result .tool-body-content') as HTMLElement | null;
-          if (resultEl) {
-            resultEl.innerHTML = renderToolResultBlock(event.result ?? '', event.result_truncated);
+          if (resultEl && typeof event.result === 'string') {
+            resultEl.innerHTML = renderToolResultBlock(event.result, event.result_truncated);
           }
         }
         runningTools.delete(name);
@@ -840,8 +840,10 @@ function renderToolEvent(event: DisplayEvent): string {
     ? `<span class="tool-status-arg" title="${escapeHtml(preview)}">${escapeHtml(preview)}</span>`
     : '<span class="tool-status-arg"></span>';
 
-  const resultText = typeof event.result === 'string' ? event.result : '';
-  const resultBlock = renderToolResultBlock(resultText, event.result_truncated);
+  const hasResult = typeof event.result === 'string';
+  const resultBlock = hasResult
+    ? renderToolResultBlock(event.result as string, event.result_truncated)
+    : '<em class="tool-body-empty">(pending)</em>';
 
   return `
     <details class="tool-details">
@@ -867,7 +869,7 @@ function renderToolEvent(event: DisplayEvent): string {
 }
 
 function renderToolResultBlock(result: string, truncated?: boolean): string {
-  if (!result) return '<em class="tool-body-empty">(pending)</em>';
+  if (!result) return '<em class="tool-body-empty">(empty)</em>';
   const suffix = truncated ? '\n\n…[truncated]' : '';
   return `<pre>${escapeHtml(result + suffix)}</pre>`;
 }

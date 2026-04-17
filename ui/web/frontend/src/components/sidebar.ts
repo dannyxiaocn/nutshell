@@ -36,7 +36,10 @@ export function createSidebar(): HTMLElement {
       })
       .catch(e => {
         console.error('listAgents failed:', e);
-        agentOptions = [];
+        // Clear both caches so the next `+` click (or next render) retries
+        // rather than sticking on the failed state forever.
+        agentOptions = null;
+        agentOptionsPromise = null;
         return [];
       });
     return agentOptionsPromise;

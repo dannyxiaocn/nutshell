@@ -82,6 +82,46 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
         has_streaming_tools = event.get("has_streaming_tools", False)
         has_streaming_thinking = event.get("has_streaming_thinking", False)
         usage = event.get("usage")
+        messages = event.get("messages", []) or []
+
+        # ── tool_use → tool_result pairing for history replay ─────────
+        # events.jsonl isn't replayed by get_history, so tool_done (which
+        # carries the live result payload) is unavailable on reload. Scan
+        # all non-assistant messages for tool_result blocks and build a
+        # map keyed by tool_use_id so each tool cell can render its
+        # returned output.
+        _MAX_RESULT = 8000
+        tool_results: dict[str, dict] = {}
+        if for_history:
+            for msg in messages:
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") != "tool_result":
+                        continue
+                    use_id = block.get("tool_use_id")
+                    if not use_id:
+                        continue
+                    raw = block.get("content")
+                    if isinstance(raw, list):
+                        parts = [
+                            b.get("text", "") if isinstance(b, dict) else ""
+                            for b in raw
+                        ]
+                        text = "".join(parts)
+                    elif isinstance(raw, str):
+                        text = raw
+                    else:
+                        text = ""
+                    truncated = len(text) > _MAX_RESULT
+                    tool_results[use_id] = {
+                        "result": text[:_MAX_RESULT],
+                        "result_truncated": truncated,
+                        "is_error": bool(block.get("is_error")),
+                    }
 
         # ── Persisted thinking_blocks (v2.0.17+) ──────────────────────
         # Server-captured list of ``{block_id, text, duration_ms, ts}`` dicts
@@ -112,9 +152,26 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
             pending_thinking.sort(key=lambda ev: ev.get("ts") or "")
 
         def _flush_thinking_before(block_ts: str) -> None:
-            """Emit any persisted thinking whose ts precedes (or equals) block_ts."""
-            while pending_thinking and (pending_thinking[0].get("ts") or "") <= (block_ts or ""):
-                result.append(pending_thinking.pop(0))
+            """Emit any persisted thinking whose ts precedes (or equals) block_ts.
+
+            Blank-ts thinking blocks are held back so they can't monopolise the
+            head of the stream when the first real content block also lacks a
+            ts — any leftovers are swept at the tail.
+            """
+            target = block_ts or ""
+            if not target:
+                return
+            while pending_thinking:
+                pts = pending_thinking[0].get("ts") or ""
+                if not pts or pts <= target:
+                    # Blank-ts thinking could be anywhere; keep it for the
+                    # tail sweep unless the target ts is also present
+                    # (then ordering is undefined either way, prefer head).
+                    if not pts:
+                        break
+                    result.append(pending_thinking.pop(0))
+                else:
+                    break
 
         # ── Tool + text + legacy thinking: iterate in message order ──
         # This preserves interleaved-mode sequencing (think → tool → text →
@@ -126,7 +183,7 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
         thinking_idx = 0
         agent_idx = 0
 
-        for msg in event.get("messages", []):
+        for msg in messages:
             if msg.get("role") != "assistant":
                 continue
             msg_ts = msg.get("ts", ts)
@@ -177,12 +234,28 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                     if for_history or not has_streaming_tools:
                         block_ts = block.get("ts", msg_ts)
                         _flush_thinking_before(block_ts)
-                        result.append({
+                        use_id = block.get("id")
+                        tool_ev: dict = {
                             "type": "tool",
                             "name": block["name"],
                             "input": block.get("input", {}),
                             "ts": block_ts,
-                        })
+                        }
+                        if use_id:
+                            tool_ev["id"] = use_id
+                        # Pair with tool_result from a later message so the
+                        # reloaded cell shows the returned output instead of
+                        # "(pending)". Live sessions still overlay the live
+                        # tool_done result on top of this baseline.
+                        if for_history and use_id and use_id in tool_results:
+                            tr = tool_results[use_id]
+                            tool_ev["result"] = tr["result"]
+                            tool_ev["result_len"] = len(tr["result"])
+                            if tr["result_truncated"]:
+                                tool_ev["result_truncated"] = True
+                            if tr["is_error"]:
+                                tool_ev["is_error"] = True
+                        result.append(tool_ev)
 
                 elif btype == "text":
                     text = block.get("text", "")
