@@ -71,28 +71,45 @@ export function createChat(): HTMLElement {
   const backgroundCells = new Map<string, { el: HTMLElement; name: string; startTs: number }>();
 
   // Thinking cells: map block_id → running DOM element. On thinking_start we
-  // insert a placeholder "💭 Thinking…" cell; on thinking_done we flip it to
-  // the collapsed "💭 Thought for Xs" state with the full body inside a
+  // insert a placeholder "Thinking…" pill; on thinking_done we flip it to
+  // the collapsed "Thought for Xs" state with the full body inside a
   // <details> element. Mirrors the msg-tool running/done lifecycle.
   const runningThinking = new Map<string, HTMLElement>();
 
-  // Streaming bubble lives INSIDE the messages div so it scrolls with the conversation
+  // Streaming bubble lives INSIDE the messages div so it scrolls with the conversation.
+  //   * While the provider is running but no text has streamed yet, the bubble shows
+  //     a dim "Agent is working…" placeholder — no cell chrome, no dots badge.
+  //   * On first ``partial_text`` delta the placeholder is replaced; subsequent
+  //     deltas APPEND to the accumulator (backend emits each chunk as a ~150-char
+  //     delta, not a cumulative buffer, so the body grows incrementally).
+  //   * On ``tool_call`` mid-turn the bubble is finalized in-place into a plain
+  //     msg-agent cell — this is how interleaved mode (think → tool → text →
+  //     tool → text) renders each text output as its own permanent cell rather
+  //     than collapsing them all into the last one.
+  //   * On the turn's ``agent`` event, the bubble is promoted in-place with the
+  //     canonical text + header + usage stats (no remove-then-append flash).
   let streamingEl: HTMLDivElement | null = null;
+  let streamingText = '';
   let isStreaming = false;
+  // True once an ``agent`` event has finalized the bubble for the current
+  // run. Late ``partial_text`` chunks that the SSE merge orders AFTER the
+  // turn event (iter_events reads context.jsonl before events.jsonl, so
+  // within a single poll cycle any chunks written between the last flush
+  // and the turn's commit can land here) would otherwise spawn a fresh
+  // streaming bubble that ``model_status:idle`` then finalizes as a
+  // spurious "AGENT" cell showing just the tail fragment of the message
+  // (observed 2026-04-17 on session 2026-04-17_21-36-14-f6c3). Reset on
+  // every ``model_status:running``.
+  let streamingFinalized = false;
 
   function getOrCreateStreamingBubble(): HTMLDivElement {
     if (!streamingEl) {
       streamingEl = document.createElement('div');
       streamingEl.className = 'msg msg-agent msg-streaming';
       streamingEl.innerHTML = `
-        <div class="msg-header">
-          <span class="msg-label">agent</span>
-          <span class="streaming-badge">
-            <span class="streaming-dot"></span><span class="streaming-dot"></span><span class="streaming-dot"></span>
-            <span class="streaming-label">generating…</span>
-          </span>
+        <div class="msg-body msg-streaming-body markdown-body">
+          <em class="msg-streaming-placeholder">Agent is working…</em>
         </div>
-        <div class="msg-body msg-streaming-body markdown-body"></div>
       `;
       messages.appendChild(streamingEl);
     }
@@ -104,13 +121,76 @@ export function createChat(): HTMLElement {
       streamingEl.remove();
       streamingEl = null;
     }
+    streamingText = '';
     isStreaming = false;
+  }
+
+  function finalizeStreamingBubble(canonicalText?: string, usage?: any, finalTs?: string): void {
+    // Promote the current streaming bubble into a permanent msg-agent cell,
+    // or drop it if nothing was streamed. Called:
+    //   * on the turn's agent event (canonicalText = event.content) — final
+    //     in-place promotion with header + usage.
+    //   * on tool_call mid-turn (canonicalText omitted) — freeze the
+    //     accumulator as an intermediate output cell, preserving the
+    //     iteration-ordered display of interleaved text+tool patterns.
+    //   * on model_status:idle (canonicalText omitted) — cancel path, keep
+    //     whatever text was streamed visible so the user sees where it stopped.
+    if (!streamingEl) return;
+    const text = canonicalText ?? streamingText;
+    if (!text) {
+      streamingEl.remove();
+      streamingEl = null;
+      streamingText = '';
+      return;
+    }
+    streamingEl.classList.remove('msg-streaming');
+    let usageHtml = '';
+    if (usage) {
+      const u = usage as Record<string, number>;
+      const parts: string[] = [];
+      if (u.input != null) parts.push(`in:${u.input}`);
+      if (u.output != null) parts.push(`out:${u.output}`);
+      if (u.cache_read != null) parts.push(`cached:${u.cache_read}`);
+      if (u.cache_write != null) parts.push(`wrote:${u.cache_write}`);
+      if (parts.length) usageHtml = `<span class="usage-stats">${escapeHtml(parts.join(' · '))}</span>`;
+    }
+    streamingEl.innerHTML = `
+      <div class="msg-header">
+        <span class="msg-label">agent</span>
+        ${usageHtml}
+        <span class="msg-ts">${formatTs(finalTs)}</span>
+      </div>
+      <div class="msg-body markdown-body">${renderMarkdown(text)}</div>
+    `;
+    streamingEl = null;
+    streamingText = '';
+  }
+
+  function markRunningThinkingInterrupted() {
+    // Flip any still-running thinking cells (no matching thinking_done)
+    // to a terminal "interrupted" state. Called from the model_status:idle
+    // branch — by the time the daemon flips to idle, the provider will not
+    // emit any more thinking_done for this run (cancel path takes priority
+    // over the thinking block's natural end), so the cell would spin on
+    // "Thinking…" forever. The CSS rule .msg-thinking-interrupted dims it.
+    for (const [blockId, cell] of runningThinking) {
+      const summary = cell.querySelector('.tool-status-summary') as HTMLElement | null;
+      if (summary) {
+        summary.innerHTML = '<span class="tool-status-icon">⚠</span><span class="tool-status-name">Thinking interrupted</span><span class="tool-status-meta">cancelled</span>';
+      }
+      cell.classList.remove('msg-thinking-running');
+      cell.classList.add('msg-thinking-done', 'msg-thinking-interrupted');
+      cell.dataset.interrupted = '1';
+      runningThinking.delete(blockId);
+    }
   }
 
   function clearMessages() {
     removeStreamingBubble();
     messages.innerHTML = '';
     isStreaming = false;
+    streamingText = '';
+    streamingFinalized = false;
     runningTools.clear();
     latestToolKey = null;
     runningThinking.clear();
@@ -141,36 +221,63 @@ export function createChat(): HTMLElement {
     switch (event.type) {
       case 'model_status':
         if (event.state === 'running') {
-          // Show streaming bubble with dots (no text yet)
+          // Defensive: any orphan bubble from a previous run that somehow
+          // didn't get a terminal agent/idle event (rare — cancelled
+          // without partial-turn commit) must be finalized before we
+          // create a fresh one; otherwise getOrCreateStreamingBubble
+          // returns the stale instance and streamingText keeps growing
+          // across runs.
+          if (streamingEl && !streamingFinalized) {
+            finalizeStreamingBubble();
+          }
           isStreaming = true;
-          const bubble = getOrCreateStreamingBubble();
-          const body = bubble.querySelector('.msg-streaming-body') as HTMLElement;
-          body.innerHTML = '';
+          streamingText = '';
+          streamingFinalized = false;
+          getOrCreateStreamingBubble();
           scrollToBottom();
           store.modelState = { state: 'running', source: event.source ?? null };
           updateHudDot('running');
         } else {
-          // Idle: if no agent message came, remove bubble
-          if (isStreaming) removeStreamingBubble();
+          // Idle: flip any still-spinning thinking cell to interrupted.
+          markRunningThinkingInterrupted();
+          // Bubble handling at idle:
+          //   * streamingFinalized=true  → agent event already promoted
+          //     it. Don't touch — a late partial_text is also gated off
+          //     so nothing new to clean.
+          //   * streamingFinalized=false → no agent event ever arrived
+          //     (cancelled run, or error before any assistant text was
+          //     committed). Finalize with whatever the accumulator has:
+          //     non-empty → freeze as a permanent cell so the user sees
+          //     where output stopped; empty → drop the placeholder.
+          if (!streamingFinalized) {
+            finalizeStreamingBubble();
+          }
+          isStreaming = false;
           store.modelState = { state: 'idle', source: null };
           updateHudDot('idle');
-          // v2.0.12: backend dispatcher owns the queue/merge logic now,
-          // so the frontend has no pending buffer to flush here. The 5 s
-          // merge window was removed (see PR review note: keeping merging
-          // server-side avoids a stale per-tab buffer when multiple
-          // browsers send concurrently).
         }
         store.emit('modelState');
         break;
 
       case 'partial_text':
-        // Live-update the streaming bubble body with the thinking text
+        // Backend emits each chunk as a ~150-char DELTA (not a cumulative
+        // buffer), so we append to a local accumulator and re-render the
+        // body each time. The cell grows smoothly rather than flashing
+        // truncated fragments.
+        //
+        // Gate: after ``agent`` has finalized the current run, any late
+        // chunks that the SSE merge re-ordered after the turn event must
+        // be dropped — otherwise they'd create a fresh streaming bubble
+        // whose accumulator is just the tail fragment, which the next
+        // idle event would crystallise into a duplicate "AGENT" cell.
+        if (streamingFinalized) break;
         if (!isStreaming) isStreaming = true;
         {
           const bubble = getOrCreateStreamingBubble();
           const body = bubble.querySelector('.msg-streaming-body') as HTMLElement;
           if (event.content) {
-            body.innerHTML = renderMarkdown(event.content);
+            streamingText += event.content;
+            body.innerHTML = renderMarkdown(streamingText);
           }
           scrollToBottom();
         }
@@ -195,9 +302,7 @@ export function createChat(): HTMLElement {
         cell.innerHTML = `
           <div class="tool-row-header">
             <div class="tool-status-summary">
-              <span class="tool-status-icon">💭</span>
               <span class="tool-status-name">Thinking…</span>
-              <span class="tool-status-meta"><span class="streaming-dot"></span><span class="streaming-dot"></span><span class="streaming-dot"></span></span>
             </div>
             <span class="msg-ts">${formatTs(event.ts)}</span>
           </div>
@@ -231,7 +336,6 @@ export function createChat(): HTMLElement {
         const html = `
           <details class="thinking-details">
             <summary class="thinking-summary">
-              <span class="thinking-icon">💭</span>
               <span class="thinking-label">Thought for ${escapeHtml(durSec)}</span>
               <span class="thinking-toggle-hint"></span>
             </summary>
@@ -260,9 +364,19 @@ export function createChat(): HTMLElement {
       }
 
       case 'agent':
-        // Final response: remove streaming bubble, append real message
-        removeStreamingBubble();
-        appendEvent(event);
+        // Promote the current streaming bubble in-place rather than remove-
+        // then-append (avoids the old "everything flashes into a big cell at
+        // the end" UX). For history replay (no streaming bubble exists) fall
+        // back to a plain append so the cell still renders. The
+        // ``streamingFinalized`` flag is set so ``partial_text`` chunks that
+        // the SSE merge delivered AFTER this event get dropped instead of
+        // spawning a duplicate streaming bubble.
+        if (streamingEl) {
+          finalizeStreamingBubble(event.content, event.usage, event.ts);
+        } else {
+          appendEvent(event);
+        }
+        streamingFinalized = true;
         // The 'agent' event carries the turn's token usage — update the HUD
         // pill inline so tokens don't freeze between explicit refreshHud()
         // calls (flagged in PR #24 review item 8).
@@ -270,6 +384,13 @@ export function createChat(): HTMLElement {
         break;
 
       case 'tool': {
+        // Interleaved-mode boundary: a tool_call mid-turn means the current
+        // iteration's text output (if any) is complete. Finalize the
+        // streaming bubble into a permanent cell so this intermediate text
+        // becomes part of the transcript instead of being clobbered by the
+        // next iteration's stream. If the bubble is still showing just the
+        // placeholder, finalizeStreamingBubble() drops it.
+        finalizeStreamingBubble();
         // Record running tool so tool_done can pair against it. Events don't
         // carry a tool_use_id yet, so we key by name — last wins.
         const name = event.name ?? 'tool';
@@ -284,9 +405,7 @@ export function createChat(): HTMLElement {
         if (lastTool) {
           lastTool.classList.remove('done');
           const summary = lastTool.querySelector('.tool-status-summary') as HTMLElement | null;
-          if (summary) {
-            summary.innerHTML = `<span class="tool-status-icon">▶</span><span class="tool-status-name">${escapeHtml(name)}</span><span class="tool-status-meta">running…</span>`;
-          }
+          if (summary) setToolStatus(summary, '▶', 'running…');
         }
         break;
       }
@@ -308,9 +427,7 @@ export function createChat(): HTMLElement {
           target.dataset.bgTid = event.tid;
           backgroundCells.set(event.tid, { el: target, name, startTs: started });
           const summary = target.querySelector('.tool-status-summary') as HTMLElement | null;
-          if (summary) {
-            summary.innerHTML = `<span class="tool-status-icon">▶</span><span class="tool-status-name">${escapeHtml(name)}</span><span class="tool-status-meta">running…</span>`;
-          }
+          if (summary) setToolStatus(summary, '▶', 'running…');
           // Don't drop runningTools entry — the HUD ▶ name pill should stay.
           break;
         }
@@ -319,7 +436,10 @@ export function createChat(): HTMLElement {
           const durSec = (durationMs / 1000).toFixed(1) + 's';
           const summary = target.querySelector('.tool-status-summary') as HTMLElement | null;
           if (summary) {
-            summary.innerHTML = `<span class="tool-status-icon">✓</span><span class="tool-status-name">${escapeHtml(name)}</span><span class="tool-status-meta">${escapeHtml(durSec)}${typeof event.result_len === 'number' ? ` · ${event.result_len} chars` : ''}</span>`;
+            const meta = typeof event.result_len === 'number'
+              ? `${durSec} · ${event.result_len} chars`
+              : durSec;
+            setToolStatus(summary, '✓', meta);
           }
         }
         runningTools.delete(name);
@@ -337,10 +457,7 @@ export function createChat(): HTMLElement {
         const tracked = backgroundCells.get(event.tid);
         if (!tracked) break;
         const summaryEl = tracked.el.querySelector('.tool-status-summary') as HTMLElement | null;
-        if (summaryEl) {
-          const summaryText = event.summary || 'running…';
-          summaryEl.innerHTML = `<span class="tool-status-icon">▶</span><span class="tool-status-name">${escapeHtml(tracked.name)}</span><span class="tool-status-meta">${escapeHtml(summaryText)}</span>`;
-        }
+        if (summaryEl) setToolStatus(summaryEl, '▶', event.summary || 'running…');
         break;
       }
 
@@ -357,9 +474,7 @@ export function createChat(): HTMLElement {
         tracked.el.classList.add('done');
         if (kind !== 'completed') tracked.el.classList.add('warned');
         const summaryEl = tracked.el.querySelector('.tool-status-summary') as HTMLElement | null;
-        if (summaryEl) {
-          summaryEl.innerHTML = `<span class="tool-status-icon">${icon}</span><span class="tool-status-name">${escapeHtml(tracked.name)}</span><span class="tool-status-meta">${escapeHtml(kind)} · ${escapeHtml(durSec)}</span>`;
-        }
+        if (summaryEl) setToolStatus(summaryEl, icon, `${kind} · ${durSec}`);
         backgroundCells.delete(event.tid);
         // HUD "▶ name" cleanup: this name might still have other concurrent
         // calls; only clear if it was the latest tracked.
@@ -592,8 +707,7 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
       div.innerHTML = `
         <details class="thinking-details">
           <summary class="thinking-summary">
-            <span class="thinking-icon">💭</span>
-            <span class="thinking-label">Thinking</span>
+            <span class="thinking-label">Thought</span>
             <span class="thinking-toggle-hint"></span>
           </summary>
           <div class="thinking-body markdown-body">${renderMarkdown(event.content)}</div>
@@ -694,29 +808,36 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
 }
 
 function renderToolEvent(event: DisplayEvent): string {
-  // Uniform compact layout:
-  //   [summary row] ▶ toolname  <one-line arg preview>      (ts)
-  //   [optional] click-to-expand <details> with full args / command
+  // Single-line compact layout (v2.0.18):
+  //   ▶ toolname  <one-line arg preview>  running…      (ts)
+  //   ✓ toolname  <one-line arg preview>  1.2s · N chars (ts)
+  //   [optional] <details> with full args / command
   //
-  // When tool_done lands, chat.ts flips the summary row to `✓ name (Xs)`.
+  // The arg preview lives INSIDE .tool-status-summary, between name and
+  // meta, so it flows inline on the same row as the tool name. Live
+  // state transitions (tool_done / tool_progress / tool_finalize) use
+  // setToolStatus() which only rewrites icon + meta — the name and arg
+  // spans survive.
   const name = event.name ?? 'unknown';
   const input = event.input ?? {};
   const preview = toolArgPreview(name, input);
   const expanded = toolArgExpanded(name, input);
 
+  const argHtml = preview
+    ? `<span class="tool-status-arg" title="${escapeHtml(preview)}">${escapeHtml(preview)}</span>`
+    : '<span class="tool-status-arg"></span>';
+
   // Default icon is the "done" checkmark; handleEvent's live `tool` case
-  // overrides this to show `▶ running…` until tool_done lands.
+  // flips it to `▶` with `running…` via setToolStatus().
   const summary = `
     <div class="tool-status-summary">
       <span class="tool-status-icon">✓</span>
       <span class="tool-status-name">${escapeHtml(name)}</span>
+      ${argHtml}
       <span class="tool-status-meta"></span>
     </div>
   `;
 
-  const previewLine = preview
-    ? `<div class="tool-arg-preview" title="${escapeHtml(preview)}">${escapeHtml(preview)}</div>`
-    : '';
   const detailsBlock = expanded
     ? `<details class="tool-collapse"><summary>details</summary>${expanded}</details>`
     : '';
@@ -726,9 +847,20 @@ function renderToolEvent(event: DisplayEvent): string {
       ${summary}
       <span class="msg-ts">${formatTs(event.ts)}</span>
     </div>
-    ${previewLine}
     ${detailsBlock}
   `;
+}
+
+function setToolStatus(summaryEl: HTMLElement, icon: string, meta: string): void {
+  // Update only the icon and meta spans on a tool-status-summary row;
+  // the name and (v2.0.18) inline arg spans are preserved. Using
+  // innerHTML = ... on the whole summary would clobber the arg and
+  // force every call site to re-pass the tool input, which is not
+  // available to tool_done / tool_progress / tool_finalize handlers.
+  const iconEl = summaryEl.querySelector<HTMLElement>('.tool-status-icon');
+  const metaEl = summaryEl.querySelector<HTMLElement>('.tool-status-meta');
+  if (iconEl) iconEl.textContent = icon;
+  if (metaEl) metaEl.textContent = meta;
 }
 
 function toolArgPreview(name: string, input: Record<string, unknown>): string {

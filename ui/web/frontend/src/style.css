@@ -668,8 +668,6 @@ button:disabled {
   transform: rotate(90deg);
 }
 
-.thinking-icon { font-size: 13px; }
-
 .thinking-label { color: #9d8fe0; font-weight: 600; }
 
 .thinking-body {
@@ -686,10 +684,10 @@ button:disabled {
   font-style: italic;
 }
 
-/* Running thinking cell: show a compact "💭 Thinking…" pill with pulsing
-   dots. Mirrors .msg-tool's running state (yellow-ish accent) but uses the
-   purple hue of the completed thinking block so the transition is visually
-   continuous when thinking_done replaces it. */
+/* Running thinking cell: compact "Thinking…" pill with a pulsing border.
+   Mirrors .msg-tool's running state (yellow accent) but keeps the purple
+   hue so the transition to the completed "Thought for Xs" state is
+   visually continuous. */
 .msg-thinking-running {
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -708,6 +706,30 @@ button:disabled {
   background: transparent;
   border: none;
   padding: 0 0 2px 0;
+}
+
+/* Interrupted thinking cell: kept from the running state (no <details>
+   wrapper — the provider never delivered a thinking_done, so we have no
+   body to reveal). The ``msg-thinking-done`` class above strips the chrome,
+   and this rule re-paints it as a dimmed terminal pill so the user can tell
+   the cell is dead rather than still spinning. No pulse animation. */
+.msg-thinking-interrupted {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--dimmed);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--dimmed);
+  font-family: var(--mono);
+  opacity: 0.6;
+  animation: none;
+}
+
+.msg-thinking-interrupted .tool-status-icon,
+.msg-thinking-interrupted .tool-status-name,
+.msg-thinking-interrupted .tool-status-meta {
+  color: var(--dimmed);
 }
 
 @keyframes pulseThinking {
@@ -974,58 +996,15 @@ button:disabled {
 }
 
 /* ====== STREAMING BUBBLE ====== */
+/* Streaming bubble: a placeholder msg-agent cell that appears the moment
+   the model starts running, showing a dim "Agent is working…" until the
+   first partial_text delta arrives, then grows incrementally as deltas
+   accumulate. On the turn's agent event it's promoted in-place into a
+   permanent msg-agent cell (no remove-then-append flash). See chat.ts
+   finalizeStreamingBubble(). */
 .msg-streaming {
   border-left-color: var(--accent) !important;
   opacity: 0.95;
-}
-
-@keyframes stream-pulse {
-  0%, 100% { border-left-color: var(--accent); }
-  50% { border-left-color: var(--purple); }
-}
-
-.msg-streaming {
-  animation: stream-pulse 1.5s ease-in-out infinite !important;
-}
-
-.streaming-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 1px 8px;
-  border-radius: 20px;
-  background: rgba(88,166,255,0.1);
-  border: 1px solid rgba(88,166,255,0.25);
-  font-size: 11px;
-  background: linear-gradient(90deg, rgba(88,166,255,0.1), rgba(188,140,255,0.1));
-  border: 1px solid rgba(88,166,255,0.2);
-  margin-left: 6px;
-}
-
-.streaming-badge .streaming-label {
-  font-style: italic;
-  font-size: 11px;
-  background: linear-gradient(90deg, var(--accent), var(--purple));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.streaming-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  display: inline-block;
-  animation: streaming-bounce 1.2s ease-in-out infinite;
-}
-
-.streaming-dot:nth-child(2) { animation-delay: 0.15s; }
-.streaming-dot:nth-child(3) { animation-delay: 0.3s; }
-
-@keyframes streaming-bounce {
-  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-  40% { transform: translateY(-3px); opacity: 1; }
 }
 
 .msg-streaming-body {
@@ -1033,16 +1012,10 @@ button:disabled {
   min-height: 1.5em;
 }
 
-.msg-streaming-body::after {
-  content: '▌';
-  color: var(--accent);
-  animation: blink 1s step-end infinite;
-  display: inline;
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+.msg-streaming-placeholder {
+  color: var(--dimmed);
+  font-style: italic;
+  font-size: 12px;
 }
 
 /* ====== HUD BAR ====== */
@@ -1609,15 +1582,21 @@ button:disabled {
   color: var(--dimmed);
   font-size: 11px;
 }
-.tool-arg-preview {
-  margin-top: 3px;
+/* Inline arg preview — lives between tool-status-name and tool-status-meta
+   so the tool cell reads as a single line: ✓ bash  ls -la  1.2s. Long args
+   get ellipsised; hover reveals the full value via the title attribute. */
+.tool-status-arg {
+  color: var(--muted);
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--muted);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  max-width: 420px;
+  display: inline-block;
+  vertical-align: middle;
 }
+.tool-status-arg:empty { display: none; }
 .tool-args-expanded {
   display: flex;
   flex-direction: column;
