@@ -1634,9 +1634,6 @@ button:disabled {
   background: transparent !important;
   border: none !important;
 }
-.msg-tool .tool-details {
-  border-left: 3px solid var(--yellow);
-}
 .msg-tool.done .tool-details {
   border-left-color: var(--green);
   opacity: 0.9;

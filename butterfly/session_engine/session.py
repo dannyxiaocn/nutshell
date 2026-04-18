@@ -772,6 +772,11 @@ class Session:
             on_chunk.flush()
             # See note in _do_chat — drop per-run attributor reference.
             self._pending_thinking_attributor = None
+            # Mirror _do_chat's reset: a tick cancelled between on_chunk's
+            # first-chunk stamp and on_llm_call_end would otherwise leak the
+            # monotonic timestamp into the next run, making its first
+            # agent_output_done duration include the dead time between runs.
+            self._text_output_started_at = None
 
         if SESSION_FINISHED in result.content:
             clear_all_cards(self.tasks_dir)
