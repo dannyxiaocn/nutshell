@@ -83,11 +83,14 @@ def _normalize_display_name(raw: str | None) -> str | None:
 
     Accepts ``None`` (no display name) or a non-empty trimmed string up to
     ``_DISPLAY_NAME_MAX_LEN`` chars. Longer names are truncated rather than
-    rejected so the caller never hits a surprise 400.
+    rejected so the caller never hits a surprise 400. Non-string inputs
+    are treated as absent — the `sub_agent` tool boundary enforces string
+    type strictly via `_validate_name`, so coercing here would only hide
+    callers that pass the wrong shape (PR #37 review).
     """
-    if raw is None:
+    if not isinstance(raw, str):
         return None
-    trimmed = str(raw).strip()
+    trimmed = raw.strip()
     if not trimmed:
         return None
     return trimmed[:_DISPLAY_NAME_MAX_LEN]

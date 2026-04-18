@@ -31,7 +31,12 @@ def _app_with_tmp(root: Path):
 
 
 class DisplayNameCreationTests(unittest.TestCase):
-    def test_post_sessions_ignores_body_id(self) -> None:
+    def test_post_sessions_rejects_body_id_with_400(self) -> None:
+        # PR #37 review finding #4: the old contract accepted an ``id`` field
+        # in the body (and validated it). The new contract makes session_id
+        # strictly server-generated. Silently dropping the caller's ``id``
+        # would mask bugs in client code that still assumes the old shape,
+        # so we surface the contract change as an explicit 400.
         with TemporaryDirectory() as td:
             root = Path(td)
             with TestClient(_app_with_tmp(root)) as client:
@@ -39,10 +44,10 @@ class DisplayNameCreationTests(unittest.TestCase):
                     "id": "client-provided-should-be-ignored",
                     "agent": "agent",
                 })
-                self.assertEqual(r.status_code, 200)
-                sid = r.json()["id"]
-                self.assertNotEqual(sid, "client-provided-should-be-ignored")
-                self.assertTrue((root / "_sessions" / sid / "manifest.json").exists())
+                self.assertEqual(r.status_code, 400)
+                self.assertIn("id", r.json().get("detail", "").lower())
+                # Nothing should have been written to disk on a rejected request.
+                self.assertEqual(list((root / "_sessions").glob("*")), [])
 
     def test_display_name_round_trip(self) -> None:
         with TemporaryDirectory() as td:

@@ -138,9 +138,14 @@ def create_session(
     the internal ``session_id`` (timestamp + 4-char uuid suffix) stays the
     canonical, unique identifier. Pass ``None`` to create an unnamed session
     (UI will fall back to the session_id).
+
+    The returned ``display_name`` is the **normalized** value (trimmed +
+    capped at 40 chars) — i.e. exactly what was persisted to the manifest.
+    This keeps the `POST /api/sessions` response consistent with every
+    subsequent `GET /api/sessions` read (PR #37 review finding #1).
     """
     _validate_session_id(session_id)
-    from butterfly.session_engine.session_init import init_session
+    from butterfly.session_engine.session_init import init_session, _normalize_display_name
     agent_path = Path(agent)
     if len(agent_path.parts) >= 2 and agent_path.parts[0] == "agenthub":
         agent_name = str(Path(*agent_path.parts[1:]))
@@ -151,15 +156,16 @@ def create_session(
     else:
         agent_name = agent
         agent_base = sessions_dir.parent / "agenthub"
+    normalized_name = _normalize_display_name(display_name)
     init_session(
         session_id=session_id,
         agent_name=agent_name,
         sessions_base=sessions_dir,
         system_sessions_base=system_sessions_dir,
         agent_base=agent_base,
-        display_name=display_name,
+        display_name=normalized_name,
     )
-    return {"id": session_id, "agent": agent, "display_name": display_name}
+    return {"id": session_id, "agent": agent, "display_name": normalized_name}
 
 
 def delete_session(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -> bool:
