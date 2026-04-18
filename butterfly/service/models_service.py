@@ -4,10 +4,17 @@ Derived from the 4 providers the CLI supports (see butterfly/llm_engine/registry
 The list is deliberately hand-curated rather than queried live: the point of
 the web config UI is to match exactly what the CLI exposes, including default
 models picked by providers when ``model`` is left blank.
+
+Per-model parameters that matter at runtime (context window, reasoning-token
+support) live in ``butterfly/llm_engine/models.yaml``; this service re-exports
+``max_context_tokens`` onto every model entry so the frontend can size the
+context-% bar without hardcoding a duplicate catalog.
 """
 from __future__ import annotations
 
 from typing import Any
+
+from butterfly.llm_engine.model_catalog import get_max_context_tokens, get_model_spec
 
 
 # Curated list of providers and their most common models.
@@ -113,6 +120,26 @@ _MODEL_CATALOG: list[dict[str, Any]] = [
 _THINKING_EFFORTS = _EFFORTS_CODEX
 
 
+def _enrich_models(entries: list[str]) -> list[dict[str, Any]]:
+    """Attach per-model runtime parameters (max_context_tokens) to each entry.
+
+    Models not yet declared in models.yaml fall back to the module-level
+    default inside ``get_max_context_tokens``; they still render, they just
+    size the HUD at the default window. Keeping the shape as a list of
+    ``{name, max_context_tokens}`` dicts (rather than a parallel array) so
+    the frontend's lookup stays O(1) and tolerant to re-ordering.
+    """
+    out: list[dict[str, Any]] = []
+    for name in entries:
+        spec = get_model_spec(name)
+        out.append({
+            "name": name,
+            "max_context_tokens": spec.max_context_tokens if spec else get_max_context_tokens(name),
+            "exposes_reasoning_tokens": bool(spec.exposes_reasoning_tokens) if spec else False,
+        })
+    return out
+
+
 def get_models_catalog() -> dict[str, Any]:
     """Return the full catalog consumed by the web UI config editor.
 
@@ -121,13 +148,23 @@ def get_models_catalog() -> dict[str, Any]:
           "providers": [
             {"provider": "...", "label": "...", "env": [...],
              "supports_thinking": bool, "thinking_style": str|None,
-             "default_model": "...", "models": [...]},
+             "default_model": "...",
+             "models": [{"name": "...", "max_context_tokens": int,
+                         "exposes_reasoning_tokens": bool}, ...]},
             ...
           ],
           "thinking_efforts": [...],
         }
+
+    v2.0.19: ``models`` entries are enriched dicts (used to be bare strings).
+    The web config editor reads ``.name`` for the dropdown label.
     """
+    providers: list[dict[str, Any]] = []
+    for p in _MODEL_CATALOG:
+        entry = dict(p)
+        entry["models"] = _enrich_models(list(p["models"]))
+        providers.append(entry)
     return {
-        "providers": [dict(p) for p in _MODEL_CATALOG],
+        "providers": providers,
         "thinking_efforts": list(_THINKING_EFFORTS),
     }

@@ -1,0 +1,30 @@
+# Butterfly model catalog — authoritative source of per-model parameters.
+#
+# This file is hand-edited. butterfly/llm_engine/model_catalog.py loads it at
+# import time and exposes ModelSpec lookups. butterfly/service/models_service.py
+# re-exports the per-model max_context_tokens to the web UI via /api/models so
+# the frontend context-% bar can scale by each model's real window.
+#
+# Fields per model:
+#   provider               : registry key in butterfly/llm_engine/registry.py
+#   max_context_tokens     : total context window, used as denominator for HUD ctx %
+#   exposes_reasoning_tokens:
+#       true  — provider populates usage.reasoning_tokens (codex Responses API,
+#               Kimi OpenAI surface via completion_tokens_details)
+#       false — no per-call reasoning token accounting (Anthropic rolls thinking
+#               tokens into output_tokens; plain OpenAI Chat Completions)
+#
+# Only the two production models are enumerated — other providers' models were
+# removed from the supported set per v2.0.19 decision. Add entries here when
+# reinstating models.
+
+models:
+  gpt-5.4:
+    provider: codex-oauth
+    max_context_tokens: 250000
+    exposes_reasoning_tokens: true
+
+  kimi-for-coding:
+    provider: kimi-coding-plan
+    max_context_tokens: 250000
+    exposes_reasoning_tokens: true

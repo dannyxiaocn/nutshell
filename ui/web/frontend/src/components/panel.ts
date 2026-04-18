@@ -318,8 +318,8 @@ export function createPanel(): HTMLElement {
       select.appendChild(blank);
       for (const m of models) {
         const opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m;
+        opt.value = m.name;
+        opt.textContent = m.name;
         select.appendChild(opt);
       }
       const customOpt = document.createElement('option');
@@ -333,7 +333,7 @@ export function createPanel(): HTMLElement {
       customInput.placeholder = 'custom model id';
 
       // Initial state
-      if (current && models.includes(current)) {
+      if (current && models.some(m => m.name === current)) {
         select.value = current;
         customInput.classList.add('hidden');
       } else if (current) {
@@ -401,8 +401,8 @@ export function createPanel(): HTMLElement {
       fbSelect.appendChild(blank);
       for (const m of models) {
         const opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m;
+        opt.value = m.name;
+        opt.textContent = m.name;
         fbSelect.appendChild(opt);
       }
       const customOpt = document.createElement('option');
@@ -415,7 +415,7 @@ export function createPanel(): HTMLElement {
       fbCustomInput.className = 'cfg-input cfg-input-custom';
       fbCustomInput.placeholder = 'custom model id';
 
-      if (current && models.includes(current)) {
+      if (current && models.some(m => m.name === current)) {
         fbSelect.value = current;
         fbCustomInput.classList.add('hidden');
       } else if (current) {

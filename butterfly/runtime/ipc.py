@@ -105,6 +105,11 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                     thinking_ev["duration_ms"] = block["duration_ms"]
                 if block.get("block_id"):
                     thinking_ev["block_id"] = block["block_id"]
+                # v2.0.19: reasoning_tokens persisted by the attributor so
+                # history replay can restore the "Thought Xs for N tokens"
+                # label (codex/kimi only; Anthropic never sets this).
+                if block.get("reasoning_tokens"):
+                    thinking_ev["reasoning_tokens"] = block["reasoning_tokens"]
                 result.append(thinking_ev)
 
         # ── Tool + text + legacy thinking: iterate in message order ──
@@ -246,6 +251,16 @@ def _runtime_event_to_display(event: dict) -> list[dict]:
         "tool_finalize",
         "sub_agent_count",
         "panel_update",
+        # v2.0.19: per-LLM-call usage powering the HUD's real-token context-%
+        # and realtime toks/s. Emitted by Session after each provider.complete()
+        # returns. See Session._make_llm_call_end_callback for the payload shape.
+        "llm_call_usage",
+        # v2.0.19: late-binding reasoning_tokens on a thinking cell. Emitted
+        # at LLM call end for providers that expose reasoning_tokens in usage
+        # (codex, Kimi); the frontend flips the cell label from
+        # "Thought Xs" to "Thought Xs for N tokens" when it arrives.
+        # Anthropic never emits this event (reasoning_tokens is 0 there).
+        "thinking_tokens_update",
     ):
         return [event]
 

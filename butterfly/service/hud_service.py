@@ -5,6 +5,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from butterfly.llm_engine.model_catalog import get_max_context_tokens
 from butterfly.session_engine.session_config import read_config
 from .sessions_service import _validate_session_id
 
@@ -39,6 +40,7 @@ def get_hud(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -> d
     params = read_config(session_dir) if session_dir.exists() else {}
     from butterfly.runtime.ipc import FileIPC
     ipc = FileIPC(system_dir)
+    # Turn-level cumulative usage (unchanged — still sourced from context.jsonl).
     latest_usage = None
     if ipc.context_path.exists():
         try:
@@ -57,6 +59,32 @@ def get_hud(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -> d
                     continue
         except Exception:
             pass
+    # v2.0.19: per-LLM-call context + toks/s from events.jsonl. This is the
+    # NEW authoritative source for HUD context-%; the prior ``context_bytes /
+    # 4`` heuristic is kept only as a fallback for pre-v2.0.19 sessions that
+    # never emitted ``llm_call_usage``.
+    context_tokens = None
+    toks_per_s = None
+    if ipc.events_path.exists():
+        try:
+            with open(ipc.events_path, 'rb') as f:
+                lines = f.readlines()
+            for line in reversed(lines):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                if ev.get('type') == 'llm_call_usage':
+                    context_tokens = ev.get('context_tokens')
+                    toks_per_s = ev.get('toks_per_s')
+                    break
+        except Exception:
+            pass
+    model_name = params.get('model') or None
+    max_context_tokens = get_max_context_tokens(model_name)
     # Running sub_agent count, derived from on-disk panel entries so the
     # HUD can restore the badge after a page refresh — the SSE stream
     # only re-emits ``sub_agent_count`` when a child changes state.
@@ -77,8 +105,11 @@ def get_hud(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -> d
             sub_agents_running = 0
     return {
         'cwd': git_root or str(project_root),
-        'context_bytes': ipc.context_size(),
-        'model': params.get('model') or None,
+        'context_bytes': ipc.context_size(),  # kept for legacy fallback in frontend
+        'context_tokens': context_tokens,     # v2.0.19: last-call real token count
+        'max_context_tokens': max_context_tokens,
+        'toks_per_s': toks_per_s,
+        'model': model_name,
         'git': {'files': git_files, 'added': git_added, 'deleted': git_deleted},
         'usage': latest_usage,
         'sub_agents_running': sub_agents_running,
