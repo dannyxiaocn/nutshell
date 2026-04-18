@@ -1,0 +1,53 @@
+# Butterfly model catalog — authoritative source of per-model parameters.
+#
+# Hand-edited. ``butterfly/llm_engine/model_catalog.py`` reads this at import
+# time and exposes ModelSpec lookups. ``butterfly/service/models_service.py``
+# re-exports each provider's model list to the web UI via /api/models so the
+# frontend config editor can render a per-provider dropdown and the HUD can
+# size the context-% bar by the selected model's real window.
+#
+# Structure:
+#   providers.<provider_key>.models:
+#     - name: "<model id>"                # string the provider accepts
+#       max_context_tokens: int           # total context window, denominator for HUD ctx %
+#       exposes_reasoning_tokens: bool    # true when usage.reasoning_tokens is populated
+#       default: true                     # exactly one entry per provider is the default
+#
+# Every provider currently ships with one model. The list shape is preserved
+# so adding a second model later is a single YAML edit — no code change.
+
+providers:
+  anthropic:
+    models:
+      - name: claude-sonnet-4-6
+        max_context_tokens: 200000
+        exposes_reasoning_tokens: false
+        default: true
+
+  openai:
+    models:
+      - name: gpt-4o
+        max_context_tokens: 200000
+        exposes_reasoning_tokens: false
+        default: true
+
+  openai-responses:
+    models:
+      - name: gpt-5
+        max_context_tokens: 200000
+        exposes_reasoning_tokens: true
+        default: true
+
+  kimi-coding-plan:
+    models:
+      - name: kimi-for-coding
+        max_context_tokens: 250000
+        exposes_reasoning_tokens: true
+        default: true
+
+  codex-oauth:
+    models:
+      - name: gpt-5.4
+        max_context_tokens: 250000
+        exposes_reasoning_tokens: true
+        default: true

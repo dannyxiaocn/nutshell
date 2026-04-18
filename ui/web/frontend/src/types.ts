@@ -29,7 +29,6 @@ export interface Params {
   provider: string | null;
   fallback_model: string | null;
   fallback_provider: string | null;
-  tool_providers: Record<string, string>;
   thinking: boolean;
   thinking_budget: number;
   thinking_effort: string;
@@ -81,22 +80,24 @@ export interface TaskCard {
   progress: string;
 }
 
+export interface ModelCatalogEntry {
+  name: string;
+  max_context_tokens: number;
+  exposes_reasoning_tokens: boolean;
+  default: boolean;
+}
+
 export interface ProviderCatalogEntry {
   provider: string;
   label: string;
   env: string[];
   supports_thinking: boolean;
-  thinking_style: 'budget' | 'effort' | 'extra_body' | null;
-  /** Effort vocabulary this provider accepts. Empty for providers using
-   *  budget / no thinking style (Anthropic, Kimi, plain OpenAI). */
-  supported_efforts: string[];
   default_model: string;
-  models: string[];
+  models: ModelCatalogEntry[];
 }
 
 export interface ModelsCatalog {
   providers: ProviderCatalogEntry[];
-  thinking_efforts: string[];
 }
 
 export interface DisplayEvent {
@@ -117,6 +118,8 @@ export interface DisplayEvent {
     reasoning?: number;
   };
   result_len?: number;
+  result?: string;
+  result_truncated?: boolean;
   iterations?: number;
   id?: string;
   card?: string;
@@ -136,6 +139,21 @@ export interface DisplayEvent {
   exit_code?: number | null;
   // sub_agent_count: HUD badge tally.
   running?: number;
+  // llm_call_usage (v2.0.19): per-LLM-call accounting for the HUD. Token
+  // counts are nested under ``usage`` (same shape as loop_end) — the
+  // top-level ``input`` field on this event is NOT a token count (it's
+  // reserved for the tool_call event's input record).
+  iteration?: number;
+  context_tokens?: number;
+  toks_per_s?: number | null;
+  // thinking_tokens_update (v2.0.19): credits the provider-reported
+  // reasoning_tokens for one LLM call to a specific thinking block so the
+  // cell label flips from "Thought Xs" to "Thought Xs for N tokens".
+  reasoning_tokens?: number;
+  // v2.0.20: persisted thinking block whose turn ended via interrupt before
+  // on_thinking_end closed it — history replay renders these as
+  // "Thinking interrupted" instead of the normal "Thought" label.
+  interrupted?: boolean;
 }
 
 export type SessionTone = 'running' | 'napping' | 'persistent' | 'stopped' | 'idle' | 'meta';

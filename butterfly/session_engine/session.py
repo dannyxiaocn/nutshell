@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import logging
 import os
 import re
 import uuid
@@ -12,7 +13,9 @@ from butterfly.core.agent import Agent
 from butterfly.core.guardian import Guardian
 from butterfly.core.hook import OnLoopEnd, OnLoopStart, OnTextChunk, OnToolCall, OnToolDone
 from butterfly.core.tool import Tool
-from butterfly.core.types import AgentResult
+from butterfly.core.types import AgentResult, TokenUsage
+
+_log = logging.getLogger(__name__)
 from butterfly.session_engine.pending_inputs import (
     ChatItem,
     TaskItem,
@@ -147,6 +150,29 @@ class Session:
         self.on_tool_done = on_tool_done
         self.on_tool_call = on_tool_call
         self.on_text_chunk = on_text_chunk
+
+        # v2.0.19: per-tool start timestamps keyed by ``ToolCall.id`` so the
+        # tool_done callback can emit ``duration_ms`` even when tools run
+        # concurrently (``asyncio.gather`` in Agent._execute_tools).
+        self._tool_started: dict[str, float] = {}
+        # v2.0.19: set by ``_make_thinking_callbacks`` while a run is active;
+        # consumed by ``_make_llm_call_end_callback`` to stamp the last
+        # thinking block of the just-finished LLM call with the
+        # provider-reported reasoning_tokens. ``None`` when not in a run.
+        self._pending_thinking_attributor = None
+        # v2.0.20: monotonic timestamp of the first text chunk of the
+        # currently-streaming LLM call. Set by the text-chunk callback on
+        # the first chunk; consumed (and reset to None) by on_llm_call_end
+        # so it can emit ``agent_output_done`` with the measured output
+        # duration. Stays None for calls that don't produce text.
+        self._text_output_started_at: float | None = None
+        # v2.0.20: per-turn list of output durations (one entry per LLM
+        # call that produced text). Populated by on_llm_call_end; drained
+        # by the turn writer into ``turn["agent_output_durations"]`` so
+        # history replay can pair each text block with its call's duration
+        # WITHIN the turn — position-based pairing across the whole
+        # events.jsonl was fragile when old turns lacked the instrumentation.
+        self._current_turn_agent_durations: list[int] = []
 
         # Idempotent directory creation — safe for both new and resumed sessions
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -333,23 +359,6 @@ class Session:
         except Exception as e:
             print(f"[session] Warning: failed to load tools: {e}")
             tools = []
-
-        # Apply tool_providers overrides (e.g. web_search → brave/tavily)
-        tool_providers = cfg.get("tool_providers") or {}
-        if tool_providers:
-            from butterfly.tool_engine.registry import resolve_tool_impl
-            for i, t in enumerate(tools):
-                if t.name in tool_providers:
-                    tool_provider_key = tool_providers[t.name]
-                    impl = resolve_tool_impl(t.name, tool_provider_key)
-                    if impl:
-                        tools[i] = Tool(
-                            name=t.name,
-                            description=t.description,
-                            func=impl,
-                            schema=t.schema,
-                            backgroundable=t.backgroundable,
-                        )
 
         self._agent.tools = tools
 
@@ -652,6 +661,7 @@ class Session:
         message = self._reshape_history(message)
         old_len = len(self._agent._history)
         self._set_model_status("running", "user")
+        self._current_turn_agent_durations = []
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
         on_chunk = self._make_text_chunk_callback()
         on_thinking_start, on_thinking_end, had_thinking, get_thinking_blocks = self._make_thinking_callbacks()
@@ -668,6 +678,7 @@ class Session:
                     on_tool_done=self._make_tool_done_callback(),
                     on_loop_start=self._make_loop_start_callback(),
                     on_loop_end=self._make_loop_end_callback(),
+                    on_llm_call_end=self._make_llm_call_end_callback(),
                     caller_type=item.caller_type,
                 )
         except asyncio.CancelledError:
@@ -684,6 +695,17 @@ class Session:
             raise
         finally:
             on_chunk.flush()
+            # Drop the per-run thinking attributor so a subsequent run (which
+            # reinstalls its own) never picks up a stale reference from the
+            # prior run's closure.
+            self._pending_thinking_attributor = None
+            # v2.0.20: clear any stranded text-output start timestamp (e.g.
+            # the run was cancelled before on_llm_call_end could drain it).
+            # The per-turn agent durations list is NOT cleared here — the
+            # chat/tick writers read it immediately after this finally to
+            # stamp ``turn["agent_output_durations"]``. It's reset at the
+            # START of the next _do_chat / _do_tick.
+            self._text_output_started_at = None
 
         self._save_chat_turn(
             item, old_len, result, get_tool_call_count(), had_thinking(),
@@ -714,6 +736,7 @@ class Session:
         card.mark_working()
         save_card(self.tasks_dir, card)
         self._set_model_status("running", triggered_by)
+        self._current_turn_agent_durations = []
         tool_call_cb, get_tool_call_count = self._make_tool_call_callback()
         on_chunk = self._make_text_chunk_callback()
         on_thinking_start, on_thinking_end, had_thinking, get_thinking_blocks = self._make_thinking_callbacks()
@@ -729,6 +752,7 @@ class Session:
                     on_tool_done=self._make_tool_done_callback(),
                     on_loop_start=self._make_loop_start_callback(),
                     on_loop_end=self._make_loop_end_callback(),
+                    on_llm_call_end=self._make_llm_call_end_callback(),
                 )
         except asyncio.CancelledError:
             # On cancel we roll back the per-iteration commits the agent
@@ -746,6 +770,13 @@ class Session:
             raise
         finally:
             on_chunk.flush()
+            # See note in _do_chat — drop per-run attributor reference.
+            self._pending_thinking_attributor = None
+            # Mirror _do_chat's reset: a tick cancelled between on_chunk's
+            # first-chunk stamp and on_llm_call_end would otherwise leak the
+            # monotonic timestamp into the next run, making its first
+            # agent_output_done duration include the dead time between runs.
+            self._text_output_started_at = None
 
         if SESSION_FINISHED in result.content:
             clear_all_cards(self.tasks_dir)
@@ -777,6 +808,8 @@ class Session:
                 thinking_blocks = get_thinking_blocks()
                 if thinking_blocks:
                     turn["thinking_blocks"] = thinking_blocks
+                if self._current_turn_agent_durations:
+                    turn["agent_output_durations"] = list(self._current_turn_agent_durations)
                 if result.usage and result.usage.total_tokens > 0:
                     turn["usage"] = result.usage.as_dict()
                 self._append_context(turn)
@@ -811,6 +844,8 @@ class Session:
             turn["has_streaming_thinking"] = True
         if thinking_blocks:
             turn["thinking_blocks"] = thinking_blocks
+        if self._current_turn_agent_durations:
+            turn["agent_output_durations"] = list(self._current_turn_agent_durations)
         if result.usage and result.usage.total_tokens > 0:
             turn["usage"] = result.usage.as_dict()
         self._append_context(turn)
@@ -851,6 +886,8 @@ class Session:
             turn["has_streaming_thinking"] = True
         if thinking_blocks:
             turn["thinking_blocks"] = thinking_blocks
+        if self._current_turn_agent_durations:
+            turn["agent_output_durations"] = list(self._current_turn_agent_durations)
         self._append_context(turn)
 
     # ── Stop / Start ───────────────────────────────────────────────
@@ -1270,14 +1307,25 @@ class Session:
         Composes with the external on_tool_call hook if set.
         The counter reports how many tool calls were streamed (used to mark
         the turn with has_streaming_tools=True so history doesn't duplicate them).
+
+        v2.0.19: the paired ``_make_tool_done_callback`` reads ``_started``
+        (keyed by tool_use_id) to compute per-call duration. Tools run
+        concurrently via ``asyncio.gather`` in the agent loop, so keying on
+        name-alone would misattribute durations when the same tool appears
+        twice in one iteration.
         """
         count: list[int] = [0]
         ext = self.on_tool_call
+        import time as _time
 
-        def on_tool_call(name: str, input: dict) -> None:
+        def on_tool_call(name: str, input: dict, tool_use_id: str) -> None:
             count[0] += 1
+            self._tool_started[tool_use_id] = _time.monotonic()
             self._append_event({"type": "tool_call", "name": name, "input": input})
             if ext:
+                # External hooks are 2-arg (pre-v2.0.19). Call with 2 positional
+                # args to preserve that contract; integrators that want the id
+                # should adopt the internal 3-arg form explicitly.
                 ext(name, input)
 
         def get_count() -> int:
@@ -1296,11 +1344,40 @@ class Session:
         event carries ``is_background=true`` plus the parsed ``tid`` so the
         frontend keeps the yellow "working" cell in place and waits for the
         matching ``tool_finalize`` event from ``_drain_background_events``.
+
+        v2.0.19: emits ``duration_ms`` from the ``_tool_started`` timestamp the
+        paired ``on_tool_call`` recorded — not the background-task wall clock,
+        just the synchronous tool-executor duration. For backgrounded tools
+        this reflects only the spawn time (placeholder returns near-instantly);
+        the real runtime lands on ``tool_finalize``.
         """
         ext = self.on_tool_done
+        import time as _time
 
-        def on_tool_done(name: str, input: dict, result: str) -> None:
-            payload = {"type": "tool_done", "name": name, "result_len": len(result)}
+        def on_tool_done(name: str, input: dict, result: str, tool_use_id: str) -> None:
+            # Cap the result text we ship through events.jsonl so huge tool
+            # outputs (bash screenfuls, file reads) don't bloat the SSE
+            # stream. Full output is still available via the Panel tab.
+            _MAX = 8000
+            result_str = result if isinstance(result, str) else str(result)
+            truncated = len(result_str) > _MAX
+            payload = {
+                "type": "tool_done",
+                "name": name,
+                "result_len": len(result_str),
+                "result": result_str[:_MAX],
+                # v2.0.20: persisted so history replay can pair a reloaded
+                # tool_use block back to its wall-clock duration_ms below.
+                "tool_use_id": tool_use_id,
+            }
+            if truncated:
+                payload["result_truncated"] = True
+            # v2.0.19 (parallel): per-call wall-clock for the HUD phase timer.
+            # Paired with ``_tool_started[tool_use_id]`` from the on_tool_call
+            # side so concurrent gather()'d calls don't mix up durations.
+            started = self._tool_started.pop(tool_use_id, None)
+            if started is not None:
+                payload["duration_ms"] = int((_time.monotonic() - started) * 1000)
             tid = _parse_background_tid(result)
             if tid is not None:
                 payload["is_background"] = True
@@ -1312,6 +1389,7 @@ class Session:
             if name == "sub_agent" and tid is not None:
                 self._emit_sub_agent_count()
             if ext:
+                # External hooks are 3-arg (pre-v2.0.19) — preserve that contract.
                 ext(name, input, result)
 
         return on_tool_done
@@ -1400,6 +1478,83 @@ class Session:
 
         return on_loop_end
 
+    def _make_llm_call_end_callback(self):
+        """Return ``on_llm_call_end`` — writes ``llm_call_usage`` to events.jsonl.
+
+        Fires once per completed ``provider.complete()`` inside Agent.run's
+        loop. Carries the single call's usage + wall-clock duration so the HUD
+        can compute:
+
+          * ``context_tokens`` (= ``input + cache_read + cache_write + output``):
+            the total tokens this call touched, which is a faithful proxy for
+            "how full is the context window right now" — the next call's
+            prompt is approximately this many tokens (cache_read already sat
+            in the prompt; cache_write is fresh prompt; input is fresh prompt;
+            output becomes the assistant turn that goes into the next prompt).
+            ``reasoning_tokens`` is NOT added separately: per the OpenAI /
+            Codex spec it is a subset of ``output_tokens``, so adding would
+            double-count.
+
+          * ``toks_per_s`` (= ``output_tokens * 1000 / duration_ms``): the
+            LLM's output-generation speed for this call, shown on the HUD as
+            a realtime latest-phase value (not an accumulator — each new
+            call's value replaces the prior one).
+
+        The event is written to events.jsonl (not context.jsonl) because it's
+        HUD metadata, not a replayable turn component.
+        """
+        def on_llm_call_end(usage: "TokenUsage", duration_ms: int, iteration: int) -> None:
+            ctx = (
+                usage.input_tokens
+                + usage.cache_read_tokens
+                + usage.cache_write_tokens
+                + usage.output_tokens
+            )
+            toks_per_s: float | None = None
+            if duration_ms > 0 and usage.output_tokens > 0:
+                toks_per_s = round(usage.output_tokens * 1000.0 / duration_ms, 2)
+            payload = {
+                "type": "llm_call_usage",
+                "iteration": iteration,
+                "duration_ms": duration_ms,
+                "usage": usage.as_dict(),
+                "context_tokens": ctx,
+                "toks_per_s": toks_per_s,
+            }
+            self._append_event(payload)
+            # v2.0.20: if this LLM call produced any text output (the chunk
+            # callback stamped a start timestamp), emit agent_output_done so
+            # the UI can show "Output Xs" on both the live cell and history
+            # replay. Stays silent for tool-only / thinking-only iterations.
+            import time as _time_mod
+            started_out = self._text_output_started_at
+            if started_out is not None:
+                output_duration_ms = int((_time_mod.monotonic() - started_out) * 1000)
+                self._append_event({
+                    "type": "agent_output_done",
+                    "iteration": iteration,
+                    "duration_ms": output_duration_ms,
+                })
+                self._text_output_started_at = None
+                # Buffer the duration for the turn writer. One entry per
+                # LLM call that produced text — same ordering as the text
+                # content blocks that end up in the turn's messages.
+                self._current_turn_agent_durations.append(output_duration_ms)
+            # Attribution for Part E — stamp the last thinking block of this
+            # call with the provider-reported reasoning_tokens so the frontend
+            # can render "Thought Xs for N tokens". The thinking-callback
+            # factory exposes a setter when active; swallow if absent (not in
+            # a thinking-enabled run, or no thinking block closed during this
+            # iteration).
+            attributor = getattr(self, "_pending_thinking_attributor", None)
+            if attributor is not None:
+                try:
+                    attributor(usage.reasoning_tokens)
+                except Exception:
+                    _log.warning("thinking-token attributor raised", exc_info=True)
+
+        return on_llm_call_end
+
     def _emit_version_notice_if_stale(self) -> None:
         """Emit system_notice if the meta session is at a newer version than this session."""
         manifest_path = self.system_dir / "manifest.json"
@@ -1479,6 +1634,17 @@ class Session:
         turn so history replay can restore the cells on re-entry, even for
         providers that don't roundtrip thinking text through message.content
         (codex reasoning items, Anthropic's non-text thinking blocks).
+
+        v2.0.19 attribution: ``self._pending_thinking_attributor`` is set to
+        a setter that ``_make_llm_call_end_callback`` calls with the
+        reasoning_tokens reported by the provider for the LLM call that just
+        finished. The setter emits a ``thinking_tokens_update`` event naming
+        the last thinking block closed during that call so the frontend can
+        flip the cell label from "Thought Xs" to "Thought Xs for N tokens".
+        Anthropic reports ``reasoning_tokens=0``; the setter short-circuits
+        on 0, so the frontend stays on "Thought Xs" and the docstring
+        commitment (null for providers that don't expose per-call reasoning)
+        is preserved.
         """
         import time as _time
 
@@ -1486,11 +1652,29 @@ class Session:
         pending: list[tuple[str, float]] = []  # stack of (block_id, started_at)
         any_closed: list[bool] = [False]
         collected: list[dict] = []
+        # Block ids that closed since the last on_llm_call_end. Drained by the
+        # attributor so each call's reasoning_tokens is credited to the
+        # blocks that actually belong to it — not to blocks from a prior
+        # iteration in the same turn.
+        closed_this_call: list[str] = []
 
         def on_thinking_start() -> None:
             counter[0] += 1
             block_id = f"th:{int(_time.time() * 1000)}:{counter[0]}"
             pending.append((block_id, _time.time()))
+            # v2.0.20: seed the collected list with a placeholder carrying
+            # ``interrupted=True``. A normal on_thinking_end below upgrades
+            # the entry in place (flag cleared, text + duration filled). If
+            # the turn gets interrupted before on_thinking_end fires, the
+            # placeholder survives in the persisted ``thinking_blocks``
+            # list so history replay can render a "Thinking interrupted"
+            # cell instead of silently dropping the block.
+            collected.append({
+                "block_id": block_id,
+                "text": "",
+                "ts": datetime.now().isoformat(),
+                "interrupted": True,
+            })
             self._append_event({"type": "thinking_start", "block_id": block_id})
 
         def on_thinking_end(text: str) -> None:
@@ -1501,8 +1685,10 @@ class Session:
                 counter[0] += 1
                 block_id = f"th:{int(_time.time() * 1000)}:{counter[0]}"
                 started_at = _time.time()
+                synthesized = True
             else:
                 block_id, started_at = pending.pop()
+                synthesized = False
             duration_ms = int((_time.time() - started_at) * 1000)
             self._append_event({
                 "type": "thinking_done",
@@ -1510,13 +1696,57 @@ class Session:
                 "text": text or "",
                 "duration_ms": duration_ms,
             })
-            collected.append({
-                "block_id": block_id,
-                "text": text or "",
-                "duration_ms": duration_ms,
-                "ts": datetime.now().isoformat(),
-            })
+            # Upgrade the placeholder seeded by on_thinking_start (clear the
+            # interrupted flag, fill body + duration). Falls back to append
+            # for the synthesized/defensive path so the persisted list still
+            # has an entry even when the start callback never fired.
+            upgraded = False
+            if not synthesized:
+                for entry in reversed(collected):
+                    if entry.get("block_id") == block_id:
+                        entry["text"] = text or ""
+                        entry["duration_ms"] = duration_ms
+                        entry["ts"] = datetime.now().isoformat()
+                        entry.pop("interrupted", None)
+                        upgraded = True
+                        break
+            if not upgraded:
+                collected.append({
+                    "block_id": block_id,
+                    "text": text or "",
+                    "duration_ms": duration_ms,
+                    "ts": datetime.now().isoformat(),
+                })
+            closed_this_call.append(block_id)
             any_closed[0] = True
+
+        def attribute_reasoning_tokens(reasoning_tokens: int) -> None:
+            # Drain regardless of value so the NEXT call doesn't inherit
+            # this call's closed-blocks list.
+            blocks = list(closed_this_call)
+            closed_this_call.clear()
+            if reasoning_tokens <= 0 or not blocks:
+                return
+            # Attribute the entire call's reasoning total to the LAST block
+            # closed during this call. Codex / Kimi typically emit a single
+            # summary block per call, so this matches reality; for the rare
+            # multi-block case the total stamps cleanly on the final one.
+            target_id = blocks[-1]
+            tokens = int(reasoning_tokens)
+            self._append_event({
+                "type": "thinking_tokens_update",
+                "block_id": target_id,
+                "reasoning_tokens": tokens,
+            })
+            # Mutate the collected entry too so the persisted turn data keeps
+            # the attribution across reloads / history replay. Iterate in
+            # reverse — the target is almost always the tail.
+            for entry in reversed(collected):
+                if entry.get("block_id") == target_id:
+                    entry["reasoning_tokens"] = tokens
+                    break
+
+        self._pending_thinking_attributor = attribute_reasoning_tokens
 
         def had_any() -> bool:
             return any_closed[0]
@@ -1538,12 +1768,24 @@ class Session:
         buffered text.  Without this, the last <150-char segment of
         every tool-call iteration would be silently dropped.
         """
+        import time as _time
+
         buf: list[str] = []
         buf_len: list[int] = [0]
         ext = self.on_text_chunk
         FLUSH_THRESHOLD = 150
 
         def on_chunk(chunk: str) -> None:
+            # v2.0.20: stamp the "first chunk of this LLM call" timestamp so
+            # on_llm_call_end can emit agent_output_done with the measured
+            # streaming duration. Only the first chunk of each call sets it;
+            # the callback resets back to None after emitting the event.
+            # Paired with a lightweight ``agent_output_start`` event so the
+            # frontend can open the "Typing…" cell immediately without
+            # waiting for the 150-char buffer below to flush.
+            if self._text_output_started_at is None and chunk:
+                self._text_output_started_at = _time.monotonic()
+                self._append_event({"type": "agent_output_start"})
             buf.append(chunk)
             buf_len[0] += len(chunk)
             if buf_len[0] >= FLUSH_THRESHOLD:

@@ -8,6 +8,42 @@ export function createSidebar(): HTMLElement {
   el.id = 'sidebar';
 
   let formVisible = false;
+  let agentOptions: string[] | null = null;
+  let agentOptionsPromise: Promise<string[]> | null = null;
+  let selectedAgent = 'agent';
+
+  function renderAgentOptions(): string {
+    if (agentOptions === null) return '<option value="">Loading…</option>';
+    if (!agentOptions.length) return '<option value="">(no agents found)</option>';
+    return agentOptions
+      .map(a => `<option value="${escHtml(a)}">${escHtml(a)}</option>`)
+      .join('');
+  }
+
+  function ensureAgents(): Promise<string[]> {
+    if (agentOptions) return Promise.resolve(agentOptions);
+    if (agentOptionsPromise) return agentOptionsPromise;
+    agentOptionsPromise = api.listAgents()
+      .then(r => {
+        agentOptions = r.agents;
+        if (!agentOptions.includes(selectedAgent) && agentOptions.length) {
+          selectedAgent = agentOptions[0];
+        }
+        // Re-render so the dropdown surfaces the fetched options even if
+        // the sidebar was mid-rebuild when the promise resolved.
+        render();
+        return r.agents;
+      })
+      .catch(e => {
+        console.error('listAgents failed:', e);
+        // Clear both caches so the next `+` click (or next render) retries
+        // rather than sticking on the failed state forever.
+        agentOptions = null;
+        agentOptionsPromise = null;
+        return [];
+      });
+    return agentOptionsPromise;
+  }
 
   function render() {
     const sessions = store.sessions;
@@ -101,7 +137,7 @@ export function createSidebar(): HTMLElement {
         </div>
         <div class="form-field">
           <label>Agent</label>
-          <input id="ns-agent" type="text" value="agenthub/agent" />
+          <select id="ns-agent">${renderAgentOptions()}</select>
         </div>
         <div class="form-row">
           <button class="btn-sm btn-primary" id="ns-create">Create</button>
@@ -110,10 +146,22 @@ export function createSidebar(): HTMLElement {
       </div>
     `;
 
+    // Set the select's current value after DOM insertion so the cached
+    // choice survives each re-render (the sidebar refreshes on every
+    // sessions poll).
+    const select = el.querySelector('#ns-agent') as HTMLSelectElement | null;
+    if (select && agentOptions && agentOptions.includes(selectedAgent)) {
+      select.value = selectedAgent;
+    }
+    select?.addEventListener('change', () => {
+      selectedAgent = select.value;
+    });
+
     // bind events
     el.querySelector('#btn-new-session')?.addEventListener('click', () => {
       formVisible = !formVisible;
       el.querySelector('#new-session-form')?.classList.toggle('hidden', !formVisible);
+      if (formVisible) ensureAgents();
     });
 
     el.querySelector('#ns-cancel')?.addEventListener('click', () => {
@@ -123,11 +171,14 @@ export function createSidebar(): HTMLElement {
 
     el.querySelector('#ns-create')?.addEventListener('click', async () => {
       const nameEl = el.querySelector('#ns-display-name') as HTMLInputElement;
-      const agentEl = el.querySelector('#ns-agent') as HTMLInputElement;
+      const agentEl = el.querySelector('#ns-agent') as HTMLSelectElement;
+      // Agent dropdown (PR #36) holds either "agent" or "agenthub/agent" —
+      // normalize to the fully-qualified form the service expects.
+      const agentName = (agentEl.value || 'agent').trim();
       // session_id is always server-generated; the form only collects the
       // user-facing display_name + agent choice.
       const body: { agent: string; display_name?: string } = {
-        agent: agentEl.value.trim() || 'agenthub/agent',
+        agent: agentName.startsWith('agenthub/') ? agentName : `agenthub/${agentName}`,
       };
       const trimmedName = nameEl.value.trim();
       if (trimmedName) body.display_name = trimmedName;
@@ -185,6 +236,8 @@ export function createSidebar(): HTMLElement {
   store.on('currentSession', render);
   store.on('weixin', render);
   render();
+  // Warm the agents cache so the "+ New session" dropdown is pre-populated.
+  ensureAgents();
   return el;
 }
 

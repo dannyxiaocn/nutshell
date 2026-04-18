@@ -75,6 +75,10 @@ export class SSEConnection {
       'system_notice',
       // Sub-agent / background-tool UI events
       'tool_progress', 'tool_finalize', 'sub_agent_count', 'panel_update',
+      // v2.0.19: per-LLM-call usage + context + toks/s for the HUD
+      'llm_call_usage',
+      // v2.0.19: late reasoning_tokens attribution for the thinking cell
+      'thinking_tokens_update',
     ];
 
     for (const type of eventTypes) {

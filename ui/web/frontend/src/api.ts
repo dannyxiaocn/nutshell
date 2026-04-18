@@ -71,14 +71,23 @@ export const api = {
   setConfig: (id: string, params: Params): Promise<{ ok: boolean; params: Params }> =>
     request('PUT', `/api/sessions/${encodeURIComponent(id)}/config`, { params }),
 
-  getConfigYaml: (id: string): Promise<{ yaml: string }> =>
-    request('GET', `/api/sessions/${encodeURIComponent(id)}/config/yaml`),
+  getAssetMd: (id: string, name: 'tools' | 'skills'): Promise<{ text: string }> =>
+    request('GET', `/api/sessions/${encodeURIComponent(id)}/assets/${name}`),
 
-  setConfigYaml: (id: string, yamlText: string): Promise<{ ok: boolean; params: Params }> =>
-    request('PUT', `/api/sessions/${encodeURIComponent(id)}/config/yaml`, { yaml: yamlText }),
+  setAssetMd: (id: string, name: 'tools' | 'skills', text: string): Promise<{ ok: boolean; text: string }> =>
+    request('PUT', `/api/sessions/${encodeURIComponent(id)}/assets/${name}`, { text }),
+
+  getPromptMd: (id: string, name: 'system' | 'task' | 'env'): Promise<{ text: string }> =>
+    request('GET', `/api/sessions/${encodeURIComponent(id)}/prompts/${name}`),
+
+  setPromptMd: (id: string, name: 'system' | 'task' | 'env', text: string): Promise<{ ok: boolean; text: string }> =>
+    request('PUT', `/api/sessions/${encodeURIComponent(id)}/prompts/${name}`, { text }),
 
   getModels: (): Promise<ModelsCatalog> =>
     request('GET', '/api/models'),
+
+  listAgents: (): Promise<{ agents: string[] }> =>
+    request('GET', '/api/agents'),
 
   startSession: (id: string): Promise<{ ok: boolean }> =>
     request('POST', `/api/sessions/${encodeURIComponent(id)}/start`),
@@ -92,7 +101,17 @@ export const api = {
   getWeixinStatus: (): Promise<{ status: string; error?: string; session?: string; account?: string }> =>
     request('GET', '/api/weixin/status'),
 
-  getHud: (id: string): Promise<{ cwd: string; context_bytes: number; model: string | null; git: { files: number; added: number; deleted: number }; usage: { input?: number; output?: number; cache_read?: number; cache_write?: number } | null }> =>
+  getHud: (id: string): Promise<{
+    cwd: string;
+    context_bytes: number;
+    context_tokens: number | null;
+    max_context_tokens: number;
+    toks_per_s: number | null;
+    model: string | null;
+    git: { files: number; added: number; deleted: number };
+    usage: { input?: number; output?: number; cache_read?: number; cache_write?: number; reasoning?: number } | null;
+    sub_agents_running?: number;
+  }> =>
     request('GET', `/api/sessions/${encodeURIComponent(id)}/hud`),
 
   getPanel: (id: string): Promise<PanelEntry[]> =>

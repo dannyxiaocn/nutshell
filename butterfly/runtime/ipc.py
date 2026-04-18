@@ -54,7 +54,12 @@ from typing import Iterator
 
 # ── Display event converters ──────────────────────────────────────────────────
 
-def _context_event_to_display(event: dict, *, for_history: bool = False) -> list[dict]:
+def _context_event_to_display(
+    event: dict,
+    *,
+    for_history: bool = False,
+    tool_durations: dict[str, int] | None = None,
+) -> list[dict]:
     """Convert a context.jsonl event (user_input or turn) to display events.
 
     Args:
@@ -63,6 +68,18 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                      in events.jsonl are not available for history replay.
                      When False (SSE live tail), respect has_streaming_tools /
                      pre_triggered flags to avoid duplicating live-streamed items.
+        tool_durations: Optional ``tool_use_id → duration_ms`` map built from
+                     events.jsonl (see ``tail_history``). Lets a reloaded
+                     tool cell show the "✓ bash 2.4s …" duration pill that
+                     the live ``tool_done`` event would have populated —
+                     events.jsonl isn't otherwise replayed on history fetch.
+
+    Note: agent text-block durations are read directly from
+    ``turn["agent_output_durations"]`` (a parallel list populated by the
+    session writer). Pairing is per-turn and position-based — pairing
+    across the whole events.jsonl was fragile when old turns lacked the
+    instrumentation, leading to first-block cells receiving later cells'
+    durations on reload.
     """
     etype = event.get("type")
     ts = event.get("ts", "")
@@ -75,37 +92,124 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
 
     if etype == "turn":
         result: list[dict] = []
-        persisted = event.get("thinking_blocks") or []
-        has_persisted = isinstance(persisted, list) and bool(persisted)
+        persisted_raw = event.get("thinking_blocks") or []
+        # v2.0.19 (parallel): do NOT filter out empty-text blocks — they still
+        # carry duration_ms and (post-attributor) reasoning_tokens that the
+        # UI renders as "Thought Xs for N tokens". Dropping them here also
+        # desynced the position-based pairing below: each ``reasoning`` /
+        # ``thinking`` content block pops one queue entry, so a filtered
+        # queue leaves the last N reasoning markers with nothing to pop and
+        # makes the preceding pops pull the wrong blocks (classic symptom:
+        # "first N turns show Thought + tool, rest show tool only").
+        persisted = [b for b in persisted_raw if isinstance(b, dict)] \
+            if isinstance(persisted_raw, list) else []
+        has_persisted = bool(persisted)
         has_streaming_tools = event.get("has_streaming_tools", False)
         has_streaming_thinking = event.get("has_streaming_thinking", False)
         usage = event.get("usage")
+        # v2.0.20: per-turn agent output durations — one entry per LLM call
+        # that produced text. Paired positionally with text content blocks
+        # ENCOUNTERED INSIDE THIS TURN so a missing/extra text block in a
+        # neighbouring turn can't shift the mapping (the cross-turn events.jsonl
+        # scan we tried earlier had exactly that fragility).
+        agent_output_durations_raw = event.get("agent_output_durations") or []
+        agent_output_durations = (
+            agent_output_durations_raw
+            if isinstance(agent_output_durations_raw, list)
+            else []
+        )
+        agent_cursor_turn = 0
+        messages = event.get("messages", []) or []
+
+        # ── tool_use → tool_result pairing for history replay ─────────
+        # events.jsonl isn't replayed by get_history, so tool_done (which
+        # carries the live result payload) is unavailable on reload. Scan
+        # all non-assistant messages for tool_result blocks and build a
+        # map keyed by tool_use_id so each tool cell can render its
+        # returned output.
+        _MAX_RESULT = 8000
+        tool_results: dict[str, dict] = {}
+        if for_history:
+            for msg in messages:
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") != "tool_result":
+                        continue
+                    use_id = block.get("tool_use_id")
+                    if not use_id:
+                        continue
+                    raw = block.get("content")
+                    if isinstance(raw, list):
+                        parts = [
+                            b.get("text", "") if isinstance(b, dict) else ""
+                            for b in raw
+                        ]
+                        text = "".join(parts)
+                    elif isinstance(raw, str):
+                        text = raw
+                    else:
+                        text = ""
+                    truncated = len(text) > _MAX_RESULT
+                    tool_results[use_id] = {
+                        "result": text[:_MAX_RESULT],
+                        "result_truncated": truncated,
+                        "is_error": bool(block.get("is_error")),
+                    }
 
         # ── Persisted thinking_blocks (v2.0.17+) ──────────────────────
         # Server-captured list of ``{block_id, text, duration_ms, ts}`` dicts
-        # from the session's on_thinking_end callback. Emitted first because
-        # we don't know their position within message.content (providers like
-        # codex don't round-trip thinking through content at all). Skipped on
-        # live SSE — the thinking_start/thinking_done events on events.jsonl
-        # already painted the cell.
+        # from the session's on_thinking_end callback. Interleaved with the
+        # tool/text blocks below by timestamp so the history-replay order
+        # matches live playback (think → tool → think → tool → text). Pre-
+        # v2.0.19 we dumped them all up front, which grouped every "Thought"
+        # before every tool cell on reload. Skipped on live SSE — the
+        # thinking_start/thinking_done events on events.jsonl already
+        # painted those cells.
+        pending_thinking: list[dict] = []
         if has_persisted and for_history:
             for i, block in enumerate(persisted):
-                if not isinstance(block, dict):
-                    continue
-                text = block.get("text", "")
-                if not text:
-                    continue
+                block_ts = block.get("ts") or ts
                 thinking_ev: dict = {
                     "type": "thinking",
-                    "content": text,
-                    "ts": block.get("ts") or ts,
+                    "content": block.get("text", ""),
+                    "ts": block_ts,
                     "id": f"thinking:{ts}:persisted:{i}",
                 }
                 if block.get("duration_ms") is not None:
                     thinking_ev["duration_ms"] = block["duration_ms"]
                 if block.get("block_id"):
                     thinking_ev["block_id"] = block["block_id"]
-                result.append(thinking_ev)
+                # v2.0.19 (parallel): reasoning_tokens stamped by the attributor
+                # so history replay can restore the "Thought Xs for N tokens"
+                # label (codex/kimi only; Anthropic never sets this).
+                if block.get("reasoning_tokens"):
+                    thinking_ev["reasoning_tokens"] = block["reasoning_tokens"]
+                # v2.0.20: placeholder seeded by on_thinking_start survives a
+                # turn interrupt, so the frontend knows to render this cell
+                # as "Thinking interrupted" rather than a normal "Thought".
+                if block.get("interrupted"):
+                    thinking_ev["interrupted"] = True
+                pending_thinking.append(thinking_ev)
+
+        def _emit_next_thinking() -> None:
+            """Emit the next pending thinking block (position-based pairing).
+
+            Persisted thinking_blocks are ordered chronologically by the
+            `on_thinking_end` stream, which is 1:1 with provider reasoning
+            items. Codex / gpt-5 stream each reasoning item as a
+            ``{"type": "reasoning"}`` content block — we surface one
+            persisted thinking per reasoning-block position instead of
+            comparing timestamps. Tool_use blocks don't carry a per-block
+            ts (they fall back to the turn's commit ts, which sorts
+            AFTER every reasoning ts), so a ts-compare approach would
+            flush every thought before the first tool on reload.
+            """
+            if pending_thinking:
+                result.append(pending_thinking.pop(0))
 
         # ── Tool + text + legacy thinking: iterate in message order ──
         # This preserves interleaved-mode sequencing (think → tool → text →
@@ -117,7 +221,7 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
         thinking_idx = 0
         agent_idx = 0
 
-        for msg in event.get("messages", []):
+        for msg in messages:
             if msg.get("role") != "assistant":
                 continue
             msg_ts = msg.get("ts", ts)
@@ -144,11 +248,14 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                 btype = block.get("type")
 
                 if btype == "thinking":
-                    # Legacy fallback: only emit from content when the turn
-                    # didn't persist thinking_blocks (would double-render).
-                    # For live SSE, also skip when the thinking_start/
-                    # thinking_done stream already painted the cell.
+                    # Persisted thinking_blocks take precedence when present
+                    # (providers like Anthropic store both an inline block
+                    # AND the persisted entry). Use the inline block as a
+                    # position marker so the persisted text lands at the
+                    # right spot in the transcript.
                     if has_persisted:
+                        if for_history:
+                            _emit_next_thinking()
                         continue
                     if not for_history and has_streaming_thinking:
                         continue
@@ -163,14 +270,48 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                         thinking_idx += 1
                         result.append(ev)
 
+                elif btype == "reasoning":
+                    # Codex / gpt-5 position marker for a reasoning item.
+                    # Its human-readable text lives in the persisted
+                    # thinking_blocks list; surface one per marker at
+                    # the correct position so the transcript reads as
+                    # reasoning → tool → reasoning → tool instead of
+                    # all reasoning bunched up before any tool.
+                    if for_history and has_persisted:
+                        _emit_next_thinking()
+
                 elif btype == "tool_use":
                     if for_history or not has_streaming_tools:
-                        result.append({
+                        block_ts = block.get("ts", msg_ts)
+                        use_id = block.get("id")
+                        tool_ev: dict = {
                             "type": "tool",
                             "name": block["name"],
                             "input": block.get("input", {}),
-                            "ts": block.get("ts", msg_ts),
-                        })
+                            "ts": block_ts,
+                        }
+                        if use_id:
+                            tool_ev["id"] = use_id
+                        # Pair with tool_result from a later message so the
+                        # reloaded cell shows the returned output instead of
+                        # "(pending)". Live sessions still overlay the live
+                        # tool_done result on top of this baseline.
+                        if for_history and use_id and use_id in tool_results:
+                            tr = tool_results[use_id]
+                            tool_ev["result"] = tr["result"]
+                            tool_ev["result_len"] = len(tr["result"])
+                            if tr["result_truncated"]:
+                                tool_ev["result_truncated"] = True
+                            if tr["is_error"]:
+                                tool_ev["is_error"] = True
+                        if (
+                            for_history
+                            and use_id
+                            and tool_durations is not None
+                            and use_id in tool_durations
+                        ):
+                            tool_ev["duration_ms"] = tool_durations[use_id]
+                        result.append(tool_ev)
 
                 elif btype == "text":
                     text = block.get("text", "")
@@ -178,9 +319,27 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                         ev = {"type": "agent", "content": text, "ts": msg_ts}
                         if not for_history:
                             ev["id"] = f"turn:{ts}:{agent_idx}"
+                        # v2.0.20: per-turn pairing — pull the next unused
+                        # duration from this turn's agent_output_durations
+                        # list. Surplus text blocks (rare provider quirk
+                        # where one LLM call emits multiple text blocks)
+                        # render without a duration pill. Applied to both
+                        # live SSE and history so reloaded cells show the
+                        # exact same "Agent Xs" label the live cell did.
+                        if agent_cursor_turn < len(agent_output_durations):
+                            dur = agent_output_durations[agent_cursor_turn]
+                            if isinstance(dur, int):
+                                ev["duration_ms"] = dur
+                            agent_cursor_turn += 1
                         agent_idx += 1
                         agent_events.append(ev)
                         result.append(ev)
+
+        # Any persisted thinking whose ts is later than every content block
+        # (or whose ts is blank and thus never flushed) lands at the tail.
+        if pending_thinking:
+            result.extend(pending_thinking)
+            pending_thinking.clear()
 
         # ── Usage attaches to LAST agent event ────────────────────────
         # Turn usage is cumulative for the whole run; we surface it on the
@@ -246,6 +405,26 @@ def _runtime_event_to_display(event: dict) -> list[dict]:
         "tool_finalize",
         "sub_agent_count",
         "panel_update",
+        # v2.0.19: per-LLM-call usage powering the HUD's real-token context-%
+        # and realtime toks/s. Emitted by Session after each provider.complete()
+        # returns. See Session._make_llm_call_end_callback for the payload shape.
+        "llm_call_usage",
+        # v2.0.19: late-binding reasoning_tokens on a thinking cell. Emitted
+        # at LLM call end for providers that expose reasoning_tokens in usage
+        # (codex, Kimi); the frontend flips the cell label from
+        # "Thought Xs" to "Thought Xs for N tokens" when it arrives.
+        # Anthropic never emits this event (reasoning_tokens is 0 there).
+        "thinking_tokens_update",
+        # v2.0.20: first-text-chunk signal. Emitted by Session.on_chunk the
+        # moment the LLM starts producing text so the frontend can open the
+        # "Typing…" cell immediately — without waiting for the 150-char
+        # partial_text flush to arrive.
+        "agent_output_start",
+        # v2.0.20: per-LLM-call text-output duration. Emitted by on_llm_call_end
+        # whenever a call produced text. The live client stamps the running
+        # cell with ``duration_ms`` so the finalized "Agent Xs" matches what
+        # history replay reads from events.jsonl.
+        "agent_output_done",
     ):
         return [event]
 
@@ -374,13 +553,50 @@ class FileIPC:
     def tail_history(self, offset: int = 0) -> Iterator[tuple[dict, int]]:
         """Yield display events from context.jsonl for the history endpoint.
 
-        Always emits tools from turn content (for_history=True),
-        since events.jsonl is not consulted for history replay.
+        Always emits tools from turn content (for_history=True). events.jsonl
+        is otherwise skipped on history replay, but we take a single pass over
+        it up front to recover the ``tool_use_id → duration_ms`` map so the
+        reloaded "✓ bash 2.4s …" pill matches what the live tool cell showed.
+        Agent output durations are persisted directly on the turn event (see
+        ``turn["agent_output_durations"]`` in Session), so no corresponding
+        scan is needed.
         """
+        tool_durations = self._scan_tool_durations()
         yield from self._readline_loop(
             self.context_path, offset,
-            lambda e: _context_event_to_display(e, for_history=True),
+            lambda e: _context_event_to_display(
+                e,
+                for_history=True,
+                tool_durations=tool_durations,
+            ),
         )
+
+    def _scan_tool_durations(self) -> dict[str, int]:
+        """Build ``tool_use_id → duration_ms`` from events.jsonl tool_done lines.
+
+        Cheap single-pass scan; events.jsonl is an append-only log and
+        tool events are small. Missing/malformed lines are skipped
+        silently so a corrupt tail doesn't break history replay.
+        """
+        durations: dict[str, int] = {}
+        if not self.events_path.exists():
+            return durations
+        with self.events_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("type") != "tool_done":
+                    continue
+                use_id = ev.get("tool_use_id")
+                dur = ev.get("duration_ms")
+                if isinstance(use_id, str) and isinstance(dur, int):
+                    durations[use_id] = dur
+        return durations
 
     def tail_context(self, offset: int = 0) -> Iterator[tuple[dict, int]]:
         """Yield display events from context.jsonl for the live SSE stream.

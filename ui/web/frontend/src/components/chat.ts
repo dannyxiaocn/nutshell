@@ -3,29 +3,17 @@ import { api } from '../api';
 import type { DisplayEvent } from '../types';
 import { renderMarkdown, escapeHtml, formatTs } from '../markdown';
 
-const _MODEL_MAX_TOKENS: [string, number][] = [
-  ['claude', 200000],
-  ['gpt-5.4', 200000],
-  ['gpt-5', 200000],
-  ['gpt-4o', 128000],
-  ['gpt-4', 128000],
-  ['kimi', 128000],
-];
-
-function getModelMaxTokens(model: string | null): number {
-  if (!model) return 200000;
-  const m = model.toLowerCase();
-  for (const [key, val] of _MODEL_MAX_TOKENS) {
-    if (m.includes(key)) return val;
-  }
-  return 200000;
-}
+// v2.0.19: model_max tokens come from GET /api/hud's ``max_context_tokens``
+// field, which the backend sources from butterfly/llm_engine/models.yaml.
+// The hardcoded table this replaced was drift-prone and invisibly wrong for
+// gpt-5.4 / kimi-for-coding — both get 250k now.
 
 export function createChat(): HTMLElement {
   const el = document.createElement('main');
   el.id = 'chat';
   el.innerHTML = `
     <div id="messages" class="messages"></div>
+    <div id="agent-status" class="agent-status hidden">Agent is working…</div>
     <div id="hud-bar" class="hud-bar hidden" title="model · context · running tool · tokens">
       <span class="hud-dot hud-dot-idle" id="hud-dot"></span>
       <span class="hud-item hud-model"><span class="hud-model-text">…</span></span>
@@ -35,8 +23,12 @@ export function createChat(): HTMLElement {
       <span class="hud-item hud-tool hidden"><span class="hud-tool-text"></span></span>
       <span class="hud-sep hud-subagent-sep hidden">·</span>
       <span class="hud-item hud-subagent hidden" title="Sub-agents currently running"><span class="hud-subagent-text"></span></span>
-      <span class="hud-sep hud-tokens-sep">·</span>
-      <span class="hud-item hud-tokens"><span class="hud-tokens-text">…</span></span>
+      <span class="hud-sep hud-speed-sep hidden">·</span>
+      <span class="hud-item hud-speed hidden" title="Output tokens/sec from the latest LLM call (not cumulative)"><span class="hud-speed-text"></span></span>
+      <!-- Tokens pill kept in the DOM but hidden by default — PR #36 -->
+      <!-- dropped the noisy in/out counter from the HUD. -->
+      <span class="hud-sep hud-tokens-sep hidden">·</span>
+      <span class="hud-item hud-tokens hidden"><span class="hud-tokens-text">…</span></span>
     </div>
     <div id="chat-input-area" class="chat-input-area">
       <textarea id="chat-input" placeholder="Type a message… (Enter = send, Shift+Enter = newline, Alt/⌥+Enter = wait-mode)" rows="3"></textarea>
@@ -102,16 +94,43 @@ export function createChat(): HTMLElement {
   // every ``model_status:running``.
   let streamingFinalized = false;
 
+  function setAgentStatus(running: boolean) {
+    const bar = el.querySelector('#agent-status') as HTMLElement | null;
+    if (!bar) return;
+    bar.classList.toggle('hidden', !running);
+  }
+
   function getOrCreateStreamingBubble(): HTMLDivElement {
     if (!streamingEl) {
       streamingEl = document.createElement('div');
-      streamingEl.className = 'msg msg-agent msg-streaming';
+      // v2.0.20: the live cell mirrors the thinking-running chrome — a
+      // compact "Outputting…" pill with a caret, body empty until the
+      // 'agent' event replaces it with the finalized output + duration.
+      // Streaming text is accumulated silently in ``streamingText`` so
+      // the intermediate-finalize path (mid-turn tool_call) still has the
+      // interim content when no canonical 'agent' event has arrived yet.
+      streamingEl.className = 'msg msg-agent msg-agent-streaming';
+      streamingEl.dataset.startedAt = String(Date.now());
+      // Mirrors the tool cell layout: a constant name ("Agent") followed by
+      // a live status pill. While streaming the status reads "typing…";
+      // finalizeStreamingBubble flips it to the measured duration once the
+      // 'agent' event arrives — same slot, same dim styling as the tool
+      // cell's "running… → 2.4s" transition.
       streamingEl.innerHTML = `
-        <div class="msg-body msg-streaming-body markdown-body">
-          <em class="msg-streaming-placeholder">Agent is working…</em>
-        </div>
+        <details class="agent-details">
+          <summary class="agent-summary">
+            <span class="agent-label">
+              <span class="agent-word">Agent</span>
+              <span class="agent-meta">typing…</span>
+            </span>
+            <span class="msg-ts">${formatTs(new Date().toISOString())}</span>
+          </summary>
+          <div class="agent-body agent-empty"><em>(still typing…)</em></div>
+        </details>
       `;
       messages.appendChild(streamingEl);
+      // Output has begun — the standalone status line is redundant.
+      setAgentStatus(false);
     }
     return streamingEl;
   }
@@ -125,16 +144,23 @@ export function createChat(): HTMLElement {
     isStreaming = false;
   }
 
-  function finalizeStreamingBubble(canonicalText?: string, usage?: any, finalTs?: string): void {
+  function finalizeStreamingBubble(canonicalText?: string, usage?: any, finalTs?: string, serverDurMs?: number): void {
     // Promote the current streaming bubble into a permanent msg-agent cell,
     // or drop it if nothing was streamed. Called:
     //   * on the turn's agent event (canonicalText = event.content) — final
-    //     in-place promotion with header + usage.
+    //     in-place promotion with duration + usage.
     //   * on tool_call mid-turn (canonicalText omitted) — freeze the
     //     accumulator as an intermediate output cell, preserving the
     //     iteration-ordered display of interleaved text+tool patterns.
     //   * on model_status:idle (canonicalText omitted) — cancel path, keep
     //     whatever text was streamed visible so the user sees where it stopped.
+    //
+    // v2.0.20: the finalized cell uses the same <details> chrome as the
+    // thinking-done state — a "Output Xs" summary pill over the rendered
+    // markdown body. Duration is measured client-side from dataset.startedAt,
+    // stamped by getOrCreateStreamingBubble on the first partial_text. This
+    // keeps the live cell's pill identical to what history replay renders
+    // from events.jsonl (``agent_output_done.duration_ms``).
     if (!streamingEl) return;
     const text = canonicalText ?? streamingText;
     if (!text) {
@@ -143,24 +169,40 @@ export function createChat(): HTMLElement {
       streamingText = '';
       return;
     }
-    streamingEl.classList.remove('msg-streaming');
-    let usageHtml = '';
-    if (usage) {
-      const u = usage as Record<string, number>;
-      const parts: string[] = [];
-      if (u.input != null) parts.push(`in:${u.input}`);
-      if (u.output != null) parts.push(`out:${u.output}`);
-      if (u.cache_read != null) parts.push(`cached:${u.cache_read}`);
-      if (u.cache_write != null) parts.push(`wrote:${u.cache_write}`);
-      if (parts.length) usageHtml = `<span class="usage-stats">${escapeHtml(parts.join(' · '))}</span>`;
-    }
+    // Prefer the server-measured duration (carried on the 'agent' event or
+    // stamped onto the cell by the earlier agent_output_done SSE event) so
+    // live and history replay agree. Falls back to the client's first-partial
+    // → finalize delta when no server number is available (cancel path,
+    // pre-v2.0.20 sessions).
+    const startedAt = Number(streamingEl.dataset.startedAt ?? Date.now());
+    const datasetDur = Number(streamingEl.dataset.serverDurationMs);
+    const durMs = typeof serverDurMs === 'number' && serverDurMs > 0
+      ? serverDurMs
+      : (Number.isFinite(datasetDur) && datasetDur > 0
+          ? datasetDur
+          : Date.now() - startedAt);
+    const durSec = (durMs / 1000).toFixed(1) + 's';
+    streamingEl.classList.remove('msg-agent-streaming');
+    streamingEl.classList.add('msg-agent-done');
+    // Use a server-supplied timestamp when the caller provided one; fall
+    // back to "now" (in ISO form so formatTs parses it) for the cancel /
+    // mid-turn-tool paths that finalize without a canonical event — the
+    // old code produced the placeholder "—" string, which looked like a
+    // bug when the cell stayed mounted across a reload.
+    const displayTs = finalTs ?? new Date().toISOString();
+    const usageHtml = formatUsageStats(usage);
     streamingEl.innerHTML = `
-      <div class="msg-header">
-        <span class="msg-label">agent</span>
-        ${usageHtml}
-        <span class="msg-ts">${formatTs(finalTs)}</span>
-      </div>
-      <div class="msg-body markdown-body">${renderMarkdown(text)}</div>
+      <details class="agent-details" open>
+        <summary class="agent-summary">
+          <span class="agent-label">
+            <span class="agent-word">Agent</span>
+            <span class="agent-meta">${escapeHtml(durSec)}</span>
+            ${usageHtml}
+          </span>
+          <span class="msg-ts">${formatTs(displayTs)}</span>
+        </summary>
+        <div class="agent-body markdown-body">${renderMarkdown(text)}</div>
+      </details>
     `;
     streamingEl = null;
     streamingText = '';
@@ -174,10 +216,14 @@ export function createChat(): HTMLElement {
     // over the thinking block's natural end), so the cell would spin on
     // "Thinking…" forever. The CSS rule .msg-thinking-interrupted dims it.
     for (const [blockId, cell] of runningThinking) {
-      const summary = cell.querySelector('.tool-status-summary') as HTMLElement | null;
-      if (summary) {
-        summary.innerHTML = '<span class="tool-status-icon">⚠</span><span class="tool-status-name">Thinking interrupted</span><span class="tool-status-meta">cancelled</span>';
-      }
+      // The running cell uses the same <details> chrome as the done state,
+      // so the interrupt path just needs to swap the label text. No icon,
+      // no "cancelled" meta — the dimmed border + .msg-thinking-interrupted
+      // opacity are enough to signal that the thought was cut short.
+      const word = cell.querySelector('.thinking-word') as HTMLElement | null;
+      const meta = cell.querySelector('.thinking-meta') as HTMLElement | null;
+      if (word) word.textContent = 'Thinking interrupted';
+      if (meta) meta.textContent = '';
       cell.classList.remove('msg-thinking-running');
       cell.classList.add('msg-thinking-done', 'msg-thinking-interrupted');
       cell.dataset.interrupted = '1';
@@ -186,6 +232,7 @@ export function createChat(): HTMLElement {
   }
 
   function clearMessages() {
+    setAgentStatus(false);
     removeStreamingBubble();
     messages.innerHTML = '';
     isStreaming = false;
@@ -224,31 +271,27 @@ export function createChat(): HTMLElement {
           // Defensive: any orphan bubble from a previous run that somehow
           // didn't get a terminal agent/idle event (rare — cancelled
           // without partial-turn commit) must be finalized before we
-          // create a fresh one; otherwise getOrCreateStreamingBubble
-          // returns the stale instance and streamingText keeps growing
-          // across runs.
+          // start a fresh one; otherwise a late partial_text returns the
+          // stale instance and streamingText keeps growing across runs.
           if (streamingEl && !streamingFinalized) {
             finalizeStreamingBubble();
           }
           isStreaming = true;
           streamingText = '';
           streamingFinalized = false;
-          getOrCreateStreamingBubble();
-          scrollToBottom();
+          // Running state now uses a single status line — no empty chat
+          // cell. The streaming bubble is created lazily when the first
+          // partial_text delta arrives.
+          setAgentStatus(true);
           store.modelState = { state: 'running', source: event.source ?? null };
           updateHudDot('running');
         } else {
           // Idle: flip any still-spinning thinking cell to interrupted.
           markRunningThinkingInterrupted();
-          // Bubble handling at idle:
-          //   * streamingFinalized=true  → agent event already promoted
-          //     it. Don't touch — a late partial_text is also gated off
-          //     so nothing new to clean.
-          //   * streamingFinalized=false → no agent event ever arrived
-          //     (cancelled run, or error before any assistant text was
-          //     committed). Finalize with whatever the accumulator has:
-          //     non-empty → freeze as a permanent cell so the user sees
-          //     where output stopped; empty → drop the placeholder.
+          setAgentStatus(false);
+          // Bubble handling at idle: finalize any in-flight streaming
+          // bubble with whatever text accumulated so the user sees where
+          // output stopped (or drop it if empty).
           if (!streamingFinalized) {
             finalizeStreamingBubble();
           }
@@ -259,28 +302,46 @@ export function createChat(): HTMLElement {
         store.emit('modelState');
         break;
 
+      case 'agent_output_start':
+        // v2.0.20: server-emitted at the first text chunk of an LLM call so
+        // the "Agent / typing…" cell appears without waiting for the 150-char
+        // partial_text flush. Defensive gate mirrors the partial_text case.
+        if (streamingFinalized) break;
+        isStreaming = true;
+        getOrCreateStreamingBubble();
+        scrollToBottom();
+        break;
+
+      case 'agent_output_done':
+        // v2.0.20: server-measured wall-clock for this LLM call's text
+        // output. Stamp it on the live cell so finalizeStreamingBubble can
+        // prefer the server number over the client's first-partial → finalize
+        // delta. Keeps live-cell duration identical to the value history
+        // replay pulls from events.jsonl. The stamp survives an intermediate
+        // tool_call finalize because dataset stays on the node.
+        if (streamingEl && typeof event.duration_ms === 'number') {
+          streamingEl.dataset.serverDurationMs = String(event.duration_ms);
+        }
+        break;
+
       case 'partial_text':
-        // Backend emits each chunk as a ~150-char DELTA (not a cumulative
-        // buffer), so we append to a local accumulator and re-render the
-        // body each time. The cell grows smoothly rather than flashing
-        // truncated fragments.
+        // v2.0.20: the live cell no longer renders streaming text — the
+        // first chunk creates the "Agent / typing…" placeholder (or
+        // agent_output_start has already opened it) and subsequent chunks
+        // just accumulate into ``streamingText`` so the intermediate
+        // finalize path (mid-turn tool_call) still has the interim content
+        // if no canonical 'agent' event has arrived for this segment yet.
         //
         // Gate: after ``agent`` has finalized the current run, any late
         // chunks that the SSE merge re-ordered after the turn event must
-        // be dropped — otherwise they'd create a fresh streaming bubble
-        // whose accumulator is just the tail fragment, which the next
-        // idle event would crystallise into a duplicate "AGENT" cell.
+        // be dropped — otherwise they'd create a fresh placeholder whose
+        // accumulator is just the tail fragment, which the next idle event
+        // would crystallise into a duplicate "Output" cell.
         if (streamingFinalized) break;
         if (!isStreaming) isStreaming = true;
-        {
-          const bubble = getOrCreateStreamingBubble();
-          const body = bubble.querySelector('.msg-streaming-body') as HTMLElement;
-          if (event.content) {
-            streamingText += event.content;
-            body.innerHTML = renderMarkdown(streamingText);
-          }
-          scrollToBottom();
-        }
+        getOrCreateStreamingBubble();
+        if (event.content) streamingText += event.content;
+        scrollToBottom();
         break;
 
       case 'thinking':
@@ -299,13 +360,20 @@ export function createChat(): HTMLElement {
         cell.className = 'msg msg-thinking msg-thinking-running';
         cell.dataset.blockId = blockId;
         cell.dataset.startedAt = String(Date.now());
+        // Render the running cell using the same <details> chrome as the
+        // done state so the ▸ caret is present from the first paint.
+        // Body stays empty until thinking_done replaces the innerHTML with
+        // the finalized "Thought Xs…" + body markup.
         cell.innerHTML = `
-          <div class="tool-row-header">
-            <div class="tool-status-summary">
-              <span class="tool-status-name">Thinking…</span>
-            </div>
-            <span class="msg-ts">${formatTs(event.ts)}</span>
-          </div>
+          <details class="thinking-details">
+            <summary class="thinking-summary">
+              <span class="thinking-label">
+                <span class="thinking-word">Thinking…</span>
+              </span>
+              <span class="msg-ts">${formatTs(event.ts)}</span>
+            </summary>
+            <div class="thinking-body thinking-empty"><em>(still thinking…)</em></div>
+          </details>
         `;
         // Place it above the streaming bubble (same rule as tool cells).
         if (streamingEl && messages.contains(streamingEl)) {
@@ -333,11 +401,23 @@ export function createChat(): HTMLElement {
         const bodyHtml = body
           ? `<div class="thinking-body markdown-body">${renderMarkdown(body)}</div>`
           : `<div class="thinking-body thinking-empty"><em>No thinking body exposed by the provider.</em></div>`;
+        // Initial label has no reasoning_tokens yet — provider reports them
+        // at LLM call end, which arrives as a later ``thinking_tokens_update``
+        // event. Anthropic never sends the follow-up, so its cells stay on
+        // the duration-only label (spec: null → "Thought Xs").
+        // Split the summary label so only "Thought" keeps the purple
+        // emphasis — the duration (and later reasoning_tokens appended by
+        // thinking_tokens_update) are rendered in the same dimmed hue as
+        // the timestamp so they read as metadata, not headline.
+        const tsHtml = `<span class="msg-ts">${formatTs(event.ts)}</span>`;
         const html = `
           <details class="thinking-details">
             <summary class="thinking-summary">
-              <span class="thinking-label">Thought for ${escapeHtml(durSec)}</span>
-              <span class="thinking-toggle-hint"></span>
+              <span class="thinking-label" data-duration-label="${escapeHtml(durSec)}">
+                <span class="thinking-word">Thought</span>
+                <span class="thinking-meta">${escapeHtml(durSec)}</span>
+              </span>
+              ${tsHtml}
             </summary>
             ${bodyHtml}
           </details>
@@ -363,6 +443,39 @@ export function createChat(): HTMLElement {
         break;
       }
 
+      case 'thinking_tokens_update': {
+        // Provider-reported reasoning_tokens for one LLM call arrived; stamp
+        // the matching thinking block's label. Look up by iterating the DOM
+        // rather than a CSS attribute selector — block_ids contain colons
+        // which CSS.escape renders as ``\:`` inside the selector, which
+        // some browsers match inconsistently depending on unescape rules.
+        // Iterating + comparing dataset is unambiguous.
+        const blockId = event.block_id ?? '';
+        const tokens = event.reasoning_tokens ?? 0;
+        if (!blockId || tokens <= 0) break;
+        const cellEl = Array
+          .from(messages.querySelectorAll<HTMLElement>('.msg-thinking'))
+          .find(el => el.dataset.blockId === blockId);
+        if (!cellEl) break;
+        const labelEl = cellEl.querySelector<HTMLElement>('.thinking-label');
+        if (!labelEl) break;
+        let metaEl = labelEl.querySelector<HTMLElement>('.thinking-meta');
+        const dur = labelEl.dataset.durationLabel ?? '';
+        const metaText = dur ? `${dur} for ${tokens} tokens` : `for ${tokens} tokens`;
+        if (!metaEl) {
+          // Running-state cell (no thinking_done yet) has no .thinking-meta
+          // — create one so the tokens surface immediately. thinking_done
+          // will later rewrite innerHTML, but by then the meta text already
+          // includes tokens, so the user never sees a "Thought Xs" flash
+          // without the "for N tokens" suffix.
+          metaEl = document.createElement('span');
+          metaEl.className = 'thinking-meta';
+          labelEl.appendChild(metaEl);
+        }
+        metaEl.textContent = metaText;
+        break;
+      }
+
       case 'agent':
         // Promote the current streaming bubble in-place rather than remove-
         // then-append (avoids the old "everything flashes into a big cell at
@@ -372,7 +485,7 @@ export function createChat(): HTMLElement {
         // the SSE merge delivered AFTER this event get dropped instead of
         // spawning a duplicate streaming bubble.
         if (streamingEl) {
-          finalizeStreamingBubble(event.content, event.usage, event.ts);
+          finalizeStreamingBubble(event.content, event.usage, event.ts, event.duration_ms);
         } else {
           appendEvent(event);
         }
@@ -435,11 +548,10 @@ export function createChat(): HTMLElement {
           target.classList.add('done');
           const durSec = (durationMs / 1000).toFixed(1) + 's';
           const summary = target.querySelector('.tool-status-summary') as HTMLElement | null;
-          if (summary) {
-            const meta = typeof event.result_len === 'number'
-              ? `${durSec} · ${event.result_len} chars`
-              : durSec;
-            setToolStatus(summary, '✓', meta);
+          if (summary) setToolStatus(summary, '✓', durSec);
+          const resultEl = target.querySelector('.tool-body-result .tool-body-content') as HTMLElement | null;
+          if (resultEl && typeof event.result === 'string') {
+            resultEl.innerHTML = renderToolResultBlock(event.result, event.result_truncated);
           }
         }
         runningTools.delete(name);
@@ -474,7 +586,14 @@ export function createChat(): HTMLElement {
         tracked.el.classList.add('done');
         if (kind !== 'completed') tracked.el.classList.add('warned');
         const summaryEl = tracked.el.querySelector('.tool-status-summary') as HTMLElement | null;
-        if (summaryEl) setToolStatus(summaryEl, icon, `${kind} · ${durSec}`);
+        if (summaryEl) {
+          const status = kind === 'completed' ? durSec : `${kind} ${durSec}`;
+          setToolStatus(summaryEl, icon, status);
+        }
+        const resultEl = tracked.el.querySelector('.tool-body-result .tool-body-content') as HTMLElement | null;
+        if (resultEl && typeof event.result === 'string') {
+          resultEl.innerHTML = renderToolResultBlock(event.result, event.result_truncated);
+        }
         backgroundCells.delete(event.tid);
         // HUD "▶ name" cleanup: this name might still have other concurrent
         // calls; only clear if it was the latest tracked.
@@ -495,6 +614,15 @@ export function createChat(): HTMLElement {
         // Quiet: loop lifecycle no longer clutters the transcript (user feedback).
         // HUD's running dot already conveys the information.
         break;
+
+      case 'llm_call_usage': {
+        // v2.0.19: per-LLM-call token accounting — drives the HUD's
+        // context-% and realtime toks/s. Not rendered in the transcript.
+        updateHudContext(event.context_tokens ?? null);
+        updateHudSpeed(event.toks_per_s ?? null);
+        if (event.usage) updateHudTokens(event.usage);
+        break;
+      }
 
       default:
         appendEvent(event);
@@ -566,6 +694,44 @@ export function createChat(): HTMLElement {
     tokEl.title = formatHudUsageTooltip(usage);
   }
 
+  // v2.0.19: model context window sourced from /api/hud. Cached so live
+  // llm_call_usage events (which don't re-fetch /api/hud) can recompute the
+  // ctx-% bar without a round trip. Reset by refreshHud on session switch.
+  let hudMaxContextTokens = 200000;
+
+  function updateHudContext(contextTokens: number | null | undefined) {
+    const hudBar = el.querySelector('#hud-bar') as HTMLElement | null;
+    if (!hudBar) return;
+    const ctxEl = hudBar.querySelector('.hud-ctx-text') as HTMLElement | null;
+    if (!ctxEl) return;
+    if (contextTokens == null) {
+      ctxEl.textContent = 'ctx —';
+      ctxEl.title = 'no LLM call yet';
+      return;
+    }
+    const pct = Math.min(100, Math.round((contextTokens / hudMaxContextTokens) * 100));
+    ctxEl.textContent = `ctx ${pct}%`;
+    ctxEl.title = `${contextTokens.toLocaleString()} / ${hudMaxContextTokens.toLocaleString()} tokens`;
+  }
+
+  function updateHudSpeed(toksPerS: number | null | undefined) {
+    const hudBar = el.querySelector('#hud-bar') as HTMLElement | null;
+    if (!hudBar) return;
+    const sep = hudBar.querySelector('.hud-speed-sep') as HTMLElement | null;
+    const wrap = hudBar.querySelector('.hud-speed') as HTMLElement | null;
+    const txt = hudBar.querySelector('.hud-speed-text') as HTMLElement | null;
+    if (!sep || !wrap || !txt) return;
+    if (toksPerS == null || toksPerS <= 0) {
+      sep.classList.add('hidden');
+      wrap.classList.add('hidden');
+      return;
+    }
+    const display = toksPerS >= 100 ? toksPerS.toFixed(0) : toksPerS.toFixed(1);
+    txt.textContent = `⚡ ${display} tok/s`;
+    sep.classList.remove('hidden');
+    wrap.classList.remove('hidden');
+  }
+
   async function refreshHud(sessionId: string) {
     try {
       const data = await api.getHud(sessionId);
@@ -578,13 +744,14 @@ export function createChat(): HTMLElement {
       modelEl.textContent = modelName;
       modelEl.title = `model: ${modelName} · cwd: ${data.cwd}`;
 
-      // Context: estimate tokens from bytes, show as % of model max
-      const estimatedTokens = Math.round(data.context_bytes / 4);
-      const maxTokens = getModelMaxTokens(data.model ?? null);
-      const pct = Math.min(100, Math.round(estimatedTokens / maxTokens * 100));
-      const ctxEl = hudBar.querySelector('.hud-ctx-text') as HTMLElement;
-      ctxEl.textContent = `ctx ${pct}%`;
-      ctxEl.title = `${estimatedTokens.toLocaleString()} / ${maxTokens.toLocaleString()} tokens`;
+      // Context: real token count from the latest LLM call (v2.0.19).
+      // The byte/4 heuristic is gone — if no call has finished yet,
+      // context_tokens is null and we show "ctx —" rather than a bogus 0%.
+      hudMaxContextTokens = data.max_context_tokens || 200000;
+      updateHudContext(data.context_tokens);
+
+      // Realtime toks/s from the latest LLM call. Hidden when null.
+      updateHudSpeed(data.toks_per_s);
 
       // Token usage — collapse to one number unless caching meaningfully present.
       const tokEl = hudBar.querySelector('.hud-tokens-text') as HTMLElement;
@@ -702,15 +869,52 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
 
   switch (event.type) {
     case 'thinking': {
-      if (!event.content) return null;
+      // v2.0.19 (parallel): render the cell even when the provider returned
+      // an empty summary — the persisted block still carries duration_ms
+      // (and reasoning_tokens from the attributor), which is what the
+      // "Thought Xs for N tokens" pill shows. Returning null here used to
+      // drop the cell AND shift reload-order for every following block,
+      // because ipc.py pulls one persisted entry per reasoning marker.
+      //
+      // v2.0.20: if the block was interrupted (turn cancelled before
+      // on_thinking_end fired, placeholder survived in thinking_blocks),
+      // render the same "Thinking interrupted" terminal state the live
+      // stopped handler paints.
       div.className = 'msg msg-thinking';
+      if (event.interrupted) div.classList.add('msg-thinking-done', 'msg-thinking-interrupted');
+      if (event.block_id) div.dataset.blockId = event.block_id;
+      const durSec = event.duration_ms != null
+        ? (event.duration_ms / 1000).toFixed(1) + 's'
+        : '';
+      const tokens = event.reasoning_tokens ?? 0;
+      let word = 'Thought';
+      let metaText = '';
+      if (event.interrupted) {
+        word = 'Thinking interrupted';
+      } else if (durSec && tokens > 0) {
+        metaText = `${durSec} for ${tokens} tokens`;
+      } else if (durSec) {
+        metaText = durSec;
+      } else if (tokens > 0) {
+        metaText = `for ${tokens} tokens`;
+      }
+      const body = event.content ?? '';
+      const bodyHtml = body
+        ? `<div class="thinking-body markdown-body">${renderMarkdown(body)}</div>`
+        : `<div class="thinking-body thinking-empty"><em>${event.interrupted ? '(interrupted before the provider delivered a thought)' : 'No thinking body exposed by the provider.'}</em></div>`;
+      const metaHtml = metaText
+        ? `<span class="thinking-meta">${escapeHtml(metaText)}</span>`
+        : '';
       div.innerHTML = `
         <details class="thinking-details">
           <summary class="thinking-summary">
-            <span class="thinking-label">Thought</span>
-            <span class="thinking-toggle-hint"></span>
+            <span class="thinking-label" data-duration-label="${escapeHtml(durSec)}">
+              <span class="thinking-word">${escapeHtml(word)}</span>
+              ${metaHtml}
+            </span>
+            <span class="msg-ts">${formatTs(event.ts)}</span>
           </summary>
-          <div class="thinking-body markdown-body">${renderMarkdown(event.content)}</div>
+          ${bodyHtml}
         </details>
       `;
       break;
@@ -718,26 +922,30 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
 
     case 'agent': {
       if (!event.content) return null;
-      const isTask = event.triggered_by?.startsWith('task:');
-      div.className = 'msg msg-agent';
-      const label = isTask ? '⏱ agent' : 'agent';
-      let usageHtml = '';
-      if (event.usage) {
-        const u = event.usage;
-        const parts: string[] = [];
-        if (u.input != null) parts.push(`in:${u.input}`);
-        if (u.output != null) parts.push(`out:${u.output}`);
-        if (u.cache_read != null) parts.push(`cached:${u.cache_read}`);
-        if (u.cache_write != null) parts.push(`wrote:${u.cache_write}`);
-        if (parts.length) usageHtml = `<span class="usage-stats">${escapeHtml(parts.join(' · '))}</span>`;
-      }
+      // v2.0.20: agent output cell matches the thinking-done chrome — a
+      // <details> wrapper with a "Output Xs" summary pill + expandable
+      // body. Default OPEN so the content is visible on first paint; the
+      // ▸/▾ caret lets the user collapse it (parity with thinking cells).
+      div.className = 'msg msg-agent msg-agent-done';
+      const durSec = event.duration_ms != null
+        ? (event.duration_ms / 1000).toFixed(1) + 's'
+        : '';
+      const metaHtml = durSec
+        ? `<span class="agent-meta">${escapeHtml(durSec)}</span>`
+        : '';
+      const usageHtml = formatUsageStats(event.usage);
       div.innerHTML = `
-        <div class="msg-header">
-          <span class="msg-label">${escapeHtml(label)}</span>
-          ${usageHtml}
-          <span class="msg-ts">${formatTs(event.ts)}</span>
-        </div>
-        <div class="msg-body markdown-body">${renderMarkdown(event.content)}</div>
+        <details class="agent-details" open>
+          <summary class="agent-summary">
+            <span class="agent-label">
+              <span class="agent-word">Agent</span>
+              ${metaHtml}
+              ${usageHtml}
+            </span>
+            <span class="msg-ts">${formatTs(event.ts)}</span>
+          </summary>
+          <div class="agent-body markdown-body">${renderMarkdown(event.content)}</div>
+        </details>
       `;
       break;
     }
@@ -759,7 +967,7 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
       // Default to "done" styling because renderEvent is also used by history
       // replay (completed turns). handleEvent's live `tool` case explicitly
       // strips the .done class after appending to show the running state.
-      div.className = 'msg msg-tool msg-tool-compact done';
+      div.className = 'msg msg-tool done';
       div.dataset.toolName = event.name ?? 'tool';
       div.innerHTML = renderToolEvent(event);
       break;
@@ -807,16 +1015,33 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
   return div;
 }
 
+// v2.0.20: compact token-usage pill for the agent-cell summary. Symbols
+// replace the old ``in:/out:/cached:`` labels (↑ = input, ↓ = output,
+// ⛀ = cache_read). ``cache_write`` is intentionally dropped — in practice
+// it only exceeds 0 on the very first cache-seeding call per session, so
+// it ends up looking like dead noise next to the other three.
+function formatUsageStats(usage?: DisplayEvent['usage']): string {
+  if (!usage) return '';
+  const u = usage as Record<string, number>;
+  const parts: string[] = [];
+  if (u.input != null) parts.push(`↑ ${u.input}`);
+  if (u.cache_read != null) parts.push(`⛀ ${u.cache_read}`);
+  if (u.output != null) parts.push(`↓ ${u.output}`);
+  if (!parts.length) return '';
+  return `<span class="usage-stats">${escapeHtml(parts.join(' '))}</span>`;
+}
+
 function renderToolEvent(event: DisplayEvent): string {
-  // Single-line compact layout (v2.0.18):
-  //   ▶ toolname  <one-line arg preview>  running…      (ts)
-  //   ✓ toolname  <one-line arg preview>  1.2s · N chars (ts)
-  //   [optional] <details> with full args / command
-  //
-  // The arg preview lives INSIDE .tool-status-summary, between name and
-  // meta, so it flows inline on the same row as the tool name. Live
-  // state transitions (tool_done / tool_progress / tool_finalize) use
-  // setToolStatus() which only rewrites icon + meta — the name and arg
+  // Inline-expand layout (v2.0.19): matches the thinking cell.
+  //   <details>
+  //     <summary>  icon  name  arg-preview  meta  ts  [caret ▸]  </summary>
+  //     <div class="tool-body">
+  //       input block (always populated)
+  //       result block (populated by tool_done; empty until then)
+  //     </div>
+  //   </details>
+  // Live transitions (tool / tool_done / tool_finalize) only rewrite the
+  // summary icon + meta and the result body — the name, arg, and input
   // spans survive.
   const name = event.name ?? 'unknown';
   const input = event.input ?? {};
@@ -827,40 +1052,59 @@ function renderToolEvent(event: DisplayEvent): string {
     ? `<span class="tool-status-arg" title="${escapeHtml(preview)}">${escapeHtml(preview)}</span>`
     : '<span class="tool-status-arg"></span>';
 
-  // Default icon is the "done" checkmark; handleEvent's live `tool` case
-  // flips it to `▶` with `running…` via setToolStatus().
-  const summary = `
-    <div class="tool-status-summary">
-      <span class="tool-status-icon">✓</span>
-      <span class="tool-status-name">${escapeHtml(name)}</span>
-      ${argHtml}
-      <span class="tool-status-meta"></span>
-    </div>
-  `;
+  const hasResult = typeof event.result === 'string';
+  const resultBlock = hasResult
+    ? renderToolResultBlock(event.result as string, event.result_truncated)
+    : '<em class="tool-body-empty">(pending)</em>';
 
-  const detailsBlock = expanded
-    ? `<details class="tool-collapse"><summary>details</summary>${expanded}</details>`
+  // History replay path: ipc.py stamps duration_ms onto the tool event so
+  // the "✓ bash 2.4s …" pill survives reload (the live tool_done that would
+  // populate this span isn't replayed on history fetch).
+  const durationText = typeof event.duration_ms === 'number'
+    ? (event.duration_ms / 1000).toFixed(1) + 's'
     : '';
 
   return `
-    <div class="tool-row-header">
-      ${summary}
-      <span class="msg-ts">${formatTs(event.ts)}</span>
-    </div>
-    ${detailsBlock}
+    <details class="tool-details">
+      <summary class="tool-status-summary">
+        <span class="tool-status-icon">✓</span>
+        <span class="tool-status-name">${escapeHtml(name)}</span>
+        <span class="tool-status-duration">${escapeHtml(durationText)}</span>
+        ${argHtml}
+        <span class="msg-ts">${formatTs(event.ts)}</span>
+      </summary>
+      <div class="tool-body">
+        <div class="tool-body-section tool-body-input">
+          <div class="tool-body-label">input</div>
+          <div class="tool-body-content">${expanded || `<pre>${escapeHtml(JSON.stringify(input, null, 2))}</pre>`}</div>
+        </div>
+        <div class="tool-body-section tool-body-result">
+          <div class="tool-body-label">result</div>
+          <div class="tool-body-content">${resultBlock}</div>
+        </div>
+      </div>
+    </details>
   `;
 }
 
-function setToolStatus(summaryEl: HTMLElement, icon: string, meta: string): void {
-  // Update only the icon and meta spans on a tool-status-summary row;
-  // the name and (v2.0.18) inline arg spans are preserved. Using
-  // innerHTML = ... on the whole summary would clobber the arg and
-  // force every call site to re-pass the tool input, which is not
-  // available to tool_done / tool_progress / tool_finalize handlers.
+function renderToolResultBlock(result: string, truncated?: boolean): string {
+  if (!result) return '<em class="tool-body-empty">(empty)</em>';
+  const suffix = truncated ? '\n\n…[truncated]' : '';
+  return `<pre>${escapeHtml(result + suffix)}</pre>`;
+}
+
+function setToolStatus(summaryEl: HTMLElement, icon: string, status: string): void {
+  // Update the icon + inline status pill on a tool-status-summary row; the
+  // name and (v2.0.18) inline arg spans are preserved. The status pill is
+  // the span that shows "running…" while the tool is live and flips to the
+  // execution duration (e.g. "2.4s") when it finishes. innerHTML on the
+  // whole summary would clobber the arg and force every caller to re-pass
+  // the tool input, which is not available to tool_done / tool_progress /
+  // tool_finalize handlers.
   const iconEl = summaryEl.querySelector<HTMLElement>('.tool-status-icon');
-  const metaEl = summaryEl.querySelector<HTMLElement>('.tool-status-meta');
+  const statusEl = summaryEl.querySelector<HTMLElement>('.tool-status-duration');
   if (iconEl) iconEl.textContent = icon;
-  if (metaEl) metaEl.textContent = meta;
+  if (statusEl) statusEl.textContent = status;
 }
 
 function toolArgPreview(name: string, input: Record<string, unknown>): string {
