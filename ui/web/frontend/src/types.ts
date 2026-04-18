@@ -76,12 +76,20 @@ export interface TaskCard {
   progress: string;
 }
 
+export interface ModelCatalogEntry {
+  name: string;
+  max_context_tokens: number;
+  exposes_reasoning_tokens: boolean;
+  default: boolean;
+}
+
 export interface ProviderCatalogEntry {
   provider: string;
   label: string;
   env: string[];
   supports_thinking: boolean;
   default_model: string;
+  models: ModelCatalogEntry[];
 }
 
 export interface ModelsCatalog {
@@ -127,6 +135,17 @@ export interface DisplayEvent {
   exit_code?: number | null;
   // sub_agent_count: HUD badge tally.
   running?: number;
+  // llm_call_usage (v2.0.19): per-LLM-call accounting for the HUD. Token
+  // counts are nested under ``usage`` (same shape as loop_end) — the
+  // top-level ``input`` field on this event is NOT a token count (it's
+  // reserved for the tool_call event's input record).
+  iteration?: number;
+  context_tokens?: number;
+  toks_per_s?: number | null;
+  // thinking_tokens_update (v2.0.19): credits the provider-reported
+  // reasoning_tokens for one LLM call to a specific thinking block so the
+  // cell label flips from "Thought Xs" to "Thought Xs for N tokens".
+  reasoning_tokens?: number;
 }
 
 export type SessionTone = 'running' | 'napping' | 'persistent' | 'stopped' | 'idle' | 'meta';

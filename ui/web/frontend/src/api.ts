@@ -101,7 +101,17 @@ export const api = {
   getWeixinStatus: (): Promise<{ status: string; error?: string; session?: string; account?: string }> =>
     request('GET', '/api/weixin/status'),
 
-  getHud: (id: string): Promise<{ cwd: string; context_bytes: number; model: string | null; git: { files: number; added: number; deleted: number }; usage: { input?: number; output?: number; cache_read?: number; cache_write?: number } | null }> =>
+  getHud: (id: string): Promise<{
+    cwd: string;
+    context_bytes: number;
+    context_tokens: number | null;
+    max_context_tokens: number;
+    toks_per_s: number | null;
+    model: string | null;
+    git: { files: number; added: number; deleted: number };
+    usage: { input?: number; output?: number; cache_read?: number; cache_write?: number; reasoning?: number } | null;
+    sub_agents_running?: number;
+  }> =>
     request('GET', `/api/sessions/${encodeURIComponent(id)}/hud`),
 
   getPanel: (id: string): Promise<PanelEntry[]> =>

@@ -356,32 +356,87 @@ export function createPanel(): HTMLElement {
     );
     const modelWrap = document.createElement('div');
     modelWrap.className = 'cfg-row';
-    const modelLabel = document.createElement('label');
-    modelLabel.className = 'cfg-label';
-    modelLabel.textContent = 'model';
-    const modelReadout = document.createElement('div');
-    modelReadout.className = 'cfg-readout';
-    modelWrap.appendChild(modelLabel);
-    modelWrap.appendChild(modelReadout);
     form.appendChild(modelWrap);
 
-    // Seed the model from the stored config so a provider that's missing
-    // from the in-memory catalog (stale or unknown key) doesn't silently
-    // wipe the saved model to null on save.
-    let currentModel: string | null = (params.model as string | null) ?? null;
-    function syncModelReadout(fromUser: boolean) {
-      const entry = providerByKey.get(providerSelect.value);
-      if (entry) {
-        currentModel = entry.default_model;
-      } else if (fromUser) {
-        // User picked a provider not in the catalog (shouldn't happen,
-        // but guard): clear the model so we don't ship a mismatched pair.
-        currentModel = null;
+    // v2.0.19 (parallel): dropdown-with-Custom row restored — PR #36's
+    // read-only readout assumed "one model per provider forever", but the
+    // models.yaml catalog keeps the list shape so future multi-model
+    // support is just a yaml edit. ``providerOptions[*].models`` is always
+    // populated from /api/models; the list currently has exactly one entry
+    // per provider but the UI is list-shaped regardless.
+    function renderModelRow() {
+      modelWrap.innerHTML = '';
+      const providerKey = providerSelect.value;
+      const entry = providerByKey.get(providerKey) ?? null;
+      const models = entry?.models ?? [];
+      const current = String(params.model ?? '');
+      const label = document.createElement('label');
+      label.className = 'cfg-label';
+      label.textContent = 'model';
+      modelWrap.appendChild(label);
+
+      const select = document.createElement('select');
+      select.className = 'cfg-input';
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = entry ? `(default: ${entry.default_model})` : '(default)';
+      select.appendChild(blank);
+      for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        opt.textContent = m.name;
+        select.appendChild(opt);
       }
-      modelReadout.textContent = currentModel ?? '—';
+      const customOpt = document.createElement('option');
+      customOpt.value = '__custom__';
+      customOpt.textContent = 'Custom…';
+      select.appendChild(customOpt);
+
+      const customInput = document.createElement('input');
+      customInput.type = 'text';
+      customInput.className = 'cfg-input cfg-input-custom';
+      customInput.placeholder = 'custom model id';
+
+      if (current && models.some(m => m.name === current)) {
+        select.value = current;
+        customInput.classList.add('hidden');
+      } else if (current) {
+        select.value = '__custom__';
+        customInput.value = current;
+      } else {
+        select.value = '';
+        customInput.classList.add('hidden');
+      }
+
+      select.addEventListener('change', () => {
+        if (select.value === '__custom__') {
+          customInput.classList.remove('hidden');
+          customInput.focus();
+          params.model = customInput.value.trim() || null;
+        } else {
+          customInput.classList.add('hidden');
+          params.model = select.value || null;
+        }
+      });
+      customInput.addEventListener('input', () => {
+        params.model = customInput.value.trim() || null;
+      });
+
+      modelWrap.appendChild(select);
+      modelWrap.appendChild(customInput);
+
+      params.model = select.value === '__custom__'
+        ? (customInput.value.trim() || null)
+        : (select.value || null);
     }
-    syncModelReadout(false);
-    providerSelect.addEventListener('change', () => syncModelReadout(true));
+    renderModelRow();
+    providerSelect.addEventListener('change', () => {
+      params.provider = providerSelect.value || null;
+      // Provider changed — old model string may not belong under the new
+      // provider, so clear and let renderModelRow re-seed from the catalog.
+      params.model = null;
+      renderModelRow();
+    });
 
     // ---- Fallback provider + read-only fallback model ----
     const fbProviderSelect = selectRow(
@@ -392,27 +447,81 @@ export function createPanel(): HTMLElement {
     );
     const fbModelWrap = document.createElement('div');
     fbModelWrap.className = 'cfg-row';
-    const fbModelLabel = document.createElement('label');
-    fbModelLabel.className = 'cfg-label';
-    fbModelLabel.textContent = 'fallback_model';
-    const fbModelReadout = document.createElement('div');
-    fbModelReadout.className = 'cfg-readout';
-    fbModelWrap.appendChild(fbModelLabel);
-    fbModelWrap.appendChild(fbModelReadout);
     form.appendChild(fbModelWrap);
 
-    let currentFallbackModel: string | null = (params.fallback_model as string | null) ?? null;
-    function syncFallbackReadout(fromUser: boolean) {
-      const entry = providerByKey.get(fbProviderSelect.value);
-      if (entry) {
-        currentFallbackModel = entry.default_model;
-      } else if (fromUser) {
-        currentFallbackModel = null;
+    // Parallel dropdown for fallback_model — same rationale as the primary
+    // model row. Kept separate from renderModelRow so the two rows can
+    // evolve independently (e.g. if one picks up a "none" sentinel).
+    function renderFallbackModelRow() {
+      fbModelWrap.innerHTML = '';
+      const providerKey = fbProviderSelect.value;
+      const entry = providerByKey.get(providerKey) ?? null;
+      const models = entry?.models ?? [];
+      const current = String(params.fallback_model ?? '');
+      const label = document.createElement('label');
+      label.className = 'cfg-label';
+      label.textContent = 'fallback_model';
+      fbModelWrap.appendChild(label);
+
+      const fbSelect = document.createElement('select');
+      fbSelect.className = 'cfg-input';
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = entry ? `(default: ${entry.default_model})` : '(none)';
+      fbSelect.appendChild(blank);
+      for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        opt.textContent = m.name;
+        fbSelect.appendChild(opt);
       }
-      fbModelReadout.textContent = currentFallbackModel ?? '—';
+      const customOpt = document.createElement('option');
+      customOpt.value = '__custom__';
+      customOpt.textContent = 'Custom…';
+      fbSelect.appendChild(customOpt);
+
+      const fbCustomInput = document.createElement('input');
+      fbCustomInput.type = 'text';
+      fbCustomInput.className = 'cfg-input cfg-input-custom';
+      fbCustomInput.placeholder = 'custom model id';
+
+      if (current && models.some(m => m.name === current)) {
+        fbSelect.value = current;
+        fbCustomInput.classList.add('hidden');
+      } else if (current) {
+        fbSelect.value = '__custom__';
+        fbCustomInput.value = current;
+      } else {
+        fbSelect.value = '';
+        fbCustomInput.classList.add('hidden');
+      }
+
+      fbSelect.addEventListener('change', () => {
+        if (fbSelect.value === '__custom__') {
+          fbCustomInput.classList.remove('hidden');
+          fbCustomInput.focus();
+          params.fallback_model = fbCustomInput.value.trim() || null;
+        } else {
+          fbCustomInput.classList.add('hidden');
+          params.fallback_model = fbSelect.value || null;
+        }
+      });
+      fbCustomInput.addEventListener('input', () => {
+        params.fallback_model = fbCustomInput.value.trim() || null;
+      });
+
+      fbModelWrap.appendChild(fbSelect);
+      fbModelWrap.appendChild(fbCustomInput);
+      params.fallback_model = fbSelect.value === '__custom__'
+        ? (fbCustomInput.value.trim() || null)
+        : (fbSelect.value || null);
     }
-    syncFallbackReadout(false);
-    fbProviderSelect.addEventListener('change', () => syncFallbackReadout(true));
+    renderFallbackModelRow();
+    fbProviderSelect.addEventListener('change', () => {
+      params.fallback_provider = fbProviderSelect.value || null;
+      params.fallback_model = null;
+      renderFallbackModelRow();
+    });
 
     // ---- Numbers ----
     const maxIterInput = numberRow(form, 'max_iterations', Number(params.max_iterations ?? 1000));
@@ -451,13 +560,16 @@ export function createPanel(): HTMLElement {
       err.textContent = '';
       const tier = thinkingSelect.value as 'No' | 'Medium' | 'High';
       const thinkingFields = tierToThinkingFields(tier);
+      // model / fallback_model live on ``params`` — the dropdown-with-Custom
+      // rows write through to params.model / params.fallback_model on every
+      // change, so saveBtn just reads them out here.
       const next: Record<string, unknown> = {
         agent: agentInput.value,
         description: descInput.value,
         provider: providerSelect.value || null,
-        model: currentModel,
+        model: (params.model as string | null) ?? null,
         fallback_provider: fbProviderSelect.value || null,
-        fallback_model: currentFallbackModel,
+        fallback_model: (params.fallback_model as string | null) ?? null,
         max_iterations: Number(maxIterInput.value) || 1000,
         ...thinkingFields,
         prompts: params.prompts,

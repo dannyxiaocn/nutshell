@@ -3,23 +3,10 @@ import { api } from '../api';
 import type { DisplayEvent } from '../types';
 import { renderMarkdown, escapeHtml, formatTs } from '../markdown';
 
-const _MODEL_MAX_TOKENS: [string, number][] = [
-  ['claude', 200000],
-  ['gpt-5.4', 200000],
-  ['gpt-5', 200000],
-  ['gpt-4o', 128000],
-  ['gpt-4', 128000],
-  ['kimi', 128000],
-];
-
-function getModelMaxTokens(model: string | null): number {
-  if (!model) return 200000;
-  const m = model.toLowerCase();
-  for (const [key, val] of _MODEL_MAX_TOKENS) {
-    if (m.includes(key)) return val;
-  }
-  return 200000;
-}
+// v2.0.19: model_max tokens come from GET /api/hud's ``max_context_tokens``
+// field, which the backend sources from butterfly/llm_engine/models.yaml.
+// The hardcoded table this replaced was drift-prone and invisibly wrong for
+// gpt-5.4 / kimi-for-coding — both get 250k now.
 
 export function createChat(): HTMLElement {
   const el = document.createElement('main');
@@ -36,6 +23,10 @@ export function createChat(): HTMLElement {
       <span class="hud-item hud-tool hidden"><span class="hud-tool-text"></span></span>
       <span class="hud-sep hud-subagent-sep hidden">·</span>
       <span class="hud-item hud-subagent hidden" title="Sub-agents currently running"><span class="hud-subagent-text"></span></span>
+      <span class="hud-sep hud-speed-sep hidden">·</span>
+      <span class="hud-item hud-speed hidden" title="Output tokens/sec from the latest LLM call (not cumulative)"><span class="hud-speed-text"></span></span>
+      <!-- Tokens pill kept in the DOM but hidden by default — PR #36 -->
+      <!-- dropped the noisy in/out counter from the HUD. -->
       <span class="hud-sep hud-tokens-sep hidden">·</span>
       <span class="hud-item hud-tokens hidden"><span class="hud-tokens-text">…</span></span>
     </div>
@@ -337,10 +328,15 @@ export function createChat(): HTMLElement {
         const bodyHtml = body
           ? `<div class="thinking-body markdown-body">${renderMarkdown(body)}</div>`
           : `<div class="thinking-body thinking-empty"><em>No thinking body exposed by the provider.</em></div>`;
+        // Initial label has no reasoning_tokens yet — provider reports them
+        // at LLM call end, which arrives as a later ``thinking_tokens_update``
+        // event. Anthropic never sends the follow-up, so its cells stay on
+        // the duration-only label (spec: null → "Thought Xs").
+        const label = `Thought ${escapeHtml(durSec)}`;
         const html = `
           <details class="thinking-details">
             <summary class="thinking-summary">
-              <span class="thinking-label">Thought for ${escapeHtml(durSec)}</span>
+              <span class="thinking-label" data-duration-label="${escapeHtml(durSec)}">${label}</span>
               <span class="thinking-toggle-hint"></span>
             </summary>
             ${bodyHtml}
@@ -364,6 +360,27 @@ export function createChat(): HTMLElement {
         }
         if (blockId) runningThinking.delete(blockId);
         scrollToBottom();
+        break;
+      }
+
+      case 'thinking_tokens_update': {
+        // Provider-reported reasoning_tokens for one LLM call arrived; stamp
+        // the matching thinking block's label. Look up by data-block-id
+        // rather than the live runningThinking map (the cell has already
+        // transitioned to done state by the time this event fires).
+        const blockId = event.block_id ?? '';
+        const tokens = event.reasoning_tokens ?? 0;
+        if (!blockId || tokens <= 0) break;
+        const cellEl = messages.querySelector<HTMLElement>(
+          `.msg-thinking[data-block-id="${CSS.escape(blockId)}"]`
+        );
+        if (!cellEl) break;
+        const labelEl = cellEl.querySelector<HTMLElement>('.thinking-label');
+        if (!labelEl) break;
+        const dur = labelEl.dataset.durationLabel ?? '';
+        labelEl.textContent = dur
+          ? `Thought ${dur} for ${tokens} tokens`
+          : `Thought for ${tokens} tokens`;
         break;
       }
 
@@ -508,6 +525,15 @@ export function createChat(): HTMLElement {
         // HUD's running dot already conveys the information.
         break;
 
+      case 'llm_call_usage': {
+        // v2.0.19: per-LLM-call token accounting — drives the HUD's
+        // context-% and realtime toks/s. Not rendered in the transcript.
+        updateHudContext(event.context_tokens ?? null);
+        updateHudSpeed(event.toks_per_s ?? null);
+        if (event.usage) updateHudTokens(event.usage);
+        break;
+      }
+
       default:
         appendEvent(event);
     }
@@ -578,6 +604,44 @@ export function createChat(): HTMLElement {
     tokEl.title = formatHudUsageTooltip(usage);
   }
 
+  // v2.0.19: model context window sourced from /api/hud. Cached so live
+  // llm_call_usage events (which don't re-fetch /api/hud) can recompute the
+  // ctx-% bar without a round trip. Reset by refreshHud on session switch.
+  let hudMaxContextTokens = 200000;
+
+  function updateHudContext(contextTokens: number | null | undefined) {
+    const hudBar = el.querySelector('#hud-bar') as HTMLElement | null;
+    if (!hudBar) return;
+    const ctxEl = hudBar.querySelector('.hud-ctx-text') as HTMLElement | null;
+    if (!ctxEl) return;
+    if (contextTokens == null) {
+      ctxEl.textContent = 'ctx —';
+      ctxEl.title = 'no LLM call yet';
+      return;
+    }
+    const pct = Math.min(100, Math.round((contextTokens / hudMaxContextTokens) * 100));
+    ctxEl.textContent = `ctx ${pct}%`;
+    ctxEl.title = `${contextTokens.toLocaleString()} / ${hudMaxContextTokens.toLocaleString()} tokens`;
+  }
+
+  function updateHudSpeed(toksPerS: number | null | undefined) {
+    const hudBar = el.querySelector('#hud-bar') as HTMLElement | null;
+    if (!hudBar) return;
+    const sep = hudBar.querySelector('.hud-speed-sep') as HTMLElement | null;
+    const wrap = hudBar.querySelector('.hud-speed') as HTMLElement | null;
+    const txt = hudBar.querySelector('.hud-speed-text') as HTMLElement | null;
+    if (!sep || !wrap || !txt) return;
+    if (toksPerS == null || toksPerS <= 0) {
+      sep.classList.add('hidden');
+      wrap.classList.add('hidden');
+      return;
+    }
+    const display = toksPerS >= 100 ? toksPerS.toFixed(0) : toksPerS.toFixed(1);
+    txt.textContent = `⚡ ${display} tok/s`;
+    sep.classList.remove('hidden');
+    wrap.classList.remove('hidden');
+  }
+
   async function refreshHud(sessionId: string) {
     try {
       const data = await api.getHud(sessionId);
@@ -590,13 +654,14 @@ export function createChat(): HTMLElement {
       modelEl.textContent = modelName;
       modelEl.title = `model: ${modelName} · cwd: ${data.cwd}`;
 
-      // Context: estimate tokens from bytes, show as % of model max
-      const estimatedTokens = Math.round(data.context_bytes / 4);
-      const maxTokens = getModelMaxTokens(data.model ?? null);
-      const pct = Math.min(100, Math.round(estimatedTokens / maxTokens * 100));
-      const ctxEl = hudBar.querySelector('.hud-ctx-text') as HTMLElement;
-      ctxEl.textContent = `ctx ${pct}%`;
-      ctxEl.title = `${estimatedTokens.toLocaleString()} / ${maxTokens.toLocaleString()} tokens`;
+      // Context: real token count from the latest LLM call (v2.0.19).
+      // The byte/4 heuristic is gone — if no call has finished yet,
+      // context_tokens is null and we show "ctx —" rather than a bogus 0%.
+      hudMaxContextTokens = data.max_context_tokens || 200000;
+      updateHudContext(data.context_tokens);
+
+      // Realtime toks/s from the latest LLM call. Hidden when null.
+      updateHudSpeed(data.toks_per_s);
 
       // Token usage — collapse to one number unless caching meaningfully present.
       const tokEl = hudBar.querySelector('.hud-tokens-text') as HTMLElement;
@@ -714,15 +779,37 @@ function renderEvent(event: DisplayEvent): HTMLElement | null {
 
   switch (event.type) {
     case 'thinking': {
-      if (!event.content) return null;
+      // v2.0.19 (parallel): render the cell even when the provider returned
+      // an empty summary — the persisted block still carries duration_ms
+      // (and reasoning_tokens from the attributor), which is what the
+      // "Thought Xs for N tokens" pill shows. Returning null here used to
+      // drop the cell AND shift reload-order for every following block,
+      // because ipc.py pulls one persisted entry per reasoning marker.
       div.className = 'msg msg-thinking';
+      if (event.block_id) div.dataset.blockId = event.block_id;
+      const durSec = event.duration_ms != null
+        ? (event.duration_ms / 1000).toFixed(1) + 's'
+        : '';
+      const tokens = event.reasoning_tokens ?? 0;
+      let label: string;
+      if (durSec && tokens > 0) {
+        label = `Thought ${durSec} for ${tokens} tokens`;
+      } else if (durSec) {
+        label = `Thought ${durSec}`;
+      } else {
+        label = 'Thought';
+      }
+      const body = event.content ?? '';
+      const bodyHtml = body
+        ? `<div class="thinking-body markdown-body">${renderMarkdown(body)}</div>`
+        : `<div class="thinking-body thinking-empty"><em>No thinking body exposed by the provider.</em></div>`;
       div.innerHTML = `
         <details class="thinking-details">
           <summary class="thinking-summary">
-            <span class="thinking-label">Thought</span>
+            <span class="thinking-label" data-duration-label="${escapeHtml(durSec)}">${escapeHtml(label)}</span>
             <span class="thinking-toggle-hint"></span>
           </summary>
-          <div class="thinking-body markdown-body">${renderMarkdown(event.content)}</div>
+          ${bodyHtml}
         </details>
       `;
       break;

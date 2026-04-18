@@ -76,7 +76,15 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
     if etype == "turn":
         result: list[dict] = []
         persisted_raw = event.get("thinking_blocks") or []
-        persisted = [b for b in persisted_raw if isinstance(b, dict) and b.get("text")] \
+        # v2.0.19 (parallel): do NOT filter out empty-text blocks — they still
+        # carry duration_ms and (post-attributor) reasoning_tokens that the
+        # UI renders as "Thought Xs for N tokens". Dropping them here also
+        # desynced the position-based pairing below: each ``reasoning`` /
+        # ``thinking`` content block pops one queue entry, so a filtered
+        # queue leaves the last N reasoning markers with nothing to pop and
+        # makes the preceding pops pull the wrong blocks (classic symptom:
+        # "first N turns show Thought + tool, rest show tool only").
+        persisted = [b for b in persisted_raw if isinstance(b, dict)] \
             if isinstance(persisted_raw, list) else []
         has_persisted = bool(persisted)
         has_streaming_tools = event.get("has_streaming_tools", False)
@@ -146,10 +154,12 @@ def _context_event_to_display(event: dict, *, for_history: bool = False) -> list
                     thinking_ev["duration_ms"] = block["duration_ms"]
                 if block.get("block_id"):
                     thinking_ev["block_id"] = block["block_id"]
+                # v2.0.19 (parallel): reasoning_tokens stamped by the attributor
+                # so history replay can restore the "Thought Xs for N tokens"
+                # label (codex/kimi only; Anthropic never sets this).
+                if block.get("reasoning_tokens"):
+                    thinking_ev["reasoning_tokens"] = block["reasoning_tokens"]
                 pending_thinking.append(thinking_ev)
-            # Stable sort by ts (string-sortable ISO-8601) so earlier
-            # thinking fires before later ones.
-            pending_thinking.sort(key=lambda ev: ev.get("ts") or "")
 
         def _emit_next_thinking() -> None:
             """Emit the next pending thinking block (position-based pairing).
@@ -342,6 +352,16 @@ def _runtime_event_to_display(event: dict) -> list[dict]:
         "tool_finalize",
         "sub_agent_count",
         "panel_update",
+        # v2.0.19: per-LLM-call usage powering the HUD's real-token context-%
+        # and realtime toks/s. Emitted by Session after each provider.complete()
+        # returns. See Session._make_llm_call_end_callback for the payload shape.
+        "llm_call_usage",
+        # v2.0.19: late-binding reasoning_tokens on a thinking cell. Emitted
+        # at LLM call end for providers that expose reasoning_tokens in usage
+        # (codex, Kimi); the frontend flips the cell label from
+        # "Thought Xs" to "Thought Xs for N tokens" when it arrives.
+        # Anthropic never emits this event (reasoning_tokens is 0 there).
+        "thinking_tokens_update",
     ):
         return [event]
 

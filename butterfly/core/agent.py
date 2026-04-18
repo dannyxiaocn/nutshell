@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Awaitable, Callable
 
 from butterfly.core.hook import (
+    OnLLMCallEnd,
     OnLoopEnd,
     OnLoopStart,
     OnTextChunk,
@@ -179,6 +180,7 @@ class Agent:
         on_tool_done: OnToolDone | None = None,
         on_loop_start: OnLoopStart | None = None,
         on_loop_end: OnLoopEnd | None = None,
+        on_llm_call_end: OnLLMCallEnd | None = None,
         caller_type: str = "human",
     ) -> AgentResult:
         """Run the agent with the given input and return an AgentResult."""
@@ -204,8 +206,10 @@ class Agent:
         active_model = self.model
 
         iterations = 0
+        import time as _time
         for _ in range(self.max_iterations):
             iterations += 1
+            _call_started = _time.monotonic()
             try:
                 content, tool_calls, turn_usage = await active_provider.complete(
                     messages=messages,
@@ -253,6 +257,7 @@ class Agent:
                 )
                 active_provider = fb_provider
                 active_model = fb_model
+                _call_started = _time.monotonic()
                 content, tool_calls, turn_usage = await active_provider.complete(
                     messages=messages,
                     tools=self.tools,
@@ -268,6 +273,16 @@ class Agent:
                     thinking_effort=self.thinking_effort,
                 )
             total_usage = total_usage + turn_usage
+            if on_llm_call_end is not None:
+                # Only the measurable-wall-clock of a finished call is surfaced
+                # to the hook — a cancelled call never reaches here, so the
+                # HUD can trust any llm_call_usage event it sees.
+                _call_duration_ms = int((_time.monotonic() - _call_started) * 1000)
+                try:
+                    on_llm_call_end(turn_usage, _call_duration_ms, iterations)
+                except Exception:
+                    # HUD plumbing must never break the agent loop.
+                    _log.warning("on_llm_call_end hook raised", exc_info=True)
 
             extra_blocks = active_provider.consume_extra_blocks()
 
@@ -312,7 +327,7 @@ class Agent:
 
             if on_tool_call:
                 for tc in tool_calls:
-                    on_tool_call(tc.name, tc.input)
+                    on_tool_call(tc.name, tc.input, tc.id)
 
             try:
                 tool_results = await _execute_tools(
@@ -452,7 +467,7 @@ async def _execute_tools(
                 content = f"Error executing '{tc.name}': {exc}"
                 is_error = True
         if on_tool_done:
-            on_tool_done(tc.name, tc.input, content)
+            on_tool_done(tc.name, tc.input, content, tc.id)
         return {
             "type": "tool_result",
             "tool_use_id": tc.id,
