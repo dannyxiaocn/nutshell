@@ -50,10 +50,33 @@ When a child session starts its daemon loop, it compares its `agent_version` aga
 
 | Mode | Producer defaults | Effect on inbox / running run |
 | --- | --- | --- |
-| `interrupt` | chat from UI/CLI; background-tool notifications (`source=panel`) | Cancel the in-flight run if any; append to inbox. If the cancelled run had not yet committed an assistant turn, the consumer folds the cancelled item's content into this item via `merge_before` so the LLM only sees one user turn (no consecutive `user` messages). |
+| `interrupt` | chat from UI/CLI; background-tool notifications (`source=panel`) | Cancel the in-flight run if any; append to inbox. If the cancelled run had not yet committed an assistant turn, the consumer folds the cancelled item's content into this item via `merge_before` so the LLM only sees one user turn (no consecutive `user` messages). Multiple interrupt-mode arrivals collapse into a single inbox entry via `merge_after` (v2.0.24) — a burst of background completions runs as one user turn instead of N. |
 | `wait` | task wakeups (`source=task`); explicit `mode=wait` chats | Append to inbox without cancelling. If the trailing inbox entry is itself a wait-mode `ChatItem`, merge into it via `merge_after` so a burst of "...also" sends collapses into one user turn. |
 
-A bare `send_interrupt()` (the explicit ⚡ Interrupt button) cancels the in-flight run **and** drops the entire inbox — it is not a chat-with-mode; it just stops.
+A bare `send_interrupt()` (the explicit ⚡ Interrupt button) cancels the in-flight run **and** drops the entire inbox **and** kills every running background runner (v2.0.24) — it is not a chat-with-mode; it just stops.
+
+#### v2.0.24 — uniform cancel path for ChatItem and TaskItem
+
+`_dispatch_one` now wraps **both** branches in `self._run_task = create_task(...)`, then awaits it. Pre-2.0.24 the TaskItem branch awaited `_do_tick` inline, so `_run_task` stayed `None` while a tick was running — `_enqueue`'s interrupt-mode cancel hook (and `_handle_explicit_interrupt`) had nothing to call `cancel()` on, and the in-flight tick ran to completion with the interrupting chat queued behind it. Meta sessions felt this hardest: their only activity is the heartbeat `task_wakeup` tick, so the ⚡ Interrupt button was effectively a no-op on them. Routing both paths through the same handle lets cancellation propagate uniformly; tick CancelledError still routes through the TaskItem branch (mark card pending, reject futures), and chat cancel still walks the uncommitted-merge / committed-partial-save fork.
+
+#### v2.0.24 — same-mode tail merge in `_enqueue` and `_consumer_loop`
+
+The pre-2.0.24 merge rule was asymmetric: wait arrivals folded into the trailing wait item, but interrupt arrivals always appended. This was a bug in the spec's "interrupt always aggregates" intent — a flurry of background-tool completions, each emitted as its own `user_input` event with `mode=interrupt`, produced N separate ChatItems and N separate cancel-then-fold cycles. Only the *first* fold absorbed the cancelled prefix; the subsequent panel events ran as their own one-line user turns.
+
+Both `_enqueue` (per-arrival) and `_consumer_loop` (per-pop greedy drain) now use the same predicate: `self._inbox[-1] / [0].mode == item.mode`. Mixed modes never merge — wait stays behind interrupt, and the next pop handles each as its own activation. The dispatcher's intent reads cleanly: "cancel + collapse same-mode arrivals into one LLM call."
+
+#### v2.0.24 — bare-interrupt cascade to background workloads
+
+`Session._handle_explicit_interrupt` now also calls `_cascade_interrupt_background()` after cancelling `self._run_task` and clearing the inbox. The cascade walks `self.panel_dir`, finds every non-terminal panel entry, and calls `BackgroundTaskManager.kill(tid)` on each. The runner-specific `kill` does the right thing per type:
+
+- `BashRunner.kill` — `os.killpg(SIGKILL)` on the subprocess group.
+- `SubAgentRunner.kill` — `BridgeSession.send_interrupt()` to the child session **then** `stop_session()` (was just `stop_session` before — that path only set `status=stopped`, but the child's stopped check fires only when a fresh input arrives, so the child's in-flight chat kept running until a natural break).
+
+Per spec, this only fires on the **bare** ⚡ button. A chat with `mode=interrupt` (i.e., a new user input arrives during a run) leaves background workloads alone — the cancel propagates only through the await chain rooted at `_run_task`, which reaches *blocking* sub-agents (awaited inside `_execute_tools`) but not background runners (which live on the `BackgroundTaskManager`'s own task list).
+
+#### v2.0.24 — blocking sub-agent cascade in `SubAgentTool.execute`
+
+Even with the new bare-interrupt cascade, a chat-with-mode=interrupt that lands while the parent is mid-`sub_agent(run_in_background=false)` would previously leave the child session daemon churning on a discarded task: cancellation would propagate up through `_execute_tools` and `SubAgentTool.execute()`, but the child daemon, started by `init_session` and adopted by `SessionWatcher`, runs independently of that await chain. `SubAgentTool.execute` now wraps the `await _wait_for_reply` in a try/except that calls `BridgeSession.send_interrupt()` on the child before re-raising — same primitive the bare-interrupt cascade uses on background sub-agents, applied here at the blocking-sub-agent boundary. Best-effort; failures are swallowed so cancellation propagation stays clean.
 
 #### Why the cancelled-merge rule is non-negotiable
 
