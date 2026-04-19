@@ -113,6 +113,7 @@ export const api = {
     git: { files: number; added: number; deleted: number };
     usage: { input?: number; output?: number; cache_read?: number; cache_write?: number; reasoning?: number } | null;
     sub_agents_running?: number;
+    bash_running?: number;
   }> =>
     request('GET', `/api/sessions/${encodeURIComponent(id)}/hud`),
 

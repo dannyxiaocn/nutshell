@@ -948,11 +948,18 @@ export function createChat(): HTMLElement {
         tokEl.textContent = '—';
         tokEl.title = 'no usage yet';
       }
-      // Restore the sub-agent badge on attach / page refresh — derived
-      // from the on-disk panel by the HUD endpoint, since the SSE stream
-      // only re-broadcasts sub_agent_count when a child changes state.
-      const subAgentsRunning = (data as { sub_agents_running?: number }).sub_agents_running ?? 0;
+      // Restore the runner badges on attach / page refresh — derived
+      // from on-disk panel entries by the HUD endpoint, since the SSE
+      // stream only re-broadcasts ``sub_agent_count`` / emits
+      // ``tool_finalize`` when a child changes state. Without the
+      // ``bash_running`` seed, a mid-flight bg bash reload left the
+      // HUD reading "0 bash running" until ``tool_finalize`` arrived,
+      // at which point ``Math.max(0, 0 - 1)`` kept it at 0 (PR #43
+      // review item #1).
+      const subAgentsRunning = data.sub_agents_running ?? 0;
       updateHudSubAgents(subAgentsRunning);
+      bashRunningCount = data.bash_running ?? 0;
+      updateRunnersRow();
     } catch {
       // ignore — HUD is best-effort
     }
