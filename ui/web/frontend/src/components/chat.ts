@@ -304,6 +304,18 @@ export function createChat(): HTMLElement {
     // "1 bash running" until session switch. Bg bash keeps its cell
     // (tagged data-bg-tid, skipped by the sweep above) and will still
     // decrement correctly through its own tool_finalize.
+    //
+    // TODO (v2.0.25 follow-up): ``data-bg-tid`` is only tagged by the live
+    // ``tool_done`` handler, NOT by history-replay. So on the narrow path
+    // "page-refresh with bg bash running → ⚡ interrupt something else
+    // before a fresh tool_done arrives", this recount drops to 0 even
+    // though the bg bash is still alive server-side. Self-heals on the
+    // next ``refreshHud`` or ``tool_finalize`` round-trip, but briefly
+    // under-reports. Preferred fix: subtract the count of SWEPT inline
+    // bash cells from bashRunningCount here (delta, not recount), which
+    // preserves the pre-sweep seed from refreshHud. Optionally also tag
+    // ``data-bg-tid`` during history replay so the recount would be
+    // authoritative for both live and replayed bg cells.
     bashRunningCount = messages.querySelectorAll(
       '.msg-tool[data-bg-tid][data-tool-name="bash"]:not(.done)'
     ).length;
