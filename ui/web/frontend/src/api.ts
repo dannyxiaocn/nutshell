@@ -108,6 +108,8 @@ export const api = {
     max_context_tokens: number;
     toks_per_s: number | null;
     model: string | null;
+    thinking?: boolean;
+    thinking_effort?: string | null;
     git: { files: number; added: number; deleted: number };
     usage: { input?: number; output?: number; cache_read?: number; cache_write?: number; reasoning?: number } | null;
     sub_agents_running?: number;

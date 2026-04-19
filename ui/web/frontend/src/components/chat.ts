@@ -15,20 +15,30 @@ export function createChat(): HTMLElement {
     <div id="messages" class="messages"></div>
     <div id="agent-status" class="agent-status hidden">Agent is working…</div>
     <div id="hud-bar" class="hud-bar hidden" title="model · context · running tool · tokens">
-      <span class="hud-dot hud-dot-idle" id="hud-dot"></span>
-      <span class="hud-item hud-model"><span class="hud-model-text">…</span></span>
-      <span class="hud-sep">·</span>
-      <span class="hud-item hud-context"><span class="hud-ctx-text">…</span></span>
-      <span class="hud-sep hud-tool-sep hidden">·</span>
-      <span class="hud-item hud-tool hidden"><span class="hud-tool-text"></span></span>
-      <span class="hud-sep hud-subagent-sep hidden">·</span>
-      <span class="hud-item hud-subagent hidden" title="Sub-agents currently running"><span class="hud-subagent-text"></span></span>
-      <span class="hud-sep hud-speed-sep hidden">·</span>
-      <span class="hud-item hud-speed hidden" title="Output tokens/sec from the latest LLM call (not cumulative)"><span class="hud-speed-text"></span></span>
-      <!-- Tokens pill kept in the DOM but hidden by default — PR #36 -->
-      <!-- dropped the noisy in/out counter from the HUD. -->
-      <span class="hud-sep hud-tokens-sep hidden">·</span>
-      <span class="hud-item hud-tokens hidden"><span class="hud-tokens-text">…</span></span>
+      <div class="hud-row hud-row-main">
+        <span class="hud-dot hud-dot-idle" id="hud-dot"></span>
+        <span class="hud-item hud-model">
+          <span class="hud-model-text">…</span>
+          <span class="hud-effort hidden"></span>
+        </span>
+        <span class="hud-item hud-context">
+          <span class="hud-ctx-bar"><span class="hud-ctx-bracket">[</span><span class="hud-ctx-filled"></span><span class="hud-ctx-empty">··········</span><span class="hud-ctx-bracket">]</span></span>
+          <span class="hud-ctx-pct">—</span>
+          <span class="hud-ctx-totals"></span>
+        </span>
+        <span class="hud-spacer"></span>
+        <span class="hud-item hud-speed hidden" title="Output tokens/sec from the latest LLM call (not cumulative)"><span class="hud-speed-text"></span></span>
+        <!-- Tokens pill kept in the DOM but hidden by default — PR #36 -->
+        <!-- dropped the noisy in/out counter from the HUD. -->
+        <span class="hud-sep hud-tokens-sep hidden">·</span>
+        <span class="hud-item hud-tokens hidden"><span class="hud-tokens-text">…</span></span>
+      </div>
+      <div class="hud-row hud-row-runners" title="Running background work">
+        <span class="hud-runners-caret">▸</span>
+        <span class="hud-runner hud-runner-bash" title="Bash calls in flight"><span class="hud-runner-bash-count">0</span> bash running</span>
+        <span class="hud-runners-sep">|</span>
+        <span class="hud-runner hud-runner-sub" title="Sub-agents in flight"><span class="hud-runner-sub-count">0</span> sub-agents running</span>
+      </div>
     </div>
     <div id="chat-input-area" class="chat-input-area">
       <textarea id="chat-input" placeholder="Type a message… (Enter = send, Shift+Enter = newline, Alt/⌥+Enter = wait-mode)" rows="3"></textarea>
@@ -98,6 +108,11 @@ export function createChat(): HTMLElement {
     const bar = el.querySelector('#agent-status') as HTMLElement | null;
     if (!bar) return;
     bar.classList.toggle('hidden', !running);
+    // v2.0.24: propagate the running state to the HUD so its ⚡ tok/s pill
+    // picks up the same yellow accent as the "Agent is working…" row while
+    // a call is in flight; it dims again on idle.
+    const hudBar = el.querySelector('#hud-bar') as HTMLElement | null;
+    if (hudBar) hudBar.classList.toggle('running', running);
   }
 
   function getOrCreateStreamingBubble(): HTMLDivElement {
@@ -280,9 +295,11 @@ export function createChat(): HTMLElement {
     // Preserve backgroundCells — those entries still correspond to cells
     // waiting for tool_finalize. latestToolKey and the HUD pill point at
     // the most recent ACTIVE tool, which is gone now that the turn idled,
-    // so those still get cleared.
+    // so those still get cleared. bashRunningCount is likewise intentionally
+    // NOT reset — bg work decrements itself via its own ``tool_finalize``
+    // (kind='completed' on clean exit, kind='killed' on ⚡ Interrupt).
     latestToolKey = null;
-    updateHudTool(null);
+    updateRunnersRow();
   }
 
   function clearMessages() {
@@ -296,8 +313,9 @@ export function createChat(): HTMLElement {
     latestToolKey = null;
     runningThinking.clear();
     backgroundCells.clear();
-    updateHudTool(null);
-    updateHudSubAgents(0);
+    bashRunningCount = 0;
+    subAgentRunningCount = 0;
+    updateRunnersRow();
     updateHudDot('idle');
   }
 
@@ -567,7 +585,10 @@ export function createChat(): HTMLElement {
         const name = event.name ?? 'tool';
         latestToolKey = name;
         runningTools.set(name, { el: null, startTs: Date.now() });
-        updateHudTool(name);
+        if (name === 'bash') {
+          bashRunningCount += 1;
+          updateRunnersRow();
+        }
         // Render via the normal path — renderEvent defaults to "done" styling
         // so history replays look correct. Flip the freshly appended row back
         // to the running state here (live path only).
@@ -629,7 +650,10 @@ export function createChat(): HTMLElement {
         }
         runningTools.delete(name);
         if (latestToolKey === name) latestToolKey = null;
-        updateHudTool(latestToolKey);
+        if (name === 'bash') {
+          bashRunningCount = Math.max(0, bashRunningCount - 1);
+          updateRunnersRow();
+        }
         // Intentionally NOT appending a separate msg-status line — the running
         // pill transitions to done in place. Memory note: keeps the log quiet.
         break;
@@ -668,11 +692,12 @@ export function createChat(): HTMLElement {
           resultEl.innerHTML = renderToolResultBlock(event.result, event.result_truncated);
         }
         backgroundCells.delete(event.tid);
-        // HUD "▶ name" cleanup: this name might still have other concurrent
-        // calls; only clear if it was the latest tracked.
         if (latestToolKey === tracked.name && !runningTools.has(tracked.name)) {
           latestToolKey = null;
-          updateHudTool(null);
+        }
+        if (tracked.name === 'bash') {
+          bashRunningCount = Math.max(0, bashRunningCount - 1);
+          updateRunnersRow();
         }
         break;
       }
@@ -750,37 +775,30 @@ export function createChat(): HTMLElement {
     dot.classList.toggle('hud-dot-idle', state === 'idle');
   }
 
-  function updateHudTool(toolName: string | null) {
-    const sep = el.querySelector('.hud-tool-sep') as HTMLElement | null;
-    const item = el.querySelector('.hud-tool') as HTMLElement | null;
-    const text = el.querySelector('.hud-tool-text') as HTMLElement | null;
-    if (!sep || !item || !text) return;
-    if (toolName) {
-      sep.classList.remove('hidden');
-      item.classList.remove('hidden');
-      text.textContent = `▶ ${toolName}`;
-    } else {
-      sep.classList.add('hidden');
-      item.classList.add('hidden');
-      text.textContent = '';
-    }
+  // v2.0.24: the second HUD row ``▸ N bash running | N sub-agents running`` is
+  // always visible — dim when idle, colored when active. The caret goes
+  // yellow when anything runs; bash-count yellow, sub-agent-count orange.
+  // The pipe always stays dim.
+  let bashRunningCount = 0;
+  let subAgentRunningCount = 0;
+
+  function updateRunnersRow() {
+    const caret = el.querySelector('.hud-runners-caret') as HTMLElement | null;
+    const bashItem = el.querySelector('.hud-runner-bash') as HTMLElement | null;
+    const bashCountEl = el.querySelector('.hud-runner-bash-count') as HTMLElement | null;
+    const subItem = el.querySelector('.hud-runner-sub') as HTMLElement | null;
+    const subCountEl = el.querySelector('.hud-runner-sub-count') as HTMLElement | null;
+    if (!caret || !bashItem || !bashCountEl || !subItem || !subCountEl) return;
+    bashCountEl.textContent = String(bashRunningCount);
+    subCountEl.textContent = String(subAgentRunningCount);
+    bashItem.classList.toggle('active', bashRunningCount > 0);
+    subItem.classList.toggle('active', subAgentRunningCount > 0);
+    caret.classList.toggle('active', bashRunningCount > 0 || subAgentRunningCount > 0);
   }
 
   function updateHudSubAgents(count: number) {
-    const sep = el.querySelector('.hud-subagent-sep') as HTMLElement | null;
-    const item = el.querySelector('.hud-subagent') as HTMLElement | null;
-    const text = el.querySelector('.hud-subagent-text') as HTMLElement | null;
-    if (!sep || !item || !text) return;
-    if (count > 0) {
-      sep.classList.remove('hidden');
-      item.classList.remove('hidden');
-      const noun = count === 1 ? 'sub-agent' : 'sub-agents';
-      text.textContent = `⚙ ${count} ${noun} running`;
-    } else {
-      sep.classList.add('hidden');
-      item.classList.add('hidden');
-      text.textContent = '';
-    }
+    subAgentRunningCount = Math.max(0, count);
+    updateRunnersRow();
   }
 
   function formatHudUsageTooltip(u: NonNullable<DisplayEvent['usage']>): string {
@@ -813,36 +831,66 @@ export function createChat(): HTMLElement {
   // ctx-% bar without a round trip. Reset by refreshHud on session switch.
   let hudMaxContextTokens = 200000;
 
+  const HUD_CTX_BAR_WIDTH = 10;
+
+  function formatTokenShort(n: number): string {
+    if (n >= 1_000_000) {
+      const m = n / 1_000_000;
+      return m >= 10 ? `${m.toFixed(0)}M` : `${m.toFixed(1)}M`;
+    }
+    if (n >= 1_000) {
+      const k = n / 1_000;
+      return k >= 10 ? `${k.toFixed(0)}k` : `${k.toFixed(1)}k`;
+    }
+    return String(n);
+  }
+
   function updateHudContext(contextTokens: number | null | undefined) {
     const hudBar = el.querySelector('#hud-bar') as HTMLElement | null;
     if (!hudBar) return;
-    const ctxEl = hudBar.querySelector('.hud-ctx-text') as HTMLElement | null;
-    if (!ctxEl) return;
+    const filledEl = hudBar.querySelector('.hud-ctx-filled') as HTMLElement | null;
+    const emptyEl = hudBar.querySelector('.hud-ctx-empty') as HTMLElement | null;
+    const pctEl = hudBar.querySelector('.hud-ctx-pct') as HTMLElement | null;
+    const totalsEl = hudBar.querySelector('.hud-ctx-totals') as HTMLElement | null;
+    const ctxWrap = hudBar.querySelector('.hud-context') as HTMLElement | null;
+    if (!filledEl || !emptyEl || !pctEl || !totalsEl || !ctxWrap) return;
+    // Reset threshold classes — applied below on the fresh value.
+    ctxWrap.classList.remove('ctx-low', 'ctx-mid', 'ctx-high');
     if (contextTokens == null) {
-      ctxEl.textContent = 'ctx —';
-      ctxEl.title = 'no LLM call yet';
+      filledEl.textContent = '';
+      emptyEl.textContent = '·'.repeat(HUD_CTX_BAR_WIDTH);
+      pctEl.textContent = '—';
+      totalsEl.textContent = '';
+      ctxWrap.title = 'no LLM call yet';
       return;
     }
-    const pct = Math.min(100, Math.round((contextTokens / hudMaxContextTokens) * 100));
-    ctxEl.textContent = `ctx ${pct}%`;
-    ctxEl.title = `${contextTokens.toLocaleString()} / ${hudMaxContextTokens.toLocaleString()} tokens`;
+    const ratio = Math.max(0, Math.min(1, contextTokens / hudMaxContextTokens));
+    const pct = Math.round(ratio * 100);
+    const filledN = Math.max(0, Math.min(HUD_CTX_BAR_WIDTH, Math.round(ratio * HUD_CTX_BAR_WIDTH)));
+    filledEl.textContent = '-'.repeat(filledN);
+    emptyEl.textContent = '·'.repeat(HUD_CTX_BAR_WIDTH - filledN);
+    pctEl.textContent = `${pct}%`;
+    totalsEl.textContent = `(${formatTokenShort(contextTokens)}/${formatTokenShort(hudMaxContextTokens)})`;
+    ctxWrap.title = `${contextTokens.toLocaleString()} / ${hudMaxContextTokens.toLocaleString()} tokens`;
+    // Threshold-based heat: ≤60% green, 60-80% yellow, ≥80% red. Drives
+    // both the bracket + filled-bar color via CSS rules below.
+    if (pct >= 80) ctxWrap.classList.add('ctx-high');
+    else if (pct >= 60) ctxWrap.classList.add('ctx-mid');
+    else ctxWrap.classList.add('ctx-low');
   }
 
   function updateHudSpeed(toksPerS: number | null | undefined) {
     const hudBar = el.querySelector('#hud-bar') as HTMLElement | null;
     if (!hudBar) return;
-    const sep = hudBar.querySelector('.hud-speed-sep') as HTMLElement | null;
     const wrap = hudBar.querySelector('.hud-speed') as HTMLElement | null;
     const txt = hudBar.querySelector('.hud-speed-text') as HTMLElement | null;
-    if (!sep || !wrap || !txt) return;
+    if (!wrap || !txt) return;
     if (toksPerS == null || toksPerS <= 0) {
-      sep.classList.add('hidden');
       wrap.classList.add('hidden');
       return;
     }
     const display = toksPerS >= 100 ? toksPerS.toFixed(0) : toksPerS.toFixed(1);
     txt.textContent = `⚡ ${display} tok/s`;
-    sep.classList.remove('hidden');
     wrap.classList.remove('hidden');
   }
 
@@ -852,11 +900,24 @@ export function createChat(): HTMLElement {
       const hudBar = el.querySelector('#hud-bar') as HTMLElement;
       hudBar.classList.remove('hidden');
 
-      // Model name — compact, single-line. This is the "essential" field.
+      // Model name + thinking effort (v2.0.24). The effort pill only
+      // appears when thinking is enabled in the session config.
       const modelEl = hudBar.querySelector('.hud-model-text') as HTMLElement;
       const modelName = data.model ?? '(default)';
       modelEl.textContent = modelName;
       modelEl.title = `model: ${modelName} · cwd: ${data.cwd}`;
+      const effortEl = hudBar.querySelector('.hud-effort') as HTMLElement | null;
+      if (effortEl) {
+        const effort = data.thinking && data.thinking_effort ? String(data.thinking_effort) : '';
+        if (effort) {
+          effortEl.textContent = effort;
+          effortEl.classList.remove('hidden');
+          effortEl.title = `thinking effort: ${effort}`;
+        } else {
+          effortEl.textContent = '';
+          effortEl.classList.add('hidden');
+        }
+      }
 
       // Context: real token count from the latest LLM call (v2.0.19).
       // The byte/4 heuristic is gone — if no call has finished yet,

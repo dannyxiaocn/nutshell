@@ -110,6 +110,8 @@ def get_hud(session_id: str, sessions_dir: Path, system_sessions_dir: Path) -> d
         'max_context_tokens': max_context_tokens,
         'toks_per_s': toks_per_s,
         'model': model_name,
+        'thinking': bool(params.get('thinking')),
+        'thinking_effort': params.get('thinking_effort'),
         'git': {'files': git_files, 'added': git_added, 'deleted': git_deleted},
         'usage': latest_usage,
         'sub_agents_running': sub_agents_running,
