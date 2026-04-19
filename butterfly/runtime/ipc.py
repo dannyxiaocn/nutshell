@@ -786,8 +786,11 @@ class FileIPC:
         # KB range even for long sessions; buffering them is cheap and spares
         # us a second pass.
         raw_events: list[tuple[dict, int]] = []
+        max_line_end = offset
         for raw, line_end in self._read_context_lines(offset):
             raw_events.append((raw, line_end))
+            if line_end > max_line_end:
+                max_line_end = line_end
         # Sort by the earliest REAL content timestamp inside each entry, not
         # the write-time top-level ``ts``. A turn interrupted by a bg-tool
         # notification gets persisted AT THE INTERRUPT INSTANT — same ts as
@@ -798,13 +801,23 @@ class FileIPC:
         # core/agent.py) gives the turn's actual start moment, which lands
         # BEFORE any bg notification that preempted it.
         raw_events.sort(key=lambda re: _context_entry_sort_ts(re[0]))
-        for raw, line_end in raw_events:
+        # Yield ``max_line_end`` for every display, NOT the per-entry
+        # ``line_end``. After sorting, the last-yielded entry is the one
+        # with the latest ts — not the one at the largest byte offset —
+        # and ``get_history`` consumes the final yielded offset as the
+        # cursor. Without this, a bg-notif that physically lives past an
+        # interrupted turn but sorts before it would leave the cursor
+        # mid-file; the next SSE reconnect's ``context_since`` seeks there
+        # and re-emits the already-displayed turn. Clamping to the
+        # max-observed end guarantees the cursor sits at the EOF seen by
+        # this read, so every physical line was covered.
+        for raw, _unused_line_end in raw_events:
             for display in _context_event_to_display(
                 raw,
                 for_history=True,
                 tool_durations=tool_durations,
             ):
-                yield display, line_end
+                yield display, max_line_end
 
     def _read_context_lines(self, offset: int) -> Iterator[tuple[dict, int]]:
         """Iterate context.jsonl from ``offset``; yield (parsed_event, line_end).
