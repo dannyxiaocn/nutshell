@@ -295,10 +295,18 @@ export function createChat(): HTMLElement {
     // Preserve backgroundCells — those entries still correspond to cells
     // waiting for tool_finalize. latestToolKey and the HUD pill point at
     // the most recent ACTIVE tool, which is gone now that the turn idled,
-    // so those still get cleared. bashRunningCount is likewise intentionally
-    // NOT reset — bg work decrements itself via its own ``tool_finalize``
-    // (kind='completed' on clean exit, kind='killed' on ⚡ Interrupt).
+    // so those still get cleared.
     latestToolKey = null;
+    // v2.0.25 review fix: recompute bashRunningCount from surviving bg
+    // cells. Inline bash cancelled mid-flight never emits ``tool_done``
+    // (core/agent.py re-raises CancelledError before on_tool_done runs),
+    // so the counter would otherwise leak — HUD second row stuck on
+    // "1 bash running" until session switch. Bg bash keeps its cell
+    // (tagged data-bg-tid, skipped by the sweep above) and will still
+    // decrement correctly through its own tool_finalize.
+    bashRunningCount = messages.querySelectorAll(
+      '.msg-tool[data-bg-tid][data-tool-name="bash"]:not(.done)'
+    ).length;
     updateRunnersRow();
   }
 
